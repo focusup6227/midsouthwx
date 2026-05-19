@@ -1,0 +1,21 @@
+*.tsbuildinfo
+node_modules/
+.next/
+out/
+dist/
+.env
+.env.local
+.env*.local
+.vercel
+.DS_Store
+*.log
+npm-debug.log*
+.turbo
+coverage/
+.idea/
+.vscode/
+
+# Supabase CLI
+supabase/.temp/
+supabase/.branches/
+.supabase/

@@ -1,0 +1,12 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body { background: theme(colors.wx.ink); color: theme(colors.wx.fg); }
+body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+.card { background: theme(colors.wx.card); border: 1px solid theme(colors.wx.line); border-radius: 12px; }
+.btn  { background: theme(colors.wx.accent); color: #111; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600; }
+.btn:disabled { opacity: 0.5; }
+.btn-ghost { background: transparent; border: 1px solid theme(colors.wx.line); color: theme(colors.wx.fg); padding: 0.5rem 1rem; border-radius: 8px; }
+.input { background: theme(colors.wx.ink); border: 1px solid theme(colors.wx.line); color: theme(colors.wx.fg); padding: 0.5rem 0.75rem; border-radius: 8px; width: 100%; }
