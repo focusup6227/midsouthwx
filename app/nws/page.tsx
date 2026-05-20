@@ -6,6 +6,7 @@ import {
   updateAutoRule,
 } from './actions';
 import RuleToggle from './RuleToggle';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,18 +48,10 @@ export default async function NwsPage() {
   const regionName = new Map((regions ?? []).map((r) => [r.id, r.name]));
 
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-10">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <Link href="/dashboard" className="text-wx-mute text-sm">
-            ← Dashboard
-          </Link>
-          <h1 className="text-2xl font-bold mt-1">NWS automation</h1>
-          <p className="text-sm text-wx-mute mt-1">
-            Active alerts from the national poll, pending approvals, and routing rules.
-          </p>
-        </div>
-      </div>
+    <DashShell title="NWS automation">
+      <p className="text-sm text-wx-mute">
+        Active alerts from the national poll, pending approvals, and routing rules.
+      </p>
 
       <section className="card p-5 space-y-4">
         <h2 className="font-semibold">Pending approvals</h2>
@@ -329,6 +322,6 @@ export default async function NwsPage() {
           </ul>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

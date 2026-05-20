@@ -2,6 +2,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import SubscriberActions from './SubscriberActions';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,12 +39,8 @@ export default async function SubscriberDetail({ params }: { params: { id: strin
   ]);
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div>
-        <Link href="/subscribers" className="text-wx-mute text-sm">← Subscribers</Link>
-        <h1 className="text-2xl font-bold">{sub.display_name}</h1>
-        <p className="text-xs text-wx-mute">status {sub.status}</p>
-      </div>
+    <DashShell title={sub.display_name} backHref="/subscribers" width="narrow">
+      <p className="text-xs text-wx-mute">status {sub.status}</p>
 
       {sub.current_address && (
         <section className="card p-5 space-y-1 border-wx-accent">
@@ -158,6 +155,6 @@ export default async function SubscriberDetail({ params }: { params: { id: strin
           <strong>{repliesCountRes.count ?? 0}</strong> total
         </p>
       </section>
-    </main>
+    </DashShell>
   );
 }

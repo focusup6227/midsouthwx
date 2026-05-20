@@ -1,5 +1,6 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,14 +39,7 @@ export default async function SubscribersPage({
   );
 
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/dashboard" className="text-wx-mute text-sm">← Dashboard</Link>
-          <h1 className="text-2xl font-bold">Subscribers</h1>
-        </div>
-      </div>
-
+    <DashShell title="Subscribers">
       <div className="flex gap-2 flex-wrap">
         {filterLink(undefined, 'All')}
         {filterLink('active', 'Active')}
@@ -81,6 +75,6 @@ export default async function SubscribersPage({
           <p className="text-wx-mute text-sm p-5">No subscribers yet.</p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

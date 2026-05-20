@@ -1,7 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import GroupMembers from './GroupMembers';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -31,18 +31,13 @@ export default async function GroupDetail({ params }: { params: { id: string } }
   const candidates = (allSubs ?? []).filter((s) => !memberIdSet.has(s.id));
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div>
-        <Link href="/groups" className="text-wx-mute text-sm">← Groups</Link>
-        <h1 className="text-2xl font-bold">{group.name}</h1>
-        {group.description && <p className="text-sm text-wx-mute">{group.description}</p>}
-      </div>
-
+    <DashShell title={group.name} backHref="/groups" width="narrow">
+      {group.description && <p className="text-sm text-wx-mute">{group.description}</p>}
       <GroupMembers
         groupId={group.id}
         members={memberRows}
         candidates={candidates}
       />
-    </main>
+    </DashShell>
   );
 }

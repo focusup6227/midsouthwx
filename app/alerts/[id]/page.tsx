@@ -1,8 +1,8 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import NwsApproveButtons from '@/app/nws/NwsApproveButtons';
 import CheckinTally from './CheckinTally';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,12 +61,7 @@ export default async function AlertDetail({ params }: { params: { id: string } }
   }
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div>
-        <Link href="/alerts" className="text-wx-mute text-sm">← Alerts</Link>
-        <h1 className="text-2xl font-bold">Alert detail</h1>
-      </div>
-
+    <DashShell title="Alert detail" backHref="/alerts" width="narrow">
       {msg.source === 'nws' && nwsRow && (
         <section className="card p-5 space-y-2">
           <h2 className="font-semibold">NWS source</h2>
@@ -163,6 +158,6 @@ export default async function AlertDetail({ params }: { params: { id: string } }
           recipientCount={msg.recipient_count ?? 0}
         />
       )}
-    </main>
+    </DashShell>
   );
 }

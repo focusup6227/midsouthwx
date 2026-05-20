@@ -1,7 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import Link from 'next/link';
 import { updateOperator } from './actions';
 import PasswordForm from './PasswordForm';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,12 +23,7 @@ export default async function SettingsPage() {
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div>
-        <Link href="/dashboard" className="text-wx-mute text-sm">← Dashboard</Link>
-        <h1 className="text-2xl font-bold">Settings</h1>
-      </div>
-
+    <DashShell title="Settings" width="narrow">
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold">Operator profile</h2>
         <form action={updateOperator} className="space-y-3">
@@ -123,6 +118,6 @@ export default async function SettingsPage() {
           <p className="text-wx-mute text-sm">No templates seeded.</p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

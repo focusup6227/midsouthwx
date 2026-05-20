@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import CancelScheduleButton from './CancelScheduleButton';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,21 +15,13 @@ export default async function ScheduleListPage() {
     .order('next_run_at', { ascending: true, nullsFirst: false });
 
   return (
-    <main className="max-w-4xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/dashboard" className="text-wx-mute text-sm">
-            ← Dashboard
-          </Link>
-          <h1 className="text-2xl font-bold">Scheduled alerts</h1>
-          <p className="text-wx-mute text-sm mt-1">
-            Fires automatically via <code className="text-xs">scheduled-dispatcher</code> (every minute).
-          </p>
-        </div>
-        <Link href="/schedule/new" className="btn">
-          New schedule
-        </Link>
-      </div>
+    <DashShell
+      title="Scheduled alerts"
+      actions={<Link href="/schedule/new" className="btn">New schedule</Link>}
+    >
+      <p className="text-wx-mute text-sm">
+        Fires automatically via <code className="text-xs">scheduled-dispatcher</code> (every minute).
+      </p>
 
       {!rows?.length ? (
         <p className="text-wx-mute text-sm">No schedules yet.</p>
@@ -61,6 +54,6 @@ export default async function ScheduleListPage() {
           ))}
         </ul>
       )}
-    </main>
+    </DashShell>
   );
 }

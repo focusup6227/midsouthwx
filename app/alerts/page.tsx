@@ -1,5 +1,6 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,15 +23,10 @@ export default async function AlertsPage() {
     .limit(100);
 
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/dashboard" className="text-wx-mute text-sm">← Dashboard</Link>
-          <h1 className="text-2xl font-bold">Alerts</h1>
-        </div>
-        <Link href="/compose" className="btn">New alert</Link>
-      </div>
-
+    <DashShell
+      title="Alerts"
+      actions={<Link href="/compose" className="btn">New alert</Link>}
+    >
       <section className="card divide-y divide-wx-line">
         {messages?.length ? (
           messages.map((m) => (
@@ -58,6 +54,6 @@ export default async function AlertsPage() {
           <p className="text-wx-mute text-sm p-5">No alerts yet. <Link href="/compose" className="text-wx-accent">Send your first →</Link></p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

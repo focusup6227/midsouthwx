@@ -1,6 +1,6 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import Link from 'next/link';
 import ScheduleForm from '../ScheduleForm';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,22 +19,13 @@ export default async function NewSchedulePage() {
   ]);
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/schedule" className="text-wx-mute text-sm">
-            ← Schedules
-          </Link>
-          <h1 className="text-2xl font-bold">New schedule</h1>
-        </div>
-      </div>
-
+    <DashShell title="New schedule" backHref="/schedule" width="narrow">
       <ScheduleForm
         templates={templatesRes.data ?? []}
         groups={groupsRes.data ?? []}
         regions={regionsRes.data ?? []}
         subscribers={subsRes.data ?? []}
       />
-    </main>
+    </DashShell>
   );
 }

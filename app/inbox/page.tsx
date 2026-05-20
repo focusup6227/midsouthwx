@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import InboxRefresher from './InboxRefresher';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,15 +40,8 @@ export default async function InboxPage() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
+    <DashShell title="Inbox" width="narrow">
       <InboxRefresher />
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/dashboard" className="text-wx-mute text-sm">← Dashboard</Link>
-          <h1 className="text-2xl font-bold">Inbox</h1>
-        </div>
-      </div>
-
       <section className="card divide-y divide-wx-line">
         {convos?.length ? (
           convos.map((c) => {
@@ -90,6 +84,6 @@ export default async function InboxPage() {
           <p className="text-wx-mute text-sm p-5">No conversations yet.</p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

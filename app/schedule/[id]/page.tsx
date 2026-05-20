@@ -1,8 +1,8 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import ScheduleForm from '../ScheduleForm';
 import type { AudienceSpecT } from '../actions';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -33,16 +33,8 @@ export default async function EditSchedulePage({ params }: { params: { id: strin
   const editable = row.status === 'pending' || row.status === 'failed';
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/schedule" className="text-wx-mute text-sm">
-            ← Schedules
-          </Link>
-          <h1 className="text-2xl font-bold">Edit schedule</h1>
-          <p className="text-xs text-wx-mute mt-1 uppercase">status: {row.status}</p>
-        </div>
-      </div>
+    <DashShell title="Edit schedule" backHref="/schedule" width="narrow">
+      <p className="text-xs text-wx-mute uppercase">status: {row.status}</p>
 
       {!editable ? (
         <p className="text-wx-mute text-sm">
@@ -64,6 +56,6 @@ export default async function EditSchedulePage({ params }: { params: { id: strin
           }}
         />
       )}
-    </main>
+    </DashShell>
   );
 }

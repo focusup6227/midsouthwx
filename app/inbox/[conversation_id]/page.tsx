@@ -1,7 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import ThreadAutoRead from './ThreadAutoRead';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -30,17 +30,13 @@ export default async function ThreadPage({ params }: { params: { conversation_id
   const whereLabel = sub?.current_address ? 'Currently at' : 'Home';
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
+    <DashShell title={sub?.display_name ?? 'Conversation'} backHref="/inbox" width="narrow">
       <ThreadAutoRead conversationId={params.conversation_id} />
-      <div>
-        <Link href="/inbox" className="text-wx-mute text-sm">← Inbox</Link>
-        <h1 className="text-2xl font-bold">{sub?.display_name ?? 'Conversation'}</h1>
-        <p className="text-xs text-wx-mute">
-          {sub?.telegram_username ? `@${sub.telegram_username} · ` : ''}
-          chat id {sub?.telegram_chat_id ?? '—'} · status {sub?.status ?? '—'}
-          {sub?.phone ? ` · ${sub.phone}` : ''}
-        </p>
-      </div>
+      <p className="text-xs text-wx-mute">
+        {sub?.telegram_username ? `@${sub.telegram_username} · ` : ''}
+        chat id {sub?.telegram_chat_id ?? '—'} · status {sub?.status ?? '—'}
+        {sub?.phone ? ` · ${sub.phone}` : ''}
+      </p>
 
       {whereAt && (
         <section className={`card p-4 ${hasDistress ? 'border-wx-danger' : ''}`}>
@@ -91,6 +87,6 @@ export default async function ThreadPage({ params }: { params: { conversation_id
           <p className="text-wx-mute text-sm p-5">No replies yet.</p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

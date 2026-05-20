@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import InviteOperatorForm from './InviteOperatorForm';
+import DashShell, { isFieldMode } from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,25 +11,64 @@ export default async function DashboardHome({
   searchParams?: { operator_enroll?: string };
 }) {
   const supa = supabaseServer();
-  const [{ count: activeSubs }, { count: unread }, { count: groupCount }, { data: recent }] =
-    await Promise.all([
-      supa
-        .from('subscribers')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'active'),
-      supa
-        .from('replies')
-        .select('*', { count: 'exact', head: true })
-        .is('read_at', null),
-      supa
-        .from('custom_groups')
-        .select('*', { count: 'exact', head: true }),
-      supa
-        .from('messages')
-        .select('id, body_md, recipient_count, status, sent_at, created_at')
-        .order('created_at', { ascending: false })
-        .limit(10),
-    ]);
+  const field = await isFieldMode();
+
+  const [
+    { count: activeSubs },
+    { count: unread },
+    { count: groupCount },
+    { count: pendingNws },
+    { data: recent },
+  ] = await Promise.all([
+    supa.from('subscribers').select('*', { count: 'exact', head: true }).eq('status', 'active'),
+    supa.from('replies').select('*', { count: 'exact', head: true }).is('read_at', null),
+    supa.from('custom_groups').select('*', { count: 'exact', head: true }),
+    supa
+      .from('messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'pending_approval')
+      .eq('source', 'nws'),
+    field
+      ? Promise.resolve({ data: null })
+      : supa
+          .from('messages')
+          .select('id, body_md, recipient_count, status, sent_at, created_at')
+          .order('created_at', { ascending: false })
+          .limit(10),
+  ]);
+
+  if (field) {
+    const JumboTile = ({
+      href, title, value, hint,
+    }: {
+      href: string; title: string; value: string | number; hint?: string;
+    }) => (
+      <Link
+        href={href}
+        className="card flex min-h-32 flex-col justify-between p-5 transition hover:border-wx-accent"
+      >
+        <div className="text-xs uppercase tracking-wide text-wx-mute">{title}</div>
+        <div className="text-5xl font-bold">{value}</div>
+        {hint ? <div className="text-xs text-wx-mute">{hint}</div> : null}
+      </Link>
+    );
+
+    return (
+      <DashShell>
+        <div className="grid grid-cols-2 gap-4">
+          <JumboTile href="/compose" title="New alert" value="Send" hint="Compose + queue" />
+          <JumboTile href="/inbox" title="Inbox" value={unread ?? 0} hint="Unread replies" />
+          <JumboTile
+            href="/nws"
+            title="NWS pending"
+            value={pendingNws ?? 0}
+            hint="Awaiting approval"
+          />
+          <JumboTile href="/radar" title="Radar" value="View" hint="NEXRAD + draw" />
+        </div>
+      </DashShell>
+    );
+  }
 
   const Tile = ({
     href, title, value, hint,
@@ -43,17 +83,17 @@ export default async function DashboardHome({
   );
 
   return (
-    <main className="max-w-5xl mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Mid-South WX</h1>
-        <div className="flex gap-2">
+    <DashShell
+      title="Mid-South WX"
+      actions={
+        <>
           <Link href="/compose" className="btn">New alert</Link>
           <Link href="/schedule" className="btn-ghost">Schedule</Link>
           <Link href="/nws" className="btn-ghost">NWS</Link>
           <Link href="/inbox" className="btn-ghost">Inbox</Link>
-        </div>
-      </div>
-
+        </>
+      }
+    >
       {searchParams?.operator_enroll === 'failed' ? (
         <div className="rounded-lg border border-wx-danger/40 bg-wx-danger/10 px-4 py-3 text-sm">
           Could not save your operator profile after sign-in. Ensure the latest database migrations are applied, then try signing out and back in.
@@ -101,6 +141,6 @@ export default async function DashboardHome({
           <p className="text-wx-mute text-sm">No alerts yet. Send your first one →</p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }

@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import { createGroup } from './actions';
+import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,12 +17,7 @@ export default async function GroupsPage() {
   for (const m of memberships ?? []) counts[m.group_id] = (counts[m.group_id] ?? 0) + 1;
 
   return (
-    <main className="max-w-3xl mx-auto p-6 space-y-6">
-      <div>
-        <Link href="/dashboard" className="text-wx-mute text-sm">← Dashboard</Link>
-        <h1 className="text-2xl font-bold">Groups</h1>
-      </div>
-
+    <DashShell title="Groups" width="narrow">
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold">New group</h2>
         <form action={createGroup} className="space-y-2">
@@ -66,6 +62,6 @@ export default async function GroupsPage() {
           <p className="text-wx-mute text-sm p-5">No groups yet.</p>
         )}
       </section>
-    </main>
+    </DashShell>
   );
 }
