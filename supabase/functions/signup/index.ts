@@ -51,7 +51,7 @@ Deno.serve(async (req) => {
       headers: {
         'access-control-allow-origin': '*',
         'access-control-allow-methods': 'POST,OPTIONS',
-        'access-control-allow-headers': 'content-type',
+        'access-control-allow-headers': 'content-type,apikey,authorization',
       },
     });
   }

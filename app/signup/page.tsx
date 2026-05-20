@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { supabasePublishableKey } from '@/lib/supabase/env';
 
 export default function SignupPage() {
   const [form, setForm] = useState({
@@ -33,7 +34,10 @@ export default function SignupPage() {
     const url = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/signup`;
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        apikey: supabasePublishableKey(),
+      },
       body: JSON.stringify({
         ...form,
         lat: coords?.lat,
