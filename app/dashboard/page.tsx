@@ -1,7 +1,14 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
+import InviteOperatorForm from './InviteOperatorForm';
 
-export default async function DashboardHome() {
+export const dynamic = 'force-dynamic';
+
+export default async function DashboardHome({
+  searchParams,
+}: {
+  searchParams?: { operator_enroll?: string };
+}) {
   const supa = supabaseServer();
   const [{ count: activeSubs }, { count: unread }, { count: groupCount }, { data: recent }] =
     await Promise.all([
@@ -41,16 +48,33 @@ export default async function DashboardHome() {
         <h1 className="text-2xl font-bold">Mid-South WX</h1>
         <div className="flex gap-2">
           <Link href="/compose" className="btn">New alert</Link>
+          <Link href="/schedule" className="btn-ghost">Schedule</Link>
+          <Link href="/nws" className="btn-ghost">NWS</Link>
           <Link href="/inbox" className="btn-ghost">Inbox</Link>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {searchParams?.operator_enroll === 'failed' ? (
+        <div className="rounded-lg border border-wx-danger/40 bg-wx-danger/10 px-4 py-3 text-sm">
+          Could not save your operator profile after sign-in. Ensure the latest database migrations are applied, then try signing out and back in.
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Tile href="/subscribers" title="Active subscribers" value={activeSubs ?? 0} />
         <Tile href="/inbox" title="Unread replies" value={unread ?? 0} />
         <Tile href="/groups" title="Groups" value={groupCount ?? 0} hint="Manage custom audiences" />
+        <Tile href="/radar" title="Radar" value="View" hint="NEXRAD + draw alerts" />
         <Tile href="/settings" title="Settings" value="·" hint="Bot, templates, profile" />
       </div>
+
+      <section className="card p-5 space-y-3">
+        <h2 className="font-semibold">Invite operator</h2>
+        <p className="text-sm text-wx-mute">
+          Send a Supabase invite email. After they accept, they are enrolled as an operator the same way as your account.
+        </p>
+        <InviteOperatorForm />
+      </section>
 
       <section className="card p-5">
         <div className="flex items-center justify-between mb-3">

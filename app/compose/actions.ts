@@ -10,6 +10,7 @@ const AudienceSpec = z.object({
   regions: z.array(z.string().uuid()).optional(),
   groups: z.array(z.string().uuid()).optional(),
   subscribers: z.array(z.string().uuid()).optional(),
+  geometry: z.any().optional(), // circle or GeoJSON geometry for radar selections
 });
 
 const QuickReply = z.object({ label: z.string().min(1), data: z.string().min(1) });
@@ -70,4 +71,17 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
 export async function sendAndRedirect(input: z.infer<typeof SendInput>): Promise<never> {
   const res = await sendNow(input);
   redirect(`/alerts/${res.id}`);
+}
+
+export type DraftTone = 'urgent-calm' | 'technical' | 'brief';
+export type DraftContext = 'nws' | 'thread' | 'raw';
+
+export async function draftWithAI(params: {
+  context: DraftContext;
+  tone: DraftTone;
+  sourceText: string;
+}): Promise<{ body_md: string; quick_replies: { label: string; data: string }[] | null }> {
+  const { generateDraft } = await import('@/lib/ai/draft');
+  const result = await generateDraft(params);
+  return result;
 }

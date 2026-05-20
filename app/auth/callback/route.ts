@@ -18,11 +18,17 @@ export async function GET(req: Request) {
   const user = data.user;
   if (user) {
     // First-time login auto-enrolls the operator. Subsequent visits no-op.
-    await supa.from('operators').upsert(
+    const { error: upsertErr } = await supa.from('operators').upsert(
       { user_id: user.id, display_name: user.email },
       { onConflict: 'user_id' },
     );
+    if (upsertErr) {
+      console.error('operators upsert failed', upsertErr);
+      const dest = new URL(next, url.origin);
+      dest.searchParams.set('operator_enroll', 'failed');
+      return NextResponse.redirect(dest);
+    }
   }
 
-  return NextResponse.redirect(new URL(next, url));
+  return NextResponse.redirect(new URL(next, url.origin));
 }

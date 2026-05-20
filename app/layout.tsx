@@ -1,4 +1,5 @@
 import './globals.css';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import type { Metadata, Viewport } from 'next';
 import ServiceWorkerRegistrar from './ServiceWorkerRegistrar';
 

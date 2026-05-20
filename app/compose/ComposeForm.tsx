@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useTransition } from 'react';
-import { previewAudience, sendAndRedirect, type AudienceSpecT } from './actions';
+import { useState, useTransition, useEffect } from 'react';
+import { previewAudience, sendAndRedirect, draftWithAI, type AudienceSpecT, type DraftTone } from './actions';
 
 type Template = {
   id: string;
@@ -13,18 +13,20 @@ type Template = {
 type Named = { id: string; name: string };
 type Sub = { id: string; display_name: string; telegram_chat_id: number | null };
 
-type Kind = 'all' | 'regions' | 'groups' | 'subscribers';
+type Kind = 'all' | 'regions' | 'groups' | 'subscribers' | 'geometry';
 
 export default function ComposeForm({
   templates,
   groups,
   regions,
   subscribers,
+  initialGeometry,
 }: {
   templates: Template[];
   groups: Named[];
   regions: (Named & { kind: string })[];
   subscribers: Sub[];
+  initialGeometry?: any;
 }) {
   const [templateId, setTemplateId] = useState<string>('');
   const [body, setBody] = useState('');
@@ -34,6 +36,16 @@ export default function ComposeForm({
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [geometry, setGeometry] = useState<any>(initialGeometry ?? null);
+  const [aiTone, setAiTone] = useState<DraftTone>('urgent-calm');
+  const [aiPending, setAiPending] = useState(false);
+
+  useEffect(() => {
+    if (initialGeometry) {
+      setKind('geometry');
+      setGeometry(initialGeometry);
+    }
+  }, [initialGeometry]);
 
   const applyTemplate = (id: string) => {
     setTemplateId(id);
@@ -44,10 +56,28 @@ export default function ComposeForm({
     setQuickReplies(t.default_quick_replies ?? []);
   };
 
+  const onAIDraft = (sourceText?: string) => {
+    const text = sourceText || body || 'Recent NWS alert or situation summary';
+    setAiPending(true);
+    setError(null);
+    startTransition(async () => {
+      try {
+        const res = await draftWithAI({ context: 'raw', tone: aiTone, sourceText: text });
+        setBody(res.body_md);
+        if (res.quick_replies) setQuickReplies(res.quick_replies);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'AI draft failed');
+      } finally {
+        setAiPending(false);
+      }
+    });
+  };
+
   const buildSpec = (): AudienceSpecT => {
     if (kind === 'all') return { all: true };
     if (kind === 'groups') return { groups: [...ids] };
     if (kind === 'regions') return { regions: [...ids] };
+    if (kind === 'geometry' && geometry) return { geometry };
     return { subscribers: [...ids] };
   };
 
@@ -76,8 +106,12 @@ export default function ComposeForm({
       setError('Body cannot be empty');
       return;
     }
-    if (kind !== 'all' && ids.size === 0) {
+    if (kind !== 'all' && kind !== 'geometry' && ids.size === 0) {
       setError('Select at least one ' + kind.slice(0, -1));
+      return;
+    }
+    if (kind === 'geometry' && !geometry) {
+      setError('No area selected from radar');
       return;
     }
     const isCheckin = templates.find((t) => t.id === templateId)?.category === 'checkin';
@@ -139,7 +173,28 @@ export default function ComposeForm({
       </section>
 
       <section className="card p-5 space-y-3">
-        <label className="block text-xs uppercase tracking-wide text-wx-mute">Body</label>
+        <div className="flex items-center justify-between">
+          <label className="block text-xs uppercase tracking-wide text-wx-mute">Body</label>
+          <div className="flex items-center gap-2">
+            <select
+              className="input text-xs py-0.5"
+              value={aiTone}
+              onChange={(e) => setAiTone(e.target.value as DraftTone)}
+            >
+              <option value="urgent-calm">Urgent but calm</option>
+              <option value="technical">Technical</option>
+              <option value="brief">Brief</option>
+            </select>
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => onAIDraft()}
+              disabled={aiPending || pending}
+            >
+              {aiPending ? 'Drafting…' : 'AI Draft'}
+            </button>
+          </div>
+        </div>
         <textarea
           className="input"
           rows={6}
@@ -205,7 +260,7 @@ export default function ComposeForm({
       <section className="card p-5 space-y-3">
         <label className="block text-xs uppercase tracking-wide text-wx-mute">Audience</label>
         <div className="flex flex-wrap gap-3">
-          {(['all', 'groups', 'regions', 'subscribers'] as Kind[]).map((k) => (
+          {(['all', 'groups', 'regions', 'subscribers', 'geometry'] as Kind[]).map((k) => (
             <label key={k} className="flex items-center gap-2 text-sm">
               <input
                 type="radio"
@@ -214,14 +269,21 @@ export default function ComposeForm({
                   setKind(k);
                   setIds(new Set());
                   setPreviewCount(null);
+                  if (k !== 'geometry') setGeometry(null);
                 }}
               />
-              {k === 'all' ? 'All active' : k[0].toUpperCase() + k.slice(1)}
+              {k === 'all' ? 'All active' : k === 'geometry' ? 'Radar area' : k[0].toUpperCase() + k.slice(1)}
             </label>
           ))}
         </div>
 
-        {kind !== 'all' && (
+        {kind === 'geometry' && geometry && (
+          <div className="text-xs bg-blue-50 border border-blue-200 rounded p-2 text-blue-700">
+            Targeting area selected on the radar map. Users inside the circle/polygon will receive this alert.
+          </div>
+        )}
+
+        {kind !== 'all' && kind !== 'geometry' && (
           <div className="max-h-56 overflow-auto border border-wx-line rounded-lg p-2 space-y-1">
             {optionList.length === 0 ? (
               <p className="text-wx-mute text-sm p-2">No {kind} yet.</p>

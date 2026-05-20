@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import NwsApproveButtons from '@/app/nws/NwsApproveButtons';
 import CheckinTally from './CheckinTally';
 
 export const dynamic = 'force-dynamic';
@@ -20,13 +21,19 @@ export default async function AlertDetail({ params }: { params: { id: string } }
 
   const { data: msg } = await supa
     .from('messages')
-    .select('id, body_md, source, status, audience_spec, quick_replies, template_id, recipient_count, created_at, sent_at')
+    .select(
+      'id, body_md, source, status, audience_spec, quick_replies, template_id, recipient_count, created_at, sent_at, nws_alert_id',
+    )
     .eq('id', params.id)
     .single();
 
   if (!msg) notFound();
 
   const spec = (msg.audience_spec ?? {}) as Spec;
+
+  const { data: nwsRow } = msg.nws_alert_id
+    ? await supa.from('nws_alerts').select('nws_id, event, headline').eq('id', msg.nws_alert_id).single()
+    : { data: null };
 
   const [groupRes, regionRes, subRes, queueRes, checkinRes] = await Promise.all([
     spec.groups?.length
@@ -59,6 +66,38 @@ export default async function AlertDetail({ params }: { params: { id: string } }
         <Link href="/alerts" className="text-wx-mute text-sm">← Alerts</Link>
         <h1 className="text-2xl font-bold">Alert detail</h1>
       </div>
+
+      {msg.source === 'nws' && nwsRow && (
+        <section className="card p-5 space-y-2">
+          <h2 className="font-semibold">NWS source</h2>
+          <p className="text-sm text-wx-mute">
+            {nwsRow.event}
+            {nwsRow.headline ? ` · ${nwsRow.headline}` : ''}
+          </p>
+          <a
+            href={
+              nwsRow.nws_id.startsWith('http')
+                ? nwsRow.nws_id
+                : `https://api.weather.gov/alerts/${encodeURIComponent(nwsRow.nws_id)}`
+            }
+            target="_blank"
+            rel="noreferrer"
+            className="text-wx-accent text-sm"
+          >
+            Open on api.weather.gov →
+          </a>
+        </section>
+      )}
+
+      {msg.source === 'nws' && msg.status === 'pending_approval' && (
+        <section className="card p-5 space-y-3 border border-wx-accent/30">
+          <h2 className="font-semibold">Approve or reject</h2>
+          <p className="text-sm text-wx-mute">
+            Approving runs the normal enqueue step and sends Telegram deliveries. Rejecting marks this message cancelled.
+          </p>
+          <NwsApproveButtons messageId={msg.id} />
+        </section>
+      )}
 
       <section className="card p-5 space-y-3">
         <div className="flex flex-wrap gap-4 text-xs text-wx-mute">

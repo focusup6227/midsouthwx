@@ -10,3 +10,7 @@ export function supabasePublishableKey(): string {
     ''
   );
 }
+
+export function mapboxAccessToken(): string {
+  return process.env.NEXT_PUBLIC_MAPBOX_TOKEN || '';
+}

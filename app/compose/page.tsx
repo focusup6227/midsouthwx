@@ -4,7 +4,11 @@ import ComposeForm from './ComposeForm';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ComposePage() {
+export default async function ComposePage({
+  searchParams,
+}: {
+  searchParams: { geo?: string };
+}) {
   const supa = supabaseServer();
 
   const [templatesRes, groupsRes, regionsRes, subsRes] = await Promise.all([
@@ -32,6 +36,7 @@ export default async function ComposePage() {
         groups={groupsRes.data ?? []}
         regions={regionsRes.data ?? []}
         subscribers={subsRes.data ?? []}
+        initialGeometry={searchParams.geo ? JSON.parse(searchParams.geo) : null}
       />
     </main>
   );

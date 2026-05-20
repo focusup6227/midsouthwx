@@ -48,3 +48,12 @@ verify_jwt = false
 
 [functions.telegram-send-worker]
 verify_jwt = false
+
+[functions.scheduled-dispatcher]
+verify_jwt = false
+
+[functions.nws-poll]
+verify_jwt = false
+
+[functions.nws-dispatcher]
+verify_jwt = false
