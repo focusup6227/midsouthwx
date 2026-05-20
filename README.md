@@ -117,10 +117,12 @@ server-side.
 - Inbound replies + callback queries land in `replies` / `check_in_responses`.
 - Distress-keyword detection DMs the operator via Telegram self-notify.
 
-What's stubbed (lands in next code drop):
-- `/compose`, `/inbox`, `/subscribers`, `/groups`, `/settings`, `/map` pages.
-- Realtime hooks in the dashboard (Supabase publication is already configured in 0005).
-- PWA service worker + Web Push (Telegram self-notify is the v1 primary).
+What's stubbed (lands in a future code drop):
+- External integration webhooks (`integration_endpoints` schema exists; `lib/integrations/notify.ts` is a console-log stub).
+- Web Push (minimal service worker only — Telegram self-notify is primary).
+- `/map` subscriber-distribution heatmap.
+- Audit log CSV export and template `{{variable}}` substitution in `/compose`.
+- Telegram approve/skip for non-NWS scheduled alerts inside `send_window_minutes`.
 
 ## Repo layout
 

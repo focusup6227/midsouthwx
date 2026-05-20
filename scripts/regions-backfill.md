@@ -40,6 +40,24 @@ Replace `$county_geojson` / `$zone_geojson` with actual GeoJSON strings from you
 
 ## Workflow
 
-1. Pick target counties / zones for Mid-South coverage.
-2. Fetch geometries once; store in version control as GeoJSON if small enough, or run a one-off Node/Python script that POSTs to Supabase with service role (not committed).
-3. Load via `INSERT ... ON CONFLICT` if you add a unique key; otherwise delete duplicates manually before production traffic.
+The `/regions` admin page and `scripts/import-regions.mjs` use the
+`public.upsert_region_geojson` RPC (migration `20260525000001_upsert_region_geojson.sql`)
+which handles the `ST_MakeValid` / `ST_Multi` cast and idempotency on `county_fips`
+or `ugc_code`. Recommended path:
+
+```bash
+# Mid-South counties (TN, MS, AR FIPS):
+node scripts/import-regions.mjs --counties 47,28,05
+
+# Mid-South NWS forecast zones (requires NWS_USER_AGENT in .env.local):
+node scripts/import-regions.mjs --zones TN,MS,AR
+
+# Or load a hand-curated GeoJSON FeatureCollection:
+node scripts/import-regions.mjs --file path/to/regions.geojson
+```
+
+Each feature's properties must include `name` and either `county_fips` (kind defaults
+to `county`) or `ugc_code` (kind `zone`), or use `properties.kind = 'custom_polygon'`.
+
+The `regions_after_change` trigger re-runs subscriber matching automatically; nothing
+else to do. For ad-hoc one-off rows, the `/regions/new` UI accepts pasted GeoJSON.
