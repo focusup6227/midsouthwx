@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import SubscriberActions from './SubscriberActions';
 import LocationCard from './LocationCard';
 import DashShell from '@/components/DashShell';
+import { formatPrefsSummary, parseAlertPreferences, parseQuietHours } from '@/lib/subscribers/prefs';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,11 +13,14 @@ export default async function SubscriberDetail({ params }: { params: { id: strin
 
   const { data: sub } = await supa
     .from('subscribers')
-    .select('id, display_name, telegram_chat_id, telegram_username, phone, email, status, zip, county_fips, home_address, current_address, current_address_updated_at, link_token, link_expires_at, created_at, location')
+    .select('id, display_name, telegram_chat_id, telegram_username, phone, email, status, zip, county_fips, home_address, current_address, current_address_updated_at, link_token, link_expires_at, created_at, location, alert_preferences, quiet_hours')
     .eq('id', params.id)
     .single();
 
   if (!sub) notFound();
+
+  const prefs = parseAlertPreferences(sub.alert_preferences);
+  const quietHours = parseQuietHours(sub.quiet_hours);
 
   const [regionsRes, groupsRes, deliveriesRes, repliesCountRes] = await Promise.all([
     supa
@@ -91,6 +95,14 @@ export default async function SubscriberDetail({ params }: { params: { id: strin
       </section>
 
       <SubscriberActions id={sub.id} status={sub.status} />
+
+      <section className="card p-5 space-y-2">
+        <h2 className="font-semibold">Alert preferences</h2>
+        <p className="text-sm whitespace-pre-wrap text-wx-mute">
+          {formatPrefsSummary(prefs, quietHours)}
+        </p>
+        <p className="text-xs text-wx-mute">Subscriber can change these in Telegram with /prefs.</p>
+      </section>
 
       <LocationCard
         id={sub.id}

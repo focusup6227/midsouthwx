@@ -14,6 +14,14 @@ import {
   advanceScheduleAfterSend,
   scheduleMetaFromAudience,
 } from './schedule-helpers.ts';
+import {
+  DEFAULT_ALERT_PREFERENCES,
+  DEFAULT_QUIET_HOURS,
+  formatPrefsSummary,
+  parseAlertPreferences,
+  parseQuietHours,
+  prefsKeyboard,
+} from './subscriber-prefs.ts';
 
 // Same as secret name TELEGRAM_WEBHOOK_SECRET; parts joined so upload/bundle cannot break one long literal.
 const TELEGRAM_WEBHOOK_SECRET_KEY = ['TELEGRAM', 'WEBHOOK', 'SECRET'].join('_');
@@ -158,6 +166,100 @@ async function handleOperatorCallback(
   return false;
 }
 
+const PREF_TOGGLE = /^pref:toggle:(warnings|watches|advisories|statements|quiet)$/;
+
+async function sendPrefsMenu(
+  token: string,
+  chatId: number,
+  prefs: ReturnType<typeof parseAlertPreferences>,
+  qh: ReturnType<typeof parseQuietHours>,
+) {
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text: formatPrefsSummary(prefs, qh),
+    reply_markup: prefsKeyboard(prefs, qh),
+  });
+}
+
+async function handlePrefCallback(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+  cqId: string,
+  data: string,
+): Promise<boolean> {
+  const m = PREF_TOGGLE.exec(data);
+  if (!m) return false;
+
+  const field = m[1];
+  const { data: sub, error } = await supa
+    .from('subscribers')
+    .select('id, alert_preferences, quiet_hours')
+    .eq('telegram_chat_id', chatId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (error || !sub) {
+    await tgAnswerCallbackQuery(token, cqId, 'Sign up first to manage preferences.');
+    return true;
+  }
+
+  const prefs = parseAlertPreferences(sub.alert_preferences);
+  const qh = parseQuietHours(sub.quiet_hours);
+
+  if (field === 'quiet') {
+    qh.enabled = !qh.enabled;
+    if (qh.enabled && !sub.quiet_hours) {
+      qh.start = DEFAULT_QUIET_HOURS.start;
+      qh.end = DEFAULT_QUIET_HOURS.end;
+      qh.timezone = DEFAULT_QUIET_HOURS.timezone;
+    }
+    await supa
+      .from('subscribers')
+      .update({ quiet_hours: qh, updated_at: new Date().toISOString() })
+      .eq('id', sub.id);
+  } else {
+    const key = field as keyof typeof prefs;
+    prefs[key] = !prefs[key];
+    await supa
+      .from('subscribers')
+      .update({ alert_preferences: prefs, updated_at: new Date().toISOString() })
+      .eq('id', sub.id);
+  }
+
+  await tgAnswerCallbackQuery(token, cqId, 'Updated.');
+  await sendPrefsMenu(token, chatId, prefs, qh);
+  return true;
+}
+
+async function showPrefsForChat(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+) {
+  const { data: sub } = await supa
+    .from('subscribers')
+    .select('alert_preferences, quiet_hours')
+    .eq('telegram_chat_id', chatId)
+    .eq('status', 'active')
+    .maybeSingle();
+
+  if (!sub) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'You need to finish sign-up before changing preferences. Use the link from the website.',
+    });
+    return;
+  }
+
+  await sendPrefsMenu(
+    token,
+    chatId,
+    parseAlertPreferences(sub.alert_preferences ?? DEFAULT_ALERT_PREFERENCES),
+    parseQuietHours(sub.quiet_hours),
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ ok: false }, 405);
 
@@ -188,6 +290,10 @@ Deno.serve(async (req) => {
       const data: string = cq.data ?? '';
 
       if (await handleOperatorCallback(supa, token, chatId, cqId, data)) {
+        return json({ ok: true });
+      }
+
+      if (await handlePrefCallback(supa, token, chatId, cqId, data)) {
         return json({ ok: true });
       }
 
@@ -323,6 +429,7 @@ Deno.serve(async (req) => {
         chat_id: chatId,
         text:
           'You are signed up for Mid-South WX alerts.\n\n' +
+          '• Send `/prefs` to choose warnings vs watches, advisories, and quiet hours.\n' +
           '• If you are not home during severe weather, send `/where <address>` so we know where to send help.\n' +
           '• Send `/home` to clear your current-location override.\n' +
           '• Reply STOP or send /unsubscribe to opt out.',
@@ -367,6 +474,11 @@ Deno.serve(async (req) => {
     }
 
     // /home — clear current-address override (back at home)
+    if (text === '/prefs' || text?.startsWith('/prefs ')) {
+      await showPrefsForChat(supa, token, chatId);
+      return json({ ok: true });
+    }
+
     if (text === '/home') {
       await supa
         .from('subscribers')

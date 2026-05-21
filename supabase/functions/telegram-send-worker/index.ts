@@ -19,6 +19,7 @@ import {
   tgSendMessage,
   type QuickReply,
 } from './_shared/telegram.ts';
+import { deferThirtyMinutes, deliveryDecision } from './subscriber-prefs.ts';
 
 const BATCH = 200;          // rows per cron tick
 const RATE_PER_SEC = 25;    // safely under Telegram's 30/s
@@ -33,6 +34,10 @@ type ClaimedRow = {
   body_rendered: string;
   quick_replies: QuickReply[] | null;
   telegram_chat_id: number;
+  message_source: string;
+  nws_event: string | null;
+  alert_preferences: unknown;
+  quiet_hours: unknown;
 };
 
 async function claimBatch(supa: ReturnType<typeof serviceClient>) {
@@ -74,6 +79,25 @@ Deno.serve(async (req) => {
 
   for (const row of rows) {
     touchedMessages.add(row.message_id);
+
+    const decision = deliveryDecision({
+      messageSource: row.message_source,
+      nwsEvent: row.nws_event,
+      quietHours: row.quiet_hours,
+    });
+
+    if (decision === 'defer') {
+      await supa
+        .from('outbound_queue')
+        .update({
+          status: 'pending',
+          locked_at: null,
+          locked_by: null,
+          send_after: deferThirtyMinutes(),
+        })
+        .eq('id', row.id);
+      continue;
+    }
 
     try {
       const result = await tgSendMessage(tgToken, {
