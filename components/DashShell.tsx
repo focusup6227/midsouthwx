@@ -9,6 +9,7 @@ type Props = {
   actions?: ReactNode;
   backHref?: string;
   width?: 'narrow' | 'normal' | 'wide' | 'full';
+  bare?: boolean;
   children: ReactNode;
 };
 
@@ -28,6 +29,7 @@ export default async function DashShell({
   actions,
   backHref,
   width = 'normal',
+  bare = false,
   children,
 }: Props) {
   const field = await isFieldMode();
@@ -115,6 +117,9 @@ export default async function DashShell({
           ))}
         </nav>
       </header>
+      {bare ? (
+        <main className="w-full">{children}</main>
+      ) : (
       <main className={`mx-auto ${WIDTHS[width]} space-y-6 p-6`}>
         {(title || actions || backHref) && (
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -131,6 +136,7 @@ export default async function DashShell({
         )}
         {children}
       </main>
+      )}
     </>
   );
 }

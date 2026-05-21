@@ -7,8 +7,6 @@ import { buildAlertQueuedPayload, hmacSha256Hex } from '@/lib/integrations/paylo
 
 const uuid = z.string().uuid();
 
-export const SEVERITY_OPTIONS = ['', 'Minor', 'Moderate', 'Severe', 'Extreme'] as const;
-
 function parseEndpointForm(formData: FormData) {
   const enabledRaw = formData.get('enabled');
   return {

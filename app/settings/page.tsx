@@ -3,7 +3,7 @@ import { updateOperator } from './actions';
 import PasswordForm from './PasswordForm';
 import IntegrationEndpoints from './IntegrationEndpoints';
 import TemplateEditor from './TemplateEditor';
-import { SEVERITY_OPTIONS } from './integration-actions';
+import { SEVERITY_OPTIONS } from './integration-constants';
 import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
