@@ -4,7 +4,11 @@
 // Optional: set CRON_INVOKER_JWT in Edge secrets and send Authorization: Bearer <jwt>
 // from cron once Vault-backed headers are wired; otherwise matches send-worker (open POST).
 
-import { rrulestr } from 'npm:rrule@2.8.1';
+// Use esm.sh instead of npm: — npm specifiers were causing
+// "Function failed to start" (BOOT_ERROR) on Supabase's current Deno Edge
+// runtime. esm.sh is bundled+cached at edge, much more reliable across
+// runtime version bumps.
+import { rrulestr } from 'https://esm.sh/rrule@2.8.1';
 import { serviceClient, json } from './_shared/supabase.ts';
 
 const BATCH = 10;
