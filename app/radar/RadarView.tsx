@@ -448,14 +448,9 @@ export default function RadarView() {
   const level2GeoJSONSourceId = 'level2-geojson';
   const level2ImageSourceId = 'level2-image';
 
-  // Build a single-tile URL for the *current* frame. For RainViewer this is the
-  // active timestamp; for NCEP/THREDDS we always render "now".
-  const tileUrl: string | null = useMemo(() => {
-    if (useRainViewer && rvIndex && rvAllFrames.length) {
-      const f = rvAllFrames[Math.min(frame, rvAllFrames.length - 1)];
-      if (!f) return null;
-      return `${rvIndex.host}${f.path}/256/{z}/{x}/{y}/${RAINVIEWER_COLOR}/${RAINVIEWER_OPTS}.png`;
-    }
+  // Non-RainViewer products render a single "now" tile URL (NCEP / THREDDS).
+  const liveTileUrl: string | null = useMemo(() => {
+    if (useRainViewer) return null;
     if (selectedSite) {
       const site = selectedSite.toLowerCase();
       switch (effectiveProduct) {
@@ -484,18 +479,24 @@ export default function RadarView() {
       default:
         return null;
     }
-  }, [effectiveProduct, selectedSite, tileCacheKey, mrmsUrlPath, useRainViewer, rvIndex, rvAllFrames, frame]);
+  }, [effectiveProduct, selectedSite, tileCacheKey, mrmsUrlPath, useRainViewer]);
 
-  const radarSourceKey = useMemo(() => {
+  const rvFrameUrl = useCallback((f: RainViewerFrame) => {
+    if (!rvIndex) return '';
+    return `${rvIndex.host}${f.path}/256/{z}/{x}/{y}/${RAINVIEWER_COLOR}/${RAINVIEWER_OPTS}.png`;
+  }, [rvIndex]);
+
+  // Stable key for the live source — only swap when the URL *pattern* changes
+  // (provider / site / product / MRMS dataset), not on every frame.
+  const liveSourceKey = useMemo(() => {
     const base = selectedSite ? `site:${selectedSite.toLowerCase()}` : 'conus';
-    const tag = useRainViewer ? `rv:${rvAllFrames[frame]?.time ?? 0}` : `t:${tileCacheKey}`;
-    return `${base}:${effectiveProduct}:${mrmsUrlPath ?? '-'}:${tag}`;
-  }, [selectedSite, effectiveProduct, tileCacheKey, mrmsUrlPath, useRainViewer, rvAllFrames, frame]);
+    return `${base}:${effectiveProduct}:${mrmsUrlPath ?? '-'}:${tileCacheKey}`;
+  }, [selectedSite, effectiveProduct, tileCacheKey, mrmsUrlPath]);
 
-  const radarSource = useMemo(() => {
-    if (!tileUrl) return null;
-    return { type: 'raster' as const, tiles: [tileUrl], tileSize: 256 };
-  }, [tileUrl]);
+  const liveRadarSource = useMemo(() => {
+    if (!liveTileUrl) return null;
+    return { type: 'raster' as const, tiles: [liveTileUrl], tileSize: 256 };
+  }, [liveTileUrl]);
 
   const level2GeoJSONSource = useMemo(() => {
     if (!useLevel2 || pngFallback || !level2GeoJSON) return null;
@@ -514,7 +515,7 @@ export default function RadarView() {
     };
   }, [useLevel2, pngFallback, level2Overlay]);
 
-  const radarLayer = {
+  const liveRadarLayer = {
     id: radarLayerId,
     type: 'raster' as const,
     source: radarSourceId,
@@ -525,6 +526,9 @@ export default function RadarView() {
     },
     ...(radarBeforeId ? { beforeId: radarBeforeId } : {}),
   };
+
+  const rvLayerId = (i: number) => `rv-layer-${i}`;
+  const rvSourceId = (i: number) => `rv-src-${i}`;
 
   const level2FillLayer = {
     id: 'level2-fill',
@@ -555,12 +559,22 @@ export default function RadarView() {
     ...(radarBeforeId ? { beforeId: radarBeforeId } : {}),
   };
 
-  // Live opacity updates without remounting the source — keep both layers in sync.
+  // Live opacity + RainViewer frame visibility, all imperatively so swapping
+  // frames during playback never tears down a source (tiles stay in Mapbox
+  // cache → buttery scrubbing once each frame has been seen once).
   useEffect(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
     if (map.getLayer(radarLayerId)) {
-      map.setPaintProperty(radarLayerId, 'raster-opacity', opacity / 100);
+      map.setPaintProperty(radarLayerId, 'raster-opacity', useRainViewer ? 0 : opacity / 100);
+    }
+    if (useRainViewer) {
+      rvAllFrames.forEach((_, i) => {
+        const id = rvLayerId(i);
+        if (map.getLayer(id)) {
+          map.setPaintProperty(id, 'raster-opacity', i === frame ? opacity / 100 : 0);
+        }
+      });
     }
     if (map.getLayer('level2-raster')) {
       map.setPaintProperty('level2-raster', 'raster-opacity', opacity / 100);
@@ -572,7 +586,7 @@ export default function RadarView() {
         buildFillOpacityExpr(level2Product, opacity / 100, level2Overlay.vmin, level2Overlay.vmax),
       );
     }
-  }, [opacity, level2Overlay, level2Product]);
+  }, [opacity, level2Overlay, level2Product, useRainViewer, rvAllFrames, frame]);
 
   // ── Warning polygons ─────────────────────────────────────────────────
   const warningsGeo = useMemo(() => {
@@ -703,19 +717,84 @@ export default function RadarView() {
     window.location.href = `/compose?${params.toString()}`;
   };
 
-  // Playback loop. For RainViewer we step real frames; for other products the
-  // play button is hidden.
+  // Playback driver. Uses setTimeout so the dwell-at-NOW pause is variable per
+  // frame; re-runs whenever frame changes, which is cheap and predictable.
   useEffect(() => {
     if (!playing || !useRainViewer || totalFrames <= 1) return;
-    const ms = { '0.5x': 800, '1x': 400, '2x': 220, '4x': 110 }[speed] ?? 400;
-    const id = setInterval(() => {
-      setFrame((f) => {
-        const next = f + 1;
-        return next >= totalFrames ? 0 : next;
-      });
-    }, ms);
-    return () => clearInterval(id);
-  }, [playing, speed, useRainViewer, totalFrames]);
+    const baseMs = { '0.5x': 800, '1x': 400, '2x': 220, '4x': 110 }[speed] ?? 400;
+    // Pause briefly when we land on the most-recent observed frame so the
+    // viewer can read the "now" state before the loop continues into nowcast
+    // (or wraps back to the oldest past frame).
+    const dwell = frame === rvPastCount - 1 ? Math.max(baseMs * 4, 1400) : baseMs;
+    const id = setTimeout(() => {
+      setFrame((f) => (f + 1) % totalFrames);
+    }, dwell);
+    return () => clearTimeout(id);
+  }, [playing, speed, useRainViewer, totalFrames, rvPastCount, frame]);
+
+  // ── Scrub + keyboard ─────────────────────────────────────────────────
+  const trackRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const [hoverFrame, setHoverFrame] = useState<number | null>(null);
+
+  const scrubAtClientX = useCallback((clientX: number): number | null => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return null;
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    return Math.round((x / rect.width) * Math.max(0, totalFrames - 1));
+  }, [totalFrames]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const f = scrubAtClientX(e.clientX);
+      if (f != null) setFrame(f);
+    };
+    const onUp = () => { draggingRef.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [scrubAtClientX]);
+
+  // Keyboard shortcuts. Skipped when focus is on an input so the opacity
+  // slider, etc. keep working.
+  useEffect(() => {
+    if (!useRainViewer || totalFrames <= 1) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement | null;
+      const tag = tgt?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tgt?.isContentEditable) return;
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setPlaying((p) => !p);
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        setPlaying(false);
+        setFrame((f) => Math.max(0, f - 1));
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        setPlaying(false);
+        setFrame((f) => Math.min(totalFrames - 1, f + 1));
+      } else if (e.code === 'Home') {
+        e.preventDefault();
+        setPlaying(false);
+        setFrame(0);
+      } else if (e.code === 'End') {
+        e.preventDefault();
+        setPlaying(false);
+        setFrame(totalFrames - 1);
+      } else if (e.key === 'n' || e.key === 'N') {
+        e.preventDefault();
+        setPlaying(false);
+        setFrame(Math.max(0, rvPastCount - 1));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [useRainViewer, totalFrames, rvPastCount]);
 
   useEffect(() => {
     if (!selection) {
@@ -857,11 +936,37 @@ export default function RadarView() {
           }}
           onMouseLeave={() => { setHoverPixel(null); setHoverSub(null); }}
         >
-          {radarSource && (
-            <Source key={radarSourceKey} id={radarSourceId} {...radarSource}>
-              <Layer {...radarLayer} />
+          {liveRadarSource && (
+            <Source key={liveSourceKey} id={radarSourceId} {...liveRadarSource}>
+              <Layer {...liveRadarLayer} />
             </Source>
           )}
+
+          {/* Render every RainViewer frame as its own raster source. Only the
+              active frame is visible (opacity); all others sit at opacity 0 so
+              their tiles stay in Mapbox's cache. After one full pass through
+              the loop, every subsequent scrub/playback step is instant — no
+              tile re-fetch, no flicker. */}
+          {useRainViewer && rvAllFrames.map((f, i) => (
+            <Source
+              key={`rv-src-${f.time}`}
+              id={rvSourceId(i)}
+              type="raster"
+              tiles={[rvFrameUrl(f)]}
+              tileSize={256}
+            >
+              <Layer
+                id={rvLayerId(i)}
+                type="raster"
+                paint={{
+                  'raster-opacity': i === frame ? opacity / 100 : 0,
+                  'raster-fade-duration': 0,
+                  'raster-resampling': 'nearest',
+                }}
+                {...(radarBeforeId ? { beforeId: radarBeforeId } : {})}
+              />
+            </Source>
+          ))}
 
           {level2GeoJSONSource && (
             <Source
@@ -1180,46 +1285,166 @@ export default function RadarView() {
           </div>
         )}
 
-        {/* Timeline — only shown for products that have real frames */}
-        {useRainViewer && totalFrames > 1 && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(880px,calc(100%-380px))] min-w-[520px] z-30">
-            <div className="bg-wx-card border border-wx-line rounded-xl px-4 py-3.5 flex items-center gap-3.5">
-              <button onClick={() => setPlaying((p) => !p)} className="w-9 h-9 rounded-lg bg-wx-accent text-black grid place-items-center hover:bg-amber-300">
-                {playing ? <Pause size={16} /> : <Play size={16} />}
-              </button>
+        {/* Timeline — drag to scrub, space to play, arrows to step. */}
+        {useRainViewer && totalFrames > 1 && (() => {
+          const nowIdx = Math.max(0, rvPastCount - 1);
+          const nowPct = (nowIdx / Math.max(1, totalFrames - 1)) * 100;
+          const headPct = (frame / Math.max(1, totalFrames - 1)) * 100;
+          const hoverFrameTime =
+            hoverFrame != null && rvAllFrames[hoverFrame] ? rvAllFrames[hoverFrame].time : null;
+          const nowSec = Math.floor(Date.now() / 1000);
+          // Hour-grid labels (e.g. -2h / -1h / NOW / +30m). We snap to the
+          // frame closest to each marker time so the label sits on a tick.
+          const labelMinutes: { mins: number; label: string }[] = [
+            { mins: -120, label: '−2h' },
+            { mins: -60, label: '−1h' },
+            { mins: -30, label: '−30m' },
+            { mins: 0, label: 'NOW' },
+            { mins: 30, label: '+30m' },
+          ];
+          const labels = labelMinutes
+            .map(({ mins, label }) => {
+              const target = nowSec + mins * 60;
+              const idx = rvAllFrames.reduce(
+                (best, f, i) => Math.abs(f.time - target) < Math.abs(rvAllFrames[best].time - target) ? i : best,
+                0,
+              );
+              const diff = Math.abs(rvAllFrames[idx].time - target);
+              if (diff > 20 * 60) return null;
+              return { idx, label };
+            })
+            .filter((x): x is { idx: number; label: string } => x != null);
 
-              <div className="flex-1 relative h-8" onMouseDown={(e) => {
-                const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-                setFrame(Math.round((x / rect.width) * (totalFrames - 1)));
-              }}>
-                <div className="absolute left-0 right-0 top-1/2 h-1 bg-wx-line rounded-sm overflow-hidden -translate-y-1/2">
-                  <div className="absolute left-0 top-0 bottom-0 bg-wx-ok opacity-65" style={{ width: `${((rvPastCount - 1) / Math.max(1, totalFrames - 1)) * 100}%` }} />
-                  {rvAllFrames.length > rvPastCount && (
-                    <div className="absolute right-0 top-0 bottom-0 bg-[repeating-linear-gradient(45deg,rgba(251,191,36,0.08)_0_5px,rgba(251,191,36,0.20)_5px_10px)] border-l border-amber-500/50" style={{ width: `${(1 - (rvPastCount - 1) / Math.max(1, totalFrames - 1)) * 100}%` }} />
-                  )}
+          return (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(880px,calc(100%-380px))] min-w-[520px] z-30">
+              <div className="bg-wx-card border border-wx-line rounded-xl px-4 py-3.5 flex items-center gap-3.5">
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => { setPlaying(false); setFrame((f) => Math.max(0, f - 1)); }}
+                    className="w-7 h-9 grid place-items-center text-wx-mute hover:text-wx-fg"
+                    title="Previous frame (←)"
+                    aria-label="Previous frame"
+                  >‹</button>
+                  <button
+                    onClick={() => setPlaying((p) => !p)}
+                    className="w-9 h-9 rounded-lg bg-wx-accent text-black grid place-items-center hover:bg-amber-300"
+                    title={playing ? 'Pause (space)' : 'Play (space)'}
+                  >
+                    {playing ? <Pause size={16} /> : <Play size={16} />}
+                  </button>
+                  <button
+                    onClick={() => { setPlaying(false); setFrame((f) => Math.min(totalFrames - 1, f + 1)); }}
+                    className="w-7 h-9 grid place-items-center text-wx-mute hover:text-wx-fg"
+                    title="Next frame (→)"
+                    aria-label="Next frame"
+                  >›</button>
                 </div>
-                <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 flex justify-between px-0.5 pointer-events-none">
-                  {Array.from({ length: totalFrames }).map((_, i) => (
-                    <div key={i} className={`w-[1.5px] h-[7px] bg-wx-mute/50 rounded ${i === 0 || i === rvPastCount - 1 || i === totalFrames - 1 ? 'h-3 opacity-90' : ''}`} />
-                  ))}
+
+                <div className="flex-1 flex flex-col gap-1.5">
+                  <div
+                    ref={trackRef}
+                    className="relative h-7 cursor-pointer select-none"
+                    onMouseDown={(e) => {
+                      draggingRef.current = true;
+                      setPlaying(false);
+                      const f = scrubAtClientX(e.clientX);
+                      if (f != null) setFrame(f);
+                    }}
+                    onMouseMove={(e) => {
+                      const f = scrubAtClientX(e.clientX);
+                      if (f != null) setHoverFrame(f);
+                    }}
+                    onMouseLeave={() => setHoverFrame(null)}
+                  >
+                    {/* Past + nowcast bands */}
+                    <div className="absolute left-0 right-0 top-1/2 h-1.5 bg-wx-line rounded-sm overflow-hidden -translate-y-1/2">
+                      <div className="absolute left-0 top-0 bottom-0 bg-wx-ok/70" style={{ width: `${nowPct}%` }} />
+                      {rvAllFrames.length > rvPastCount && (
+                        <div
+                          className="absolute right-0 top-0 bottom-0 bg-[repeating-linear-gradient(45deg,rgba(251,191,36,0.10)_0_5px,rgba(251,191,36,0.28)_5px_10px)] border-l border-amber-500/60"
+                          style={{ width: `${100 - nowPct}%` }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Frame ticks */}
+                    <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 flex justify-between px-0.5 pointer-events-none">
+                      {rvAllFrames.map((_, i) => (
+                        <div
+                          key={i}
+                          className={`w-[1.5px] rounded ${
+                            i === nowIdx ? 'h-4 bg-wx-accent' :
+                            i === 0 || i === totalFrames - 1 ? 'h-3 bg-wx-mute/70' :
+                            'h-[7px] bg-wx-mute/50'
+                          }`}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Hover ghost head */}
+                    {hoverFrame != null && hoverFrame !== frame && (
+                      <div
+                        className="absolute top-1/2 w-[10px] h-[10px] rounded-full bg-wx-mute/60 -translate-x-1/2 -translate-y-1/2 pointer-events-none"
+                        style={{ left: `${(hoverFrame / Math.max(1, totalFrames - 1)) * 100}%` }}
+                      />
+                    )}
+
+                    {/* Active head */}
+                    <div
+                      className="absolute top-1/2 w-[14px] h-[14px] rounded-full bg-wx-accent border-2 border-wx-ink -translate-x-1/2 -translate-y-1/2 pointer-events-none shadow"
+                      style={{ left: `${headPct}%` }}
+                    />
+
+                    {/* Hover timestamp tooltip */}
+                    {hoverFrame != null && hoverFrameTime != null && (
+                      <div
+                        className="absolute -top-7 px-1.5 py-0.5 rounded bg-wx-ink border border-wx-line text-[10px] font-mono whitespace-nowrap pointer-events-none -translate-x-1/2"
+                        style={{ left: `${(hoverFrame / Math.max(1, totalFrames - 1)) * 100}%` }}
+                      >
+                        {new Date(hoverFrameTime * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Time-axis labels under the track */}
+                  <div className="relative h-3 select-none pointer-events-none">
+                    {labels.map(({ idx, label }) => (
+                      <span
+                        key={label}
+                        className={`absolute -translate-x-1/2 text-[9.5px] font-mono ${label === 'NOW' ? 'text-wx-accent font-semibold' : 'text-wx-mute'}`}
+                        style={{ left: `${(idx / Math.max(1, totalFrames - 1)) * 100}%` }}
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-                <div className="absolute top-1/2 w-[14px] h-[14px] rounded-full bg-wx-accent border-2 border-wx-ink -translate-x-1/2 -translate-y-1/2" style={{ left: `${(frame / Math.max(1, totalFrames - 1)) * 100}%` }} />
-              </div>
 
-              <div className="flex flex-col items-end gap-0.5 min-w-[96px]">
-                <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${isForecastFrame ? 'border-wx-accent text-wx-accent' : 'border-wx-line text-wx-fg'}`}>{isForecastFrame ? 'NOWCAST' : 'OBSERVED'}</span>
-                <span className="text-[15px] font-bold">{frameTimeLabel}</span>
-                <span className="text-[11px] text-wx-mute">{relLabel}</span>
-              </div>
+                <div className="flex flex-col items-end gap-0.5 min-w-[96px]">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${isForecastFrame ? 'border-wx-accent text-wx-accent' : 'border-wx-line text-wx-fg'}`}>
+                    {isForecastFrame ? 'NOWCAST' : 'OBSERVED'}
+                  </span>
+                  <span className="text-[15px] font-bold tabular-nums">{frameTimeLabel}</span>
+                  <span className="text-[11px] text-wx-mute tabular-nums">{relLabel}</span>
+                </div>
 
-              <button onClick={() => {
-                const order: ('0.5x' | '1x' | '2x' | '4x')[] = ['0.5x', '1x', '2x', '4x'];
-                setSpeed(order[(order.indexOf(speed) + 1) % order.length]);
-              }} className="text-[11px] px-2.5 py-1.5 border border-wx-line rounded-md hover:border-wx-accent">{speed}</button>
+                <button
+                  onClick={() => {
+                    const order: ('0.5x' | '1x' | '2x' | '4x')[] = ['0.5x', '1x', '2x', '4x'];
+                    setSpeed(order[(order.indexOf(speed) + 1) % order.length]);
+                  }}
+                  className="text-[11px] px-2.5 py-1.5 border border-wx-line rounded-md hover:border-wx-accent font-mono tabular-nums"
+                  title="Cycle playback speed"
+                >
+                  {speed}
+                </button>
+              </div>
+              <div className="text-[10px] text-wx-mute text-center mt-1.5 font-mono">
+                Space play/pause · ← → step · Home/End · N to jump to NOW
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {!useRainViewer && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30">
