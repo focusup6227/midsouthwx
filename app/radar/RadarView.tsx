@@ -58,9 +58,13 @@ const THREDDS_WMS_URL = (urlPath: string, layer: string, cacheKey: number) =>
 // RainViewer free Weather Maps API. Returns 2h of past frames + nowcast.
 // Color scheme 8 = NWS Reflectivity (matches radar.weather.gov palette).
 // Options "1_1" = smoothed + snow-aware.
+// 512px tiles double the spatial resolution at the same z (max zoom 7 on the
+// free tier), so the imagery stays readable down to the city block at z~11.
 const RAINVIEWER_INDEX_URL = 'https://api.rainviewer.com/public/weather-maps.json';
 const RAINVIEWER_COLOR = 8;
 const RAINVIEWER_OPTS = '1_1';
+const RAINVIEWER_TILE_SIZE = 512;
+const RAINVIEWER_MAX_ZOOM = 7;
 
 const RADAR_SITES: Record<string, { name: string; center: [number, number]; zoom: number }> = {
   KNQA: { name: 'KNQA Memphis', center: [-90.02, 35.05], zoom: 7.5 },
@@ -483,7 +487,7 @@ export default function RadarView() {
 
   const rvFrameUrl = useCallback((f: RainViewerFrame) => {
     if (!rvIndex) return '';
-    return `${rvIndex.host}${f.path}/256/{z}/{x}/{y}/${RAINVIEWER_COLOR}/${RAINVIEWER_OPTS}.png`;
+    return `${rvIndex.host}${f.path}/${RAINVIEWER_TILE_SIZE}/{z}/{x}/{y}/${RAINVIEWER_COLOR}/${RAINVIEWER_OPTS}.png`;
   }, [rvIndex]);
 
   // Stable key for the live source — only swap when the URL *pattern* changes
@@ -946,14 +950,17 @@ export default function RadarView() {
               active frame is visible (opacity); all others sit at opacity 0 so
               their tiles stay in Mapbox's cache. After one full pass through
               the loop, every subsequent scrub/playback step is instant — no
-              tile re-fetch, no flicker. */}
+              tile re-fetch, no flicker.
+              maxzoom is fixed to RainViewer's free-tier cap so Mapbox
+              over-scales (instead of going blank) past city-level zoom. */}
           {useRainViewer && rvAllFrames.map((f, i) => (
             <Source
               key={`rv-src-${f.time}`}
               id={rvSourceId(i)}
               type="raster"
               tiles={[rvFrameUrl(f)]}
-              tileSize={256}
+              tileSize={RAINVIEWER_TILE_SIZE}
+              maxzoom={RAINVIEWER_MAX_ZOOM}
             >
               <Layer
                 id={rvLayerId(i)}
@@ -961,7 +968,9 @@ export default function RadarView() {
                 paint={{
                   'raster-opacity': i === frame ? opacity / 100 : 0,
                   'raster-fade-duration': 0,
-                  'raster-resampling': 'nearest',
+                  // 'linear' smooths the over-scaled tiles past z7 instead of
+                  // showing crunchy nearest-neighbor squares.
+                  'raster-resampling': 'linear',
                 }}
                 {...(radarBeforeId ? { beforeId: radarBeforeId } : {})}
               />
