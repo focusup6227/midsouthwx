@@ -1,6 +1,6 @@
 'use server';
 
-import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin, supabaseServer } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
@@ -36,11 +36,25 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
   const parsed = SendInput.parse(input);
   const supa = supabaseServer();
 
+  // Operator gate via RLS-respecting client.
   const { data: userRes } = await supa.auth.getUser();
   const userId = userRes.user?.id;
   if (!userId) throw new Error('not authenticated');
+  const { data: op } = await supa
+    .from('operators')
+    .select('user_id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (!op) throw new Error('operators only');
 
-  const { data: msg, error: insertErr } = await supa
+  // Use service-role for the write path. enqueue_message and enqueue_message_system
+  // both require INSERT into outbound_queue, which has no operator-INSERT policy
+  // by design (the queue is meant to be filled by privileged code only). Using
+  // admin here avoids depending on enqueue_message being SECURITY DEFINER on the
+  // remote — and we've already verified operator status above.
+  const admin = supabaseAdmin();
+
+  const { data: msg, error: insertErr } = await admin
     .from('messages')
     .insert({
       body_md: parsed.body_md,
@@ -57,9 +71,11 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
 
   if (insertErr || !msg) throw new Error(insertErr?.message ?? 'insert failed');
 
-  const { data: count, error: enqErr } = await supa.rpc('enqueue_message', { p_message_id: msg.id });
+  const { data: count, error: enqErr } = await admin.rpc('enqueue_message_system', {
+    p_message_id: msg.id,
+  });
   if (enqErr) {
-    await supa.from('messages').update({ status: 'failed' }).eq('id', msg.id);
+    await admin.from('messages').update({ status: 'failed' }).eq('id', msg.id);
     throw new Error(enqErr.message);
   }
 

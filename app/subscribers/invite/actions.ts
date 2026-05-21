@@ -5,6 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { supabaseAdmin, supabaseServer } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email';
+import { geocodeSubscriber } from '@/lib/geocode';
 import type { InviteSubscriberState } from './invite-state';
 
 const Schema = z.object({
@@ -14,104 +15,6 @@ const Schema = z.object({
   address: z.string().trim().max(500).optional().or(z.literal('')),
   phone: z.string().trim().max(40).optional().or(z.literal('')),
 });
-
-type ZipLookup = {
-  lat: number;
-  lng: number;
-  city: string | null;
-  state: string | null;
-  countyFips: string | null;
-};
-
-// ZIP → lat/lng/city/state via zippopotam.us (free, no key, no rate limit
-// at this scale). Then lat/lng → county FIPS via NWS /points (we already
-// require NWS_USER_AGENT for the alert poller). Either step can fail
-// gracefully — `location` alone is enough for polygon-based audience
-// matching against the seeded `regions` table.
-async function lookupZip(zip: string): Promise<ZipLookup | null> {
-  let lat: number | null = null;
-  let lng: number | null = null;
-  let city: string | null = null;
-  let state: string | null = null;
-  try {
-    // Strip ZIP+4 down to the 5-digit prefix; zippopotam wants 5 digits.
-    const z5 = zip.slice(0, 5);
-    const res = await fetch(`https://api.zippopotam.us/us/${encodeURIComponent(z5)}`, {
-      headers: { accept: 'application/json' },
-      cache: 'no-store',
-    });
-    if (res.ok) {
-      const data = (await res.json()) as {
-        places?: Array<{
-          latitude?: string;
-          longitude?: string;
-          'place name'?: string;
-          'state abbreviation'?: string;
-        }>;
-      };
-      const place = data.places?.[0];
-      if (place) {
-        const plat = Number(place.latitude);
-        const plng = Number(place.longitude);
-        if (Number.isFinite(plat) && Number.isFinite(plng)) {
-          lat = plat;
-          lng = plng;
-        }
-        city = place['place name'] ?? null;
-        state = place['state abbreviation'] ?? null;
-      }
-    }
-  } catch {
-    // zippopotam down — fall through with nulls.
-  }
-
-  if (lat === null || lng === null) return null;
-
-  let countyFips: string | null = null;
-  try {
-    const ua = process.env.NWS_USER_AGENT ?? 'midsouthwx';
-    const r = await fetch(
-      `https://api.weather.gov/points/${lat.toFixed(4)},${lng.toFixed(4)}`,
-      {
-        headers: { 'user-agent': ua, accept: 'application/geo+json' },
-        cache: 'no-store',
-      },
-    );
-    if (r.ok) {
-      const d = (await r.json()) as {
-        properties?: { county?: string };
-      };
-      // properties.county is a URL like https://api.weather.gov/zones/county/TNC157
-      // — last 3 chars after the state letter are the county FIPS suffix.
-      // Combine with the state FIPS to get the 5-digit GEOID.
-      const url = d.properties?.county;
-      if (url) {
-        const m = url.match(/\/county\/([A-Z]{2})([A-Z])(\d{3})$/);
-        if (m) {
-          const stateAbbr = m[1];
-          const countySuffix = m[3];
-          const stateFips = STATE_ABBR_TO_FIPS[stateAbbr];
-          if (stateFips) countyFips = `${stateFips}${countySuffix}`;
-        }
-      }
-    }
-  } catch {
-    // NWS down — that's ok, polygon match via location still works.
-  }
-
-  return { lat, lng, city, state, countyFips };
-}
-
-const STATE_ABBR_TO_FIPS: Record<string, string> = {
-  AL: '01', AK: '02', AZ: '04', AR: '05', CA: '06', CO: '08', CT: '09',
-  DE: '10', DC: '11', FL: '12', GA: '13', HI: '15', ID: '16', IL: '17',
-  IN: '18', IA: '19', KS: '20', KY: '21', LA: '22', ME: '23', MD: '24',
-  MA: '25', MI: '26', MN: '27', MS: '28', MO: '29', MT: '30', NE: '31',
-  NV: '32', NH: '33', NJ: '34', NM: '35', NY: '36', NC: '37', ND: '38',
-  OH: '39', OK: '40', OR: '41', PA: '42', RI: '44', SC: '45', SD: '46',
-  TN: '47', TX: '48', UT: '49', VT: '50', VA: '51', WA: '53', WV: '54',
-  WI: '55', WY: '56', PR: '72',
-};
 
 function fail(error: string): InviteSubscriberState {
   return { kind: 'error', error };
@@ -167,7 +70,10 @@ export async function inviteSubscriberAction(
     );
   }
 
-  const zipInfo = await lookupZip(parsed.data.zip);
+  const geo = await geocodeSubscriber({
+    address: parsed.data.address || null,
+    zip: parsed.data.zip,
+  });
   const linkToken = randomBytes(16).toString('hex');
   // 7-day expiry — longer than the public signup form so the operator has time
   // to follow up (text/call) if the invitee doesn't click the email immediately.
@@ -177,15 +83,15 @@ export async function inviteSubscriberAction(
     display_name: parsed.data.display_name,
     email: parsed.data.email,
     zip: parsed.data.zip,
-    county_fips: zipInfo?.countyFips ?? null,
+    county_fips: geo?.countyFips ?? null,
     status: 'pending',
     link_token: linkToken,
     link_expires_at: linkExpiresAt,
   };
-  if (zipInfo) {
-    // ZIP centroid is precise enough for storm-polygon matching; subscribers
-    // can refine via Telegram /where <address> later.
-    insertRow.location = `SRID=4326;POINT(${zipInfo.lng} ${zipInfo.lat})`;
+  if (geo) {
+    // Address-precise when we have it, ZIP centroid otherwise. Subscribers
+    // can override via Telegram /where <address> if they ever leave home.
+    insertRow.location = `SRID=4326;POINT(${geo.lng} ${geo.lat})`;
   }
   if (parsed.data.phone) insertRow.phone = parsed.data.phone;
   // The signup function uses `home_address`; older migrations may name it differently

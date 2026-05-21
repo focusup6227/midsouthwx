@@ -21,7 +21,7 @@ export default async function SubscribersPage({
   const status = searchParams.status;
   let q = supa
     .from('subscribers')
-    .select('id, display_name, telegram_chat_id, telegram_username, status, zip, county_fips, created_at')
+    .select('id, display_name, telegram_chat_id, telegram_username, status, zip, county_fips, created_at, location')
     .order('created_at', { ascending: false })
     .limit(500);
   if (status && ['pending', 'active', 'paused', 'unsubscribed'].includes(status)) {
@@ -60,7 +60,17 @@ export default async function SubscribersPage({
               className="flex items-center justify-between gap-4 p-4 hover:bg-wx-ink/40 transition"
             >
               <div className="min-w-0">
-                <div className="font-medium truncate">{s.display_name}</div>
+                <div className="font-medium truncate flex items-center gap-2">
+                  {s.display_name}
+                  {!s.location && (
+                    <span
+                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-wx-danger/40 text-wx-danger"
+                      title="No coordinates on file — radar polygon/circle alerts won't reach this subscriber"
+                    >
+                      no location
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-wx-mute mt-0.5">
                   <span className={STATUS_COLOR[s.status] ?? ''}>{s.status}</span>
                   {' · '}

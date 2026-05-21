@@ -2,6 +2,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import SubscriberActions from './SubscriberActions';
+import LocationCard from './LocationCard';
 import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
@@ -11,7 +12,7 @@ export default async function SubscriberDetail({ params }: { params: { id: strin
 
   const { data: sub } = await supa
     .from('subscribers')
-    .select('id, display_name, telegram_chat_id, telegram_username, phone, email, status, zip, county_fips, home_address, current_address, current_address_updated_at, link_token, link_expires_at, created_at')
+    .select('id, display_name, telegram_chat_id, telegram_username, phone, email, status, zip, county_fips, home_address, current_address, current_address_updated_at, link_token, link_expires_at, created_at, location')
     .eq('id', params.id)
     .single();
 
@@ -90,6 +91,13 @@ export default async function SubscriberDetail({ params }: { params: { id: strin
       </section>
 
       <SubscriberActions id={sub.id} status={sub.status} />
+
+      <LocationCard
+        id={sub.id}
+        hasLocation={Boolean(sub.location)}
+        hasAddress={Boolean(sub.home_address)}
+        hasZip={Boolean(sub.zip)}
+      />
 
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold">Region memberships</h2>
