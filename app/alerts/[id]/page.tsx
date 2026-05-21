@@ -35,7 +35,7 @@ export default async function AlertDetail({ params }: { params: { id: string } }
     ? await supa.from('nws_alerts').select('nws_id, event, headline').eq('id', msg.nws_alert_id).single()
     : { data: null };
 
-  const [groupRes, regionRes, subRes, queueRes, checkinRes] = await Promise.all([
+  const [groupRes, regionRes, subRes, queueRes, checkinRes, extLogRes] = await Promise.all([
     spec.groups?.length
       ? supa.from('custom_groups').select('id, name').in('id', spec.groups)
       : Promise.resolve({ data: [] as { id: string; name: string }[] }),
@@ -49,6 +49,11 @@ export default async function AlertDetail({ params }: { params: { id: string } }
     msg.source === 'checkin'
       ? supa.from('check_in_responses').select('response_code').eq('message_id', params.id)
       : Promise.resolve({ data: [] as { response_code: string | null }[] }),
+    supa
+      .from('external_delivery_logs')
+      .select('id, status, occurred_at, response, integration_endpoints(name)')
+      .eq('message_id', params.id)
+      .order('occurred_at', { ascending: false }),
   ]);
 
   const tally: Record<string, number> = {};
@@ -150,6 +155,35 @@ export default async function AlertDetail({ params }: { params: { id: string } }
           </div>
         )}
       </section>
+
+      {(extLogRes.data?.length ?? 0) > 0 && (
+        <section className="card p-5 space-y-3">
+          <h2 className="font-semibold">External webhooks</h2>
+          <ul className="divide-y divide-wx-line text-sm">
+            {extLogRes.data!.map((log) => {
+              const epName =
+                log.integration_endpoints &&
+                typeof log.integration_endpoints === 'object' &&
+                'name' in log.integration_endpoints
+                  ? (log.integration_endpoints as { name: string }).name
+                  : 'Unknown endpoint';
+              return (
+                <li key={log.id} className="py-2 first:pt-0 last:pb-0 flex justify-between gap-4">
+                  <span>
+                    {epName}{' '}
+                    <span className={log.status === 'sent' ? 'text-wx-ok' : 'text-wx-danger'}>
+                      {log.status}
+                    </span>
+                  </span>
+                  <span className="text-xs text-wx-mute whitespace-nowrap">
+                    {new Date(log.occurred_at).toLocaleString()}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
 
       {msg.source === 'checkin' && (
         <CheckinTally

@@ -1,6 +1,7 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import DashShell from '@/components/DashShell';
+import AuditExportForm from './AuditExportForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,12 @@ export default async function AlertsPage() {
       title="Alerts"
       actions={<Link href="/compose" className="btn">New alert</Link>}
     >
+      <section className="card p-4 space-y-2">
+        <h2 className="font-semibold text-sm">Audit export</h2>
+        <p className="text-xs text-wx-mute">Download message history or per-event delivery logs as CSV.</p>
+        <AuditExportForm />
+      </section>
+
       <section className="card divide-y divide-wx-line">
         {messages?.length ? (
           messages.map((m) => (

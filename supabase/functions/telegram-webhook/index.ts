@@ -7,19 +7,30 @@
 // We verify the X-Telegram-Bot-Api-Secret-Token header (set when registering
 // the webhook with setWebhook) — Telegram does not sign requests otherwise.
 
-import { serviceClient, json } from './_shared/supabase.ts';
-import { tgAnswerCallbackQuery, tgSendMessage } from './_shared/telegram.ts';
+import { serviceClient, json } from './supabase.ts';
+import { tgAnswerCallbackQuery, tgSendMessage } from './telegram.ts';
+import { notifyExternalEndpointsForMessage } from './external-notify.ts';
+import {
+  advanceScheduleAfterSend,
+  scheduleMetaFromAudience,
+} from './schedule-helpers.ts';
 
 // Same as secret name TELEGRAM_WEBHOOK_SECRET; parts joined so upload/bundle cannot break one long literal.
 const TELEGRAM_WEBHOOK_SECRET_KEY = ['TELEGRAM', 'WEBHOOK', 'SECRET'].join('_');
 
 const DISTRESS_KEYWORDS = [
+  '911',
+  'emergency',
   'help',
   'trapped',
+  'stuck',
+  'stranded',
   'injured',
   'bleeding',
   'fire',
   'flood',
+  'flooding',
+  'water rising',
   'collapsed',
   'cant breathe',
   "can't breathe",
@@ -27,12 +38,124 @@ const DISTRESS_KEYWORDS = [
   'tornado here',
   'tree on house',
   'tree fell',
+  'need rescue',
+  'rescue',
 ];
+
+function distressKeywordMatch(text: string, keyword: string): boolean {
+  if (keyword.includes(' ') || keyword.includes("'")) {
+    return text.includes(keyword);
+  }
+  const re = new RegExp(`\\b${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+  return re.test(text);
+}
 
 function looksLikeDistress(text: string | undefined) {
   if (!text) return false;
   const t = text.toLowerCase();
-  return DISTRESS_KEYWORDS.some((k) => t.includes(k));
+  return DISTRESS_KEYWORDS.some((k) => distressKeywordMatch(t, k));
+}
+
+async function operatorChatId(supa: ReturnType<typeof serviceClient>): Promise<number> {
+  const fromEnv = Number(Deno.env.get('OPERATOR_TELEGRAM_CHAT_ID') ?? 0);
+  if (fromEnv) return fromEnv;
+  const { data: ops } = await supa
+    .from('operators')
+    .select('telegram_chat_id')
+    .not('telegram_chat_id', 'is', null)
+    .limit(1);
+  const id = ops?.[0]?.telegram_chat_id;
+  return id ? Number(id) : 0;
+}
+
+const OP_CALLBACK = /^op:(nws|sched):(approve|reject|skip):([0-9a-f-]{36})$/i;
+
+async function handleOperatorCallback(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+  cqId: string,
+  data: string,
+): Promise<boolean> {
+  const opChat = await operatorChatId(supa);
+  if (!opChat || chatId !== opChat) return false;
+
+  const m = OP_CALLBACK.exec(data);
+  if (!m) return false;
+
+  const [, kind, action, messageId] = m;
+  const isApprove = action === 'approve';
+  const isReject = action === 'reject' || action === 'skip';
+
+  const { data: msg, error: fetchErr } = await supa
+    .from('messages')
+    .select('id, source, status, audience_spec')
+    .eq('id', messageId)
+    .single();
+
+  if (fetchErr || !msg || msg.status !== 'pending_approval') {
+    await tgAnswerCallbackQuery(token, cqId, 'Message not found or already handled.');
+    return true;
+  }
+
+  if (kind === 'nws') {
+    if (msg.source !== 'nws') {
+      await tgAnswerCallbackQuery(token, cqId, 'Not an NWS pending message.');
+      return true;
+    }
+    if (isReject) {
+      await supa.from('messages').update({ status: 'cancelled' }).eq('id', messageId);
+      await tgAnswerCallbackQuery(token, cqId, 'NWS alert rejected.');
+      return true;
+    }
+    const { error: enqErr } = await supa.rpc('enqueue_message_system', { p_message_id: messageId });
+    if (enqErr) {
+      await tgAnswerCallbackQuery(token, cqId, `Enqueue failed: ${enqErr.message}`);
+      return true;
+    }
+    notifyExternalEndpointsForMessage(supa, messageId).catch(console.error);
+    await tgAnswerCallbackQuery(token, cqId, 'Approved — sending now.');
+    return true;
+  }
+
+  if (kind === 'sched') {
+    if (msg.source !== 'scheduled') {
+      await tgAnswerCallbackQuery(token, cqId, 'Not a scheduled pending message.');
+      return true;
+    }
+    const meta = scheduleMetaFromAudience(msg.audience_spec as Record<string, unknown>);
+    if (isReject) {
+      await supa.from('messages').update({ status: 'cancelled' }).eq('id', messageId);
+      if (meta) {
+        await advanceScheduleAfterSend(
+          supa,
+          meta.scheduled_message_id,
+          meta.rrule,
+          meta.fired_at,
+        );
+      }
+      await tgAnswerCallbackQuery(token, cqId, 'Scheduled alert skipped.');
+      return true;
+    }
+    const { error: enqErr } = await supa.rpc('enqueue_message_system', { p_message_id: messageId });
+    if (enqErr) {
+      await tgAnswerCallbackQuery(token, cqId, `Enqueue failed: ${enqErr.message}`);
+      return true;
+    }
+    notifyExternalEndpointsForMessage(supa, messageId).catch(console.error);
+    if (meta) {
+      await advanceScheduleAfterSend(
+        supa,
+        meta.scheduled_message_id,
+        meta.rrule,
+        meta.fired_at,
+      );
+    }
+    await tgAnswerCallbackQuery(token, cqId, 'Approved — sending now.');
+    return true;
+  }
+
+  return false;
 }
 
 Deno.serve(async (req) => {
@@ -63,6 +186,10 @@ Deno.serve(async (req) => {
       const chatId: number = cq.message?.chat?.id;
       const cqId: string = cq.id;
       const data: string = cq.data ?? '';
+
+      if (await handleOperatorCallback(supa, token, chatId, cqId, data)) {
+        return json({ ok: true });
+      }
 
       // Find the subscriber
       const { data: sub } = await supa

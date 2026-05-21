@@ -1,6 +1,9 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import { updateOperator } from './actions';
 import PasswordForm from './PasswordForm';
+import IntegrationEndpoints from './IntegrationEndpoints';
+import TemplateEditor from './TemplateEditor';
+import { SEVERITY_OPTIONS } from './integration-actions';
 import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +21,11 @@ export default async function SettingsPage() {
   const { data: templates } = await supa
     .from('templates')
     .select('id, name, category, body_md, default_quick_replies, created_at')
+    .order('name');
+
+  const { data: endpoints } = await supa
+    .from('integration_endpoints')
+    .select('id, name, url, severity_threshold, enabled, created_at')
     .order('name');
 
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
@@ -88,35 +96,20 @@ export default async function SettingsPage() {
       </section>
 
       <section className="card p-5 space-y-3">
+        <h2 className="font-semibold">Integration endpoints</h2>
+        <p className="text-xs text-wx-mute">
+          POST signed <code className="text-xs">alert.queued</code> JSON to county EMA or partner
+          systems when alerts are queued. Header: <code className="text-xs">X-MidsouthWX-Signature</code>.
+        </p>
+        <IntegrationEndpoints
+          endpoints={endpoints ?? []}
+          severityOptions={SEVERITY_OPTIONS}
+        />
+      </section>
+
+      <section className="card p-5 space-y-3">
         <h2 className="font-semibold">Templates</h2>
-        {templates?.length ? (
-          <ul className="divide-y divide-wx-line">
-            {templates.map((t) => (
-              <li key={t.id} className="py-3 first:pt-0 last:pb-0">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium">{t.name}</span>
-                  {t.category && (
-                    <span className="text-xs text-wx-mute">{t.category}</span>
-                  )}
-                </div>
-                <p className="text-xs text-wx-mute mt-1 whitespace-pre-wrap">
-                  {t.body_md.slice(0, 140)}
-                </p>
-                {Array.isArray(t.default_quick_replies) && t.default_quick_replies.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {(t.default_quick_replies as { label: string; data: string }[]).map((qr, i) => (
-                      <span key={i} className="text-xs px-1.5 py-0.5 rounded bg-wx-ink border border-wx-line">
-                        {qr.label}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-wx-mute text-sm">No templates seeded.</p>
-        )}
+        <TemplateEditor templates={templates ?? []} />
       </section>
     </DashShell>
   );

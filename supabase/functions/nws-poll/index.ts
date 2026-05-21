@@ -1,7 +1,10 @@
 // Poll national active alerts from api.weather.gov, upsert into nws_alerts, supersede references.
 // Requires secret NWS_USER_AGENT (contact string per NWS policy).
+// Self-schedules a follow-up poll ~30s later when invoked by cron (2×/min effective rate).
 
-import { serviceClient, json } from './_shared/supabase.ts';
+import { serviceClient, json } from './supabase.ts';
+
+declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void };
 
 function parseNextUrl(linkHeader: string | null): string | null {
   if (!linkHeader) return null;
@@ -12,13 +15,50 @@ function parseNextUrl(linkHeader: string | null): string | null {
   return null;
 }
 
+function scheduleFollowUpPoll(req: Request) {
+  if (req.headers.get('X-NWS-Poll-Followup') === '1') return;
+
+  const base = Deno.env.get('SUPABASE_URL');
+  if (!base) return;
+
+  const cronJwt = Deno.env.get('CRON_INVOKER_JWT');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-NWS-Poll-Followup': '1',
+  };
+  if (cronJwt) headers['Authorization'] = `Bearer ${cronJwt}`;
+
+  const followUp = new Promise<void>((resolve) => {
+    setTimeout(async () => {
+      try {
+        await fetch(`${base.replace(/\/$/, '')}/functions/v1/nws-poll`, {
+          method: 'POST',
+          headers,
+          body: '{}',
+        });
+      } catch (e) {
+        console.error('nws-poll follow-up', e);
+      }
+      resolve();
+    }, 30_000);
+  });
+
+  try {
+    EdgeRuntime.waitUntil(followUp);
+  } catch {
+    // Local dev may not expose EdgeRuntime.waitUntil
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST' && req.method !== 'GET') return json({ ok: false }, 405);
 
   const cronJwt = Deno.env.get('CRON_INVOKER_JWT');
   if (cronJwt) {
     const auth = req.headers.get('Authorization');
-    if (auth !== `Bearer ${cronJwt}`) return json({ ok: false, error: 'unauthorized' }, 401);
+    if (auth !== `Bearer ${cronJwt}`) {
+      return json({ ok: false, error: 'unauthorized' }, 401);
+    }
   }
 
   const ua = Deno.env.get('NWS_USER_AGENT');
@@ -76,11 +116,14 @@ Deno.serve(async (req) => {
     }
   }
 
+  scheduleFollowUpPoll(req);
+
   return json({
     ok: true,
     pages,
     features: features.length,
     upsert_attempts: upserted,
     superseded_ref_urls: supersededRefs,
+    followup_scheduled: req.headers.get('X-NWS-Poll-Followup') !== '1',
   });
 });

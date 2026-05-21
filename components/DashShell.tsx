@@ -52,6 +52,7 @@ export default async function DashShell({
     { href: '/schedule', label: 'Schedule' },
     { href: '/nws', label: 'NWS' },
     { href: '/radar', label: 'Radar' },
+    { href: '/map', label: 'Map' },
   ];
 
   const secondary: NavLink[] = [

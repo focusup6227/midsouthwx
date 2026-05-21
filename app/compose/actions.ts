@@ -15,12 +15,22 @@ const AudienceSpec = z.object({
 
 const QuickReply = z.object({ label: z.string().min(1), data: z.string().min(1) });
 
+const TemplateVars = z
+  .object({
+    headline: z.string().optional(),
+    event: z.string().optional(),
+    area_desc: z.string().optional(),
+    expires_at: z.string().optional(),
+  })
+  .optional();
+
 const SendInput = z.object({
   body_md: z.string().min(1, 'Body cannot be empty'),
   audience_spec: AudienceSpec,
   quick_replies: z.array(QuickReply),
   template_id: z.string().uuid().nullable(),
   source: z.enum(['manual', 'checkin']),
+  template_vars: TemplateVars,
 });
 
 export type AudienceSpecT = z.infer<typeof AudienceSpec>;
@@ -54,11 +64,20 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
   // remote — and we've already verified operator status above.
   const admin = supabaseAdmin();
 
+  const { fillTemplate } = await import('@/lib/templates/fill');
+  const vars = parsed.template_vars;
+  const bodyRendered = fillTemplate(parsed.body_md, {
+    headline: vars?.headline,
+    event: vars?.event,
+    areaDesc: vars?.area_desc,
+    expiresAt: vars?.expires_at,
+  });
+
   const { data: msg, error: insertErr } = await admin
     .from('messages')
     .insert({
       body_md: parsed.body_md,
-      body_rendered: parsed.body_md,
+      body_rendered: bodyRendered,
       source: parsed.source,
       status: 'draft',
       audience_spec: parsed.audience_spec,
@@ -78,6 +97,11 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
     await admin.from('messages').update({ status: 'failed' }).eq('id', msg.id);
     throw new Error(enqErr.message);
   }
+
+  const { notifyExternalEndpointsForMessage } = await import('@/lib/integrations/notify');
+  notifyExternalEndpointsForMessage(msg.id).catch((e) =>
+    console.error('[compose] external notify', e),
+  );
 
   revalidatePath('/dashboard');
   revalidatePath('/alerts');

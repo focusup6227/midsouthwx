@@ -118,11 +118,15 @@ server-side.
 - Distress-keyword detection DMs the operator via Telegram self-notify.
 
 What's stubbed (lands in a future code drop):
-- External integration webhooks (`integration_endpoints` schema exists; `lib/integrations/notify.ts` is a console-log stub).
 - Web Push (minimal service worker only — Telegram self-notify is primary).
-- `/map` subscriber-distribution heatmap.
-- Audit log CSV export and template `{{variable}}` substitution in `/compose`.
-- Telegram approve/skip for non-NWS scheduled alerts inside `send_window_minutes`.
+- Inbound CAP/partner feed ingest into `nws_alerts`.
+- Subscriber alert preferences (quiet hours, per-category opt-out).
+
+Recent operator workflow additions:
+- Template editor in Settings; compose fills `{{headline}}`, `{{event}}`, `{{area_desc}}`, `{{expires_at}}`.
+- `/map` subscriber heatmap by region.
+- Distress keyword tuning (word-boundary matching + expanded list).
+- 2-year retention cron + NWS poll follow-up (~2×/min).
 
 ## Repo layout
 

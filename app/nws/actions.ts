@@ -167,6 +167,10 @@ export async function approveNwsMessage(messageId: string) {
 
   const { error } = await supa.rpc('enqueue_message', { p_message_id: idParse.data });
   if (error) return { error: error.message };
+
+  const { notifyExternalEndpointsForMessage } = await import('@/lib/integrations/notify');
+  notifyExternalEndpointsForMessage(idParse.data).catch(console.error);
+
   revalidatePath('/nws');
   revalidatePath(`/alerts/${idParse.data}`);
   return { ok: true as const };

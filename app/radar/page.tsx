@@ -18,8 +18,8 @@ import {
 //   - UCAR THREDDS ncWMS (thredds.ucar.edu) — MRMS Az-Shear 0-2km AGL (the real low-
 //     level rotation product). Composite-only; uses a timestamped GRIB2 dataset URL
 //     that we resolve through our own /api/radar/mrms-latest proxy.
-//   - IEM RIDGE (mesonet.agron.iastate.edu) — single-site Correlation Coefficient.
-//     Only free public source for CC; reflectivity/velocity stay on NCEP.
+//   - Fly.io Level II renderer — single-site Correlation Coefficient (ρhv). IEM RIDGE
+//     does not publish CC tiles; CC is proxied via /api/radar/level2 like Hi-Res refl/vel.
 type ProductKey = 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'rotation' | 'ptype';
 
 type ProductMeta = {
@@ -56,9 +56,6 @@ const THREDDS_WMS_URL = (urlPath: string, layer: string, cacheKey: number) =>
   `&bbox={bbox-epsg-3857}` +
   `&_t=${cacheKey}`;
 
-const IEM_RIDGE_XYZ_URL = (ridgeCode: string, site: string, cacheKey: number) =>
-  `https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0/ridge::${ridgeCode}-${site}/{z}/{x}/{y}.png?_t=${cacheKey}`;
-
 const RADAR_SITES: Record<string, { name: string; center: [number, number]; zoom: number }> = {
   KNQA: { name: 'KNQA Memphis', center: [-90.02, 35.05], zoom: 7.5 },
   KGWX: { name: 'KGWX Columbus', center: [-88.33, 33.9], zoom: 7.5 },
@@ -79,13 +76,79 @@ type Selection = {
   coordinates: number[][]; // [lon, lat] ring (closed)
 };
 
+type SweepInfo = { index: number; elevation_deg: number };
+
 type Level2Overlay = {
-  image_url: string;
+  geojson_url: string;
   bounds: { north: number; south: number; east: number; west: number };
   scan_time: string;
   cached: boolean;
   render_ms?: number;
+  available_sweeps: SweepInfo[];
+  sweep_index: number | null;
+  feature_count: number | null;
+  vmin: number;
+  vmax: number;
 };
+
+// Hex color stops, mirrored from the renderer's NWS palettes. Values are in
+// the natural product units (dBZ, m/s, ρ); we convert each to the quantized
+// `v` ∈ [0, 255] property carried on each polygon when building the Mapbox
+// `interpolate` expression, so the colors match the PNG path pixel-for-pixel.
+const REFL_STOPS: [number, string][] = [
+  [-30, '#646464'], [5, '#04E9E7'], [10, '#019FF4'], [15, '#0300F4'],
+  [20, '#02FD02'], [25, '#01C501'], [30, '#008E00'], [35, '#FDF802'],
+  [40, '#E5BC00'], [45, '#FD9500'], [50, '#FD0000'], [55, '#D40000'],
+  [60, '#BC0000'], [65, '#F800FD'], [70, '#9854C6'], [75, '#FDFDFD'],
+  [80, '#FDFDFD'],
+];
+const VEL_STOPS: [number, string][] = [
+  [-50, '#015B0E'], [-30, '#02C50A'], [-10, '#7FF87F'],
+  [0, '#404040'],
+  [10, '#FE7F7F'], [30, '#FE0000'], [50, '#7E0000'],
+];
+const CC_STOPS: [number, string][] = [
+  [0.20, '#1f2937'], [0.50, '#6b7280'], [0.80, '#fbbf24'],
+  [0.95, '#f59e0b'], [1.00, '#ef4444'], [1.05, '#dc2626'],
+];
+
+function buildFillColorExpr(product: 'refl' | 'vel' | 'cc', vmin: number, vmax: number): any {
+  const stops = product === 'refl' ? REFL_STOPS : product === 'vel' ? VEL_STOPS : CC_STOPS;
+  const range = vmax - vmin || 1;
+  // De-dupe quantized stops with identical q (Mapbox requires strictly
+  // increasing input stops); when two natural-unit stops collapse to the
+  // same q we keep the latter color.
+  const out: any[] = ['interpolate', ['linear'], ['get', 'v']];
+  let lastQ = -Infinity;
+  for (const [val, hex] of stops) {
+    let q = ((val - vmin) / range) * 255;
+    q = Math.max(0, Math.min(255, q));
+    if (q <= lastQ) q = lastQ + 0.001;
+    out.push(q, hex);
+    lastQ = q;
+  }
+  return out;
+}
+
+function buildFillOpacityExpr(product: 'refl' | 'vel' | 'cc', userOpacity: number,
+                              vmin: number, vmax: number): any {
+  if (product !== 'refl') return userOpacity;
+  // Reflectivity gates < 10 dBZ are filtered server-side. Ramp alpha from
+  // 0.4 at 10 dBZ → 1.0 at 25 dBZ so weak/moderate echoes fade in cleanly
+  // and severe cores read at full opacity.
+  const range = vmax - vmin || 1;
+  const q10 = ((10 - vmin) / range) * 255;
+  const q25 = ((25 - vmin) / range) * 255;
+  return [
+    'interpolate', ['linear'], ['get', 'v'],
+    q10, 0.4 * userOpacity,
+    q25, userOpacity,
+  ];
+}
+
+function formatElev(deg: number): string {
+  return `${deg.toFixed(deg < 10 ? 1 : 0)}°`;
+}
 
 type NwsWarning = {
   id: string;
@@ -110,9 +173,18 @@ export default function RadarPage() {
   const [product, setProduct] = useState<ProductKey>('composite');
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
   const [hiRes, setHiRes] = useState(false);
+  // Tilt picker: 'composite' = max across all sweeps, otherwise the desired
+  // elevation in degrees. We pick the closest matching sweep from the
+  // volume's available_sweeps list (NEXRAD VCPs vary scan-to-scan), and the
+  // UI then labels it with the actual angle of the rendered sweep.
+  const [selectedElevation, setSelectedElevation] = useState<number | 'composite'>(0.5);
   const [level2Loading, setLevel2Loading] = useState(false);
   const [level2Error, setLevel2Error] = useState<string | null>(null);
   const [level2Overlay, setLevel2Overlay] = useState<Level2Overlay | null>(null);
+  // Parsed GeoJSON FeatureCollection (Supabase Storage URL is fetched after
+  // the renderer responds). Held separately from level2Overlay so we can
+  // diff: changing only the user's opacity/color shouldn't trigger a refetch.
+  const [level2GeoJSON, setLevel2GeoJSON] = useState<any>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [hoverInfo, setHoverInfo] = useState<{ lng: number; lat: number; props: any } | null>(null);
@@ -159,37 +231,22 @@ export default function RadarPage() {
     }
   }, [token]);
 
-  // Find the right insertion point for the radar layer when the style is ready.
-  // Anything with these prefixes is "below the radar" (basemap fill / terrain);
-  // the first layer that *isn't* one of these is the topmost thing we still want
-  // to render on top of the radar (roads, tunnels, bridges, admins, all labels).
-  // Idempotent — onStyleData fires repeatedly, but we only resolve the id once.
+  // Find the first symbol layer in the style and insert the radar *just below
+  // it*. Symbol layers are where Mapbox renders text and icons (city labels,
+  // road labels, POIs, admin labels), so this "sandwiches" the radar between
+  // the basemap geometry (water/roads/landuse) and the labels — exactly what
+  // we want: radar visually covers terrain and roads, but city names stay
+  // legible on top. Idempotent: onStyleData fires repeatedly, we resolve once.
   const resolvedBeforeIdRef = useRef<string | null>(null);
   const handleMapLoad = useCallback(() => {
     if (resolvedBeforeIdRef.current) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
-    const baseLayerPrefixes = [
-      'background',
-      'satellite',
-      'land',
-      'landuse',
-      'landcover',
-      'hillshade',
-      'water',
-      'waterway',
-      'national-park',
-      'national_park',
-      'pitch-outline',
-    ];
     const layers = map.getStyle()?.layers ?? [];
-    const target = layers.find((l: any) => {
-      const id: string = l.id || '';
-      return !baseLayerPrefixes.some((p) => id.startsWith(p));
-    });
-    if (target) {
-      resolvedBeforeIdRef.current = target.id;
-      setRadarBeforeId(target.id);
+    const firstSymbol = layers.find((l: any) => l.type === 'symbol');
+    if (firstSymbol) {
+      resolvedBeforeIdRef.current = firstSymbol.id;
+      setRadarBeforeId(firstSymbol.id);
     }
   }, []);
 
@@ -247,52 +304,129 @@ export default function RadarPage() {
     return product;
   }, [product, selectedSite]);
 
-  // Level II renderer (Fly.io) supports single-site reflectivity + velocity only.
-  const level2Product = effectiveProduct === 'velocity' ? 'vel' : 'refl';
-  const useLevel2 = hiRes
-    && !!selectedSite
-    && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity');
+  // Level II renderer: CC always; refl/vel when Hi-Res is on (no public CC tile feed exists).
+  const level2Product =
+    effectiveProduct === 'velocity' ? 'vel'
+    : effectiveProduct === 'correlation' ? 'cc'
+    : 'refl';
+  const useLevel2 = !!selectedSite && (
+    effectiveProduct === 'correlation'
+    || (hiRes && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity'))
+  );
+
+  const selectProduct = useCallback((k: ProductKey) => {
+    const meta = PRODUCTS[k];
+    if (!selectedSite && meta.modes.site && !meta.modes.composite) {
+      const defaultSite = 'KNQA';
+      const site = RADAR_SITES[defaultSite];
+      setSelectedSite(defaultSite);
+      mapRef.current?.flyTo({ center: site.center, zoom: site.zoom, duration: 700 });
+    }
+    setProduct(k);
+  }, [selectedSite]);
+
+  // Resolve "elevation requested" → "sweep index in current volume" by
+  // nearest-neighbor over available_sweeps. Returns 0 before metadata
+  // arrives (first fetch), then locks onto whatever the user picked.
+  const availableSweeps = level2Overlay?.available_sweeps ?? [];
+  const isComposite = selectedElevation === 'composite';
+  const resolvedSweepIndex = useMemo(() => {
+    if (isComposite) return 0;
+    if (!availableSweeps.length) return 0;
+    let best = 0, bestDiff = Infinity;
+    for (const s of availableSweeps) {
+      const d = Math.abs(s.elevation_deg - (selectedElevation as number));
+      if (d < bestDiff) { bestDiff = d; best = s.index; }
+    }
+    return best;
+  }, [availableSweeps, selectedElevation, isComposite]);
 
   useEffect(() => {
     if (!useLevel2 || !selectedSite) {
       setLevel2Overlay(null);
+      setLevel2GeoJSON(null);
       setLevel2Error(null);
       setLevel2Loading(false);
       return;
     }
 
     let cancelled = false;
-    const load = () => {
+    setLevel2GeoJSON(null);
+    setLevel2Error(null);
+
+    // Up to 4 attempts with increasing backoff to tolerate Fly cold starts.
+    // Per-tilt renders also miss the cache the first time → same retry budget.
+    const RETRY_DELAYS = [4000, 8000, 12000];
+
+    const load = async (attempt = 0): Promise<void> => {
+      if (cancelled) return;
       setLevel2Loading(true);
-      fetch(`/api/radar/level2/${selectedSite}?product=${level2Product}`, { cache: 'no-store' })
-        .then((r) => r.json())
-        .then((data) => {
-          if (cancelled) return;
-          if (data.error) {
-            setLevel2Error(data.error);
-            setLevel2Overlay(null);
-          } else {
-            setLevel2Overlay(data as Level2Overlay);
-            setLevel2Error(null);
+
+      try {
+        const url = `/api/radar/level2/${selectedSite}`
+          + `?product=${level2Product}`
+          + `&format=geojson`
+          + `&sweep_index=${resolvedSweepIndex}`
+          + (isComposite ? '&composite=1' : '');
+        const res = await fetch(url, { cache: 'no-store' });
+        const data = await res.json();
+        if (cancelled) return;
+
+        if (data.error) {
+          if (attempt < RETRY_DELAYS.length) {
+            setLevel2Error('renderer_waking');
+            setTimeout(() => { if (!cancelled) load(attempt + 1); }, RETRY_DELAYS[attempt]);
+            return;
           }
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setLevel2Error('renderer_unreachable');
+          setLevel2Error(data.error);
           setLevel2Overlay(null);
-        })
-        .finally(() => {
-          if (!cancelled) setLevel2Loading(false);
-        });
+          setLevel2GeoJSON(null);
+          return;
+        }
+
+        // Surface metadata (available sweeps, bounds, scan_time) immediately
+        // so the tilt picker and legend can update before the GeoJSON itself
+        // finishes downloading.
+        setLevel2Overlay(data as Level2Overlay);
+        setLevel2Error(null);
+
+        // Second hop: download the GeoJSON payload from Supabase Storage.
+        // We store it gzipped (Content-Encoding: gzip on upload) — Cloudflare
+        // in front of Supabase Storage doesn't echo that encoding header
+        // back to the client, so the browser receives the raw gzip blob and
+        // we have to decompress it ourselves via DecompressionStream. This
+        // keeps the on-wire payload at ~600 KB-2 MB rather than ~10-40 MB.
+        if (!data.geojson_url) throw new Error('renderer returned no geojson_url');
+        const gjRes = await fetch(data.geojson_url, { cache: 'default' });
+        if (!gjRes.ok) throw new Error(`geojson fetch ${gjRes.status}`);
+        if (!gjRes.body) throw new Error('geojson response has no body');
+        const decompressed = gjRes.body.pipeThrough(new DecompressionStream('gzip'));
+        const text = await new Response(decompressed).text();
+        const gj = JSON.parse(text);
+        if (cancelled) return;
+        setLevel2GeoJSON(gj);
+      } catch (err) {
+        if (cancelled) return;
+        if (attempt < RETRY_DELAYS.length) {
+          setLevel2Error('renderer_waking');
+          setTimeout(() => { if (!cancelled) load(attempt + 1); }, RETRY_DELAYS[attempt]);
+          return;
+        }
+        setLevel2Error('renderer_unreachable');
+        setLevel2GeoJSON(null);
+      } finally {
+        if (!cancelled) setLevel2Loading(false);
+      }
     };
 
     load();
-    const id = setInterval(load, 300_000);
+    // Auto-refresh every 5 min for the latest scan.
+    const id = setInterval(() => load(0), 300_000);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [useLevel2, selectedSite, level2Product]);
+  }, [useLevel2, selectedSite, level2Product, resolvedSweepIndex, isComposite]);
 
   const radarSourceId = 'radar-source';
   const radarLayerId = 'radar-layer';
@@ -310,7 +444,8 @@ export default function RadarPage() {
         case 'velocity':
           return NCEP_WMS_URL(site, `${site}:${site}_sr_bvel`, tileCacheKey);
         case 'correlation':
-          return IEM_RIDGE_XYZ_URL('NCC', selectedSite, tileCacheKey);
+          // CC is rendered from Level II via the Fly.io renderer (see useLevel2).
+          return null;
         default:
           return null;
       }
@@ -350,35 +485,48 @@ export default function RadarPage() {
     };
   }, [tileUrl]);
 
-  const level2ImageSource = useMemo(() => {
-    if (!useLevel2 || !level2Overlay) return null;
-    const { west, east, north, south } = level2Overlay.bounds;
-    return {
-      type: 'image' as const,
-      url: `${level2Overlay.image_url}?t=${encodeURIComponent(level2Overlay.scan_time)}`,
-      coordinates: [
-        [west, north],
-        [east, north],
-        [east, south],
-        [west, south],
-      ] as [[number, number], [number, number], [number, number], [number, number]],
-    };
-  }, [useLevel2, level2Overlay]);
+  // GeoJSON source carrying ~30-80k polar wedge polygons. Mapbox rasterizes
+  // them client-side at native screen resolution, so curvature stays crisp
+  // at any zoom — no PNG aliasing or pixel quilt.
+  const level2GeoJSONSource = useMemo(() => {
+    if (!useLevel2 || !level2GeoJSON) return null;
+    return { type: 'geojson' as const, data: level2GeoJSON };
+  }, [useLevel2, level2GeoJSON]);
 
   const radarLayer = {
     id: radarLayerId,
     type: 'raster' as const,
     source: radarSourceId,
-    paint: { 'raster-opacity': opacity / 100, 'raster-fade-duration': 0 },
+    paint: {
+      'raster-opacity': opacity / 100,
+      'raster-fade-duration': 0,
+      // Nearest for crisp, faithful gate edges (target RadarScope-style look).
+      // CRITICAL: nearest also means partial alpha in the source PNG is read
+      // 1:1, no bilinear mixing of alphas → safe to use a graduated alpha
+      // ramp for low echoes without re-introducing the patchwork-quilt
+      // artifact we eliminated earlier.
+      'raster-resampling': 'nearest' as const,
+    },
     ...(radarBeforeId ? { beforeId: radarBeforeId } : {}),
   };
 
   const level2Layer = {
-    id: 'level2-raster',
-    type: 'raster' as const,
+    id: 'level2-fill',
+    type: 'fill' as const,
     source: level2SourceId,
-    paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 0 },
-    // Hi-Res sits above the free tile stack but still below roads/labels.
+    paint: {
+      'fill-color': level2Overlay
+        ? buildFillColorExpr(level2Product, level2Overlay.vmin, level2Overlay.vmax)
+        : '#000000',
+      'fill-opacity': level2Overlay
+        ? buildFillOpacityExpr(level2Product, opacity / 100,
+                               level2Overlay.vmin, level2Overlay.vmax)
+        : 0,
+      // Antialiased polygon edges look better than the raster path's
+      // pixelated stair-steps at every zoom — true RadarScope/WeatherWise
+      // feel, since these are real vector wedges now.
+      'fill-antialias': true,
+    },
     ...(radarBeforeId ? { beforeId: radarBeforeId } : {}),
   };
 
@@ -670,9 +818,13 @@ export default function RadarPage() {
             </Source>
           )}
 
-          {/* Level II hi-res overlay */}
-          {level2ImageSource && (
-            <Source key={`level2:${selectedSite}:${level2Product}:${level2Overlay?.scan_time}`} id={level2SourceId} {...level2ImageSource}>
+          {/* Level II hi-res overlay — client-side polar polygons */}
+          {level2GeoJSONSource && (
+            <Source
+              key={`level2:${selectedSite}:${level2Product}:${level2Overlay?.scan_time}:${resolvedSweepIndex}:${isComposite ? 'c' : 'b'}`}
+              id={level2SourceId}
+              {...level2GeoJSONSource}
+            >
               <Layer {...level2Layer} />
             </Source>
           )}
@@ -721,7 +873,7 @@ export default function RadarPage() {
               <React.Fragment key={k}>
                 {idx === 5 && <div className="h-px bg-wx-line my-1 mx-2" />}
                 <button
-                  onClick={() => !disabled && setProduct(k)}
+                  onClick={() => !disabled && selectProduct(k)}
                   disabled={disabled}
                   title={disabled ? (selectedSite ? 'Not available in single-site mode' : 'Pick a radar site below to use this product') : p.label}
                   className={`prod-btn flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg text-[10px] font-semibold tracking-wide transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'text-wx-mute hover:text-wx-fg'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
@@ -773,8 +925,34 @@ export default function RadarPage() {
             <div>
               <div className="flex items-center justify-between text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
                 <span>Legend · {PRODUCTS[effectiveProduct].short}</span>
-                <span className="font-mono text-[10px] text-wx-mute">{effectiveProduct === 'rotation' ? 'MRMS · CONUS' : selectedSite ? 'Single-site' : 'CONUS · QCD'}</span>
+                <span className="font-mono text-[10px] text-wx-mute">
+                  {(() => {
+                    if (effectiveProduct === 'rotation') return 'MRMS · CONUS';
+                    if (useLevel2) {
+                      const tiltLabel = isComposite
+                        ? 'COMP'
+                        : (() => {
+                            const s = availableSweeps.find((x) => x.index === resolvedSweepIndex);
+                            return s ? formatElev(s.elevation_deg) : '—';
+                          })();
+                      if (effectiveProduct === 'correlation') return `Level II · ρhv · ${tiltLabel}`;
+                      return `Level II · ${tiltLabel}`;
+                    }
+                    return selectedSite ? 'Single-site' : 'CONUS · QCD';
+                  })()}
+                </span>
               </div>
+              {effectiveProduct === 'correlation' && selectedSite && (
+                <p className="text-[10px] text-wx-mute mt-1">
+                  {level2Loading ? 'Rendering correlation coefficient…'
+                    : level2Error === 'renderer_not_configured' ? 'Renderer not configured (see .env.local)'
+                    : level2Error === 'renderer_waking' ? 'Renderer waking up…'
+                    : (level2Error === 'renderer_unreachable' || level2Error === 'renderer_timeout') ? 'Renderer slow — retrying…'
+                    : level2Error ? `CC unavailable (${level2Error})`
+                    : level2Overlay ? `Scan ${new Date(level2Overlay.scan_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} UTC`
+                    : 'Waiting for Level II render…'}
+                </p>
+              )}
               <div className={`h-2.5 rounded-[3px] mt-1 ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(90deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(90deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(90deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : 'bg-[linear-gradient(90deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`} />
               <div className="flex justify-between text-[9.5px] font-mono text-wx-mute mt-1">
                 {effectiveProduct === 'velocity' && ['−64', '−32', '0', '+32', '+64 kts'].map(t => <span key={t}>{t}</span>)}
@@ -808,6 +986,101 @@ export default function RadarPage() {
                       <div>{RADAR_SITES[code].name.split(' ').slice(1).join(' ')}</div>
                     </button>
                   ))}
+                </div>
+              )}
+              {/* Hi-Res toggle — only for Single-site reflectivity or velocity */}
+              {selectedSite && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity') && (
+                <div className="pt-3 border-t border-wx-line mt-1">
+                  <label className="flex items-center justify-between cursor-pointer">
+                    <div>
+                      <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Hi-Res Level II</div>
+                      <div className="text-[10px] text-wx-mute">Sharper single-site render</div>
+                    </div>
+                    <button
+                      onClick={() => setHiRes(!hiRes)}
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hiRes ? 'bg-wx-accent' : 'bg-wx-line'}`}
+                      aria-pressed={hiRes}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hiRes ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                    </button>
+                  </label>
+                  {/* Tilt picker. Available elevations come from the
+                      volume's metadata, so VCP changes (severe vs clear
+                      air) update the list automatically. Composite is
+                      one option in the same list rather than a separate
+                      toggle. */}
+                  {hiRes && (
+                    <div className="mt-2.5 pt-2.5 border-t border-wx-line/40">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Tilt</div>
+                        <span className="font-mono text-[10px] text-wx-mute">
+                          {(() => {
+                            if (isComposite) return 'COMPOSITE';
+                            const s = availableSweeps.find((x) => x.index === resolvedSweepIndex);
+                            return s ? formatElev(s.elevation_deg) : '—';
+                          })()}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1 mt-1.5">
+                        {/* User-facing tilt choices. We snap to the
+                            closest available sweep when the actual
+                            NEXRAD VCP differs. */}
+                        {[0.5, 0.9, 1.3, 1.8, 2.4, 3.1, 4.0].map((deg) => {
+                          const active = !isComposite && selectedElevation === deg;
+                          const haveData = availableSweeps.length > 0;
+                          const nearest = haveData
+                            ? availableSweeps.reduce((best, s) =>
+                                Math.abs(s.elevation_deg - deg) < Math.abs(best.elevation_deg - deg) ? s : best)
+                            : null;
+                          return (
+                            <button
+                              key={deg}
+                              onClick={() => setSelectedElevation(deg)}
+                              className={`px-1.5 py-1 rounded text-[10px] font-mono border transition ${
+                                active
+                                  ? 'bg-wx-accent text-black border-wx-accent'
+                                  : 'bg-wx-ink border-wx-line text-wx-mute hover:text-wx-fg'
+                              }`}
+                              title={nearest ? `nearest sweep: ${formatElev(nearest.elevation_deg)} (idx ${nearest.index})` : 'awaiting volume metadata'}
+                            >
+                              {formatElev(deg)}
+                            </button>
+                          );
+                        })}
+                        <button
+                          onClick={() => setSelectedElevation('composite')}
+                          className={`col-span-4 px-1.5 py-1 rounded text-[10px] font-mono border transition ${
+                            isComposite
+                              ? 'bg-wx-accent text-black border-wx-accent'
+                              : 'bg-wx-ink border-wx-line text-wx-mute hover:text-wx-fg'
+                          }`}
+                          title="Max reflectivity across all tilts — surfaces elevated storm cores"
+                        >
+                          COMPOSITE · ALL TILTS
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {hiRes && level2Loading && (
+                    <p className="text-[10px] text-wx-mute mt-1">Rendering…</p>
+                  )}
+                  {hiRes && level2Error === 'renderer_not_configured' && (
+                    <p className="text-[10px] text-wx-danger mt-1">Renderer not configured — set RENDERER_BASE_URL and RENDERER_TOKEN</p>
+                  )}
+                  {hiRes && level2Error === 'renderer_waking' && (
+                    <p className="text-[10px] text-wx-mute mt-1">Renderer waking up…</p>
+                  )}
+                  {hiRes && (level2Error === 'renderer_unreachable' || level2Error === 'renderer_timeout') && (
+                    <p className="text-[10px] text-wx-mute mt-1">Renderer slow or unreachable — will retry automatically</p>
+                  )}
+                  {hiRes && level2Error && level2Error !== 'renderer_not_configured' && level2Error !== 'renderer_waking' && level2Error !== 'renderer_unreachable' && level2Error !== 'renderer_timeout' && (
+                    <p className="text-[10px] text-wx-danger mt-1">Level II error: {level2Error}</p>
+                  )}
+                  {hiRes && level2Overlay && !level2Loading && (
+                    <p className="text-[10px] text-wx-mute mt-1">
+                      Scan {new Date(level2Overlay.scan_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} UTC
+                    </p>
+                  )}
                 </div>
               )}
             </div>

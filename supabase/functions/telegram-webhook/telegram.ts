@@ -53,10 +53,7 @@ export async function tgAnswerCallbackQuery(
   });
 }
 
-// Render the operator-authored markdown into the subset Telegram accepts.
-// We send as plain HTML to dodge MarkdownV2's escaping quirks.
 export function mdToTelegramHtml(md: string): string {
-  // Minimal: bold **x**, italic *x*, code `x`, links [t](u). Escape HTML first.
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return esc(md)
@@ -69,7 +66,6 @@ export function mdToTelegramHtml(md: string): string {
 
 export function buildInlineKeyboard(quickReplies?: QuickReply[]) {
   if (!quickReplies?.length) return undefined;
-  // 2 columns max for thumb-friendly tapping
   const rows: { text: string; callback_data: string }[][] = [];
   for (let i = 0; i < quickReplies.length; i += 2) {
     rows.push(

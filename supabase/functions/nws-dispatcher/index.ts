@@ -1,6 +1,8 @@
 // Claims nws_alerts (status=new), applies auto_alert_rules, inserts messages, enqueues when mode=auto.
 
-import { serviceClient, json } from './_shared/supabase.ts';
+import { serviceClient, json } from './supabase.ts';
+import { notifyExternalEndpointsForMessage } from './external-notify.ts';
+import { notifyOperatorNwsPending } from './operator-notify.ts';
 
 const BATCH = 15;
 const LOCK_TTL_SEC = 120;
@@ -172,19 +174,35 @@ Deno.serve(async (req) => {
       const audience_spec = { subscribers: ids };
 
       if (matchedRule.mode === 'review') {
-        const { error: insErr } = await supa.from('messages').insert({
-          body_md: bodyMd,
-          body_rendered: bodyMd,
-          source: 'nws',
-          status: 'pending_approval',
-          audience_spec,
-          quick_replies: tpl.default_quick_replies,
-          template_id: matchedRule.template_id,
-          nws_alert_id: alert.id,
-          recipient_count: ids.length,
-          created_by: null,
-        });
-        if (insErr) throw new Error(insErr.message);
+        const { data: reviewMsg, error: insErr } = await supa
+          .from('messages')
+          .insert({
+            body_md: bodyMd,
+            body_rendered: bodyMd,
+            source: 'nws',
+            status: 'pending_approval',
+            audience_spec,
+            quick_replies: tpl.default_quick_replies,
+            template_id: matchedRule.template_id,
+            nws_alert_id: alert.id,
+            recipient_count: ids.length,
+            created_by: null,
+          })
+          .select('id')
+          .single();
+        if (insErr || !reviewMsg) throw new Error(insErr?.message ?? 'insert failed');
+
+        const tgToken = Deno.env.get('TELEGRAM_BOT_TOKEN');
+        if (tgToken) {
+          notifyOperatorNwsPending(supa, tgToken, {
+            messageId: reviewMsg.id,
+            event: alert.event,
+            headline: alert.headline,
+            recipientCount: ids.length,
+            bodyPreview: bodyMd,
+          }).catch((e) => console.error('nws operator notify', e));
+        }
+
         await finish('dispatched');
         processed++;
         continue;
@@ -218,6 +236,15 @@ Deno.serve(async (req) => {
         await supa.from('messages').delete().eq('id', msg.id);
         throw new Error(enqErr.message);
       }
+
+      notifyExternalEndpointsForMessage(supa, msg.id, {
+        nws_id: alert.nws_id,
+        event: alert.event,
+        headline: alert.headline,
+        area_desc: alert.area_desc,
+        expires_at: alert.expires_at,
+        severity: alert.severity,
+      }).catch((e) => console.error('nws external notify', e));
 
       await finish('dispatched');
       processed++;

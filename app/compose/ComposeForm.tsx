@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useTransition, useEffect } from 'react';
+import { useState, useTransition, useEffect, useMemo } from 'react';
 import { previewAudience, sendAndRedirect, draftWithAI, type AudienceSpecT, type DraftTone } from './actions';
+import { templateHasVariables, TEMPLATE_VARIABLES } from '@/lib/templates/fill';
 
 type Template = {
   id: string;
@@ -39,6 +40,14 @@ export default function ComposeForm({
   const [geometry, setGeometry] = useState<any>(initialGeometry ?? null);
   const [aiTone, setAiTone] = useState<DraftTone>('urgent-calm');
   const [aiPending, setAiPending] = useState(false);
+  const [templateVars, setTemplateVars] = useState<Record<string, string>>({
+    headline: '',
+    event: '',
+    area_desc: '',
+    expires_at: '',
+  });
+
+  const showTemplateVars = useMemo(() => templateHasVariables(body), [body]);
 
   useEffect(() => {
     if (initialGeometry) {
@@ -123,6 +132,7 @@ export default function ComposeForm({
           quick_replies: quickReplies,
           template_id: templateId || null,
           source: isCheckin ? 'checkin' : 'manual',
+          template_vars: showTemplateVars ? templateVars : undefined,
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -205,6 +215,24 @@ export default function ComposeForm({
         <p className="text-xs text-wx-mute">
           Supports **bold**, *italic*, `code`, and [links](https://example.com). Rendered as Telegram HTML.
         </p>
+        {showTemplateVars ? (
+          <div className="grid gap-2 sm:grid-cols-2 pt-2 border-t border-wx-line">
+            <p className="sm:col-span-2 text-xs text-wx-mute">Template variables</p>
+            {TEMPLATE_VARIABLES.map((v) => (
+              <label key={v.key} className="block text-xs">
+                <span className="text-wx-mute">{v.label} ({'{{' + v.key + '}}'})</span>
+                <input
+                  className="input mt-1"
+                  value={templateVars[v.key] ?? ''}
+                  placeholder={v.placeholder}
+                  onChange={(e) =>
+                    setTemplateVars((prev) => ({ ...prev, [v.key]: e.target.value }))
+                  }
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="card p-5 space-y-3">
