@@ -8,12 +8,12 @@ export const runtime = 'nodejs';
 // side. The frontend just hits this route with { site, product } and gets back
 // a public Supabase Storage URL for the rendered PNG plus its lat/lon bounds.
 
+import { NEXRAD_CODES } from '@/lib/radar/sites';
+
 const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'cc']);
 const ALLOWED_FORMATS = new Set(['png', 'geojson']);
 
-const ALLOWED_SITES = new Set([
-  'KNQA', 'KGWX', 'KMRX', 'KOHX', 'KHTX', 'KLZK', 'KFFC', 'KTLH',
-]);
+const ALLOWED_SITES = new Set(NEXRAD_CODES);
 
 type SweepInfo = { index: number; elevation_deg: number };
 

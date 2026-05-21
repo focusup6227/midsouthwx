@@ -7,8 +7,16 @@ import { supabaseBrowser } from '@/lib/supabase/client';
 import { mapboxAccessToken } from '@/lib/supabase/env';
 import {
   CloudLightning, Radio, Wind, Atom, RotateCw,
-  Play, Pause, Trash2, Send, Circle, Target,
+  Play, Pause, Trash2, Send, Circle, Target, Search, X,
 } from 'lucide-react';
+import {
+  NEXRAD_SITES,
+  NEXRAD_SITES_BY_CODE,
+  nearestSites,
+  searchSites,
+  distanceKm,
+  type RadarSite,
+} from '@/lib/radar/sites';
 
 // Three providers, picked per product based on which one actually publishes that
 // product as a public tile feed:
@@ -66,16 +74,25 @@ const RAINVIEWER_OPTS = '1_1';
 const RAINVIEWER_TILE_SIZE = 512;
 const RAINVIEWER_MAX_ZOOM = 7;
 
-const RADAR_SITES: Record<string, { name: string; center: [number, number]; zoom: number }> = {
-  KNQA: { name: 'KNQA Memphis', center: [-90.02, 35.05], zoom: 7.5 },
-  KGWX: { name: 'KGWX Columbus', center: [-88.33, 33.9], zoom: 7.5 },
-  KMRX: { name: 'KMRX Morristown', center: [-83.4, 36.17], zoom: 7.5 },
-  KOHX: { name: 'KOHX Nashville', center: [-86.56, 36.25], zoom: 7.5 },
-  KHTX: { name: 'KHTX Huntsville', center: [-86.08, 34.93], zoom: 7.5 },
-  KLZK: { name: 'KLZK Little Rock', center: [-92.26, 34.84], zoom: 7.5 },
-  KFFC: { name: 'KFFC Atlanta', center: [-84.57, 33.36], zoom: 7.5 },
-  KTLH: { name: 'KTLH Tallahassee', center: [-84.3, 30.4], zoom: 7.5 },
-};
+// Default fly-to when the operator first switches from CONUS → single site
+// (and no site has been chosen yet). KNQA = Memphis, the home office.
+const DEFAULT_SITE_CODE = 'KNQA';
+
+// Cap on geographic map pills at low zoom. Past z6 we show every site in view.
+const MAX_MAP_PILLS_LOW_ZOOM = 32;
+
+function sitePillId(code: string): string {
+  return code.replace(/^K/, '');
+}
+
+function sitePillLabel(site: RadarSite, zoom: number): string {
+  const id = sitePillId(site.code);
+  if (zoom >= 8) {
+    const city = site.name.split(/[\s(/]/)[0];
+    return `${id} · ${city}`;
+  }
+  return id;
+}
 
 type Selection = {
   type: 'circle';
@@ -229,6 +246,15 @@ export default function RadarView() {
     zoom: 7,
   });
 
+  // Single-site picker state. siteQuery drives the search box; pickerSites is
+  // derived (search matches when there's a query, otherwise the N closest
+  // NEXRAD sites to the current map center).
+  const [siteQuery, setSiteQuery] = useState('');
+  const pickerSites = useMemo<RadarSite[]>(() => {
+    if (siteQuery.trim()) return searchSites(siteQuery, 48);
+    return nearestSites([viewState.longitude, viewState.latitude], 12);
+  }, [siteQuery, viewState.longitude, viewState.latitude]);
+
   const mapRef = useRef<MapRef>(null);
   const token = mapboxAccessToken();
   const [radarBeforeId, setRadarBeforeId] = useState<string | null>(null);
@@ -250,6 +276,32 @@ export default function RadarView() {
   // for a black basemap and disappear over yellow/red radar pixels.
   const resolvedBeforeIdRef = useRef<string | null>(null);
   const boostedRef = useRef(false);
+  const viewportSyncedRef = useRef(false);
+
+  type Bounds = { west: number; east: number; south: number; north: number };
+  const [mapBounds, setMapBounds] = useState<Bounds | null>(null);
+  const [mapPos, setMapPos] = useState({ w: 0, h: 0, k: 0 });
+
+  const syncMapViewport = useCallback(() => {
+    const map = mapRef.current?.getMap();
+    if (!map) return;
+    const b = map.getBounds();
+    if (b) {
+      setMapBounds({
+        west: b.getWest(),
+        east: b.getEast(),
+        south: b.getSouth(),
+        north: b.getNorth(),
+      });
+    }
+    setMapPos((p) => ({
+      w: map.getContainer().clientWidth,
+      h: map.getContainer().clientHeight,
+      k: p.k + 1,
+    }));
+  }, []);
+
+  void mapPos;
 
   const boostBasemapLegibility = useCallback((map: mapboxgl.Map) => {
     if (boostedRef.current) return;
@@ -367,7 +419,13 @@ export default function RadarView() {
       }
     }
     boostBasemapLegibility(map);
-  }, [boostBasemapLegibility]);
+    syncMapViewport();
+    if (!viewportSyncedRef.current) {
+      viewportSyncedRef.current = true;
+      map.on('move', syncMapViewport);
+      map.on('resize', syncMapViewport);
+    }
+  }, [boostBasemapLegibility, syncMapViewport]);
 
   useEffect(() => {
     fetch('/api/radar/subs')
@@ -440,13 +498,16 @@ export default function RadarView() {
   const selectProduct = useCallback((k: ProductKey) => {
     const meta = PRODUCTS[k];
     if (!selectedSite && meta.modes.site && !meta.modes.composite) {
-      const defaultSite = 'KNQA';
-      const site = RADAR_SITES[defaultSite];
-      setSelectedSite(defaultSite);
-      mapRef.current?.flyTo({ center: site.center, zoom: site.zoom, duration: 700 });
+      // Default to whichever NEXRAD site is closest to the current map
+      // center so single-site products don't yank the operator across the
+      // country when they tap CC / BVEL from a non-Mid-South view.
+      const center: [number, number] = [viewState.longitude, viewState.latitude];
+      const nearest = nearestSites(center, 1)[0] ?? NEXRAD_SITES_BY_CODE[DEFAULT_SITE_CODE];
+      setSelectedSite(nearest.code);
+      mapRef.current?.flyTo({ center: nearest.center, zoom: nearest.zoom, duration: 700 });
     }
     setProduct(k);
-  }, [selectedSite]);
+  }, [selectedSite, viewState.longitude, viewState.latitude]);
 
   const availableSweeps = level2Overlay?.available_sweeps ?? [];
   const isComposite = selectedElevation === 'composite';
@@ -977,17 +1038,38 @@ export default function RadarView() {
     mapRef.current?.flyTo({ center: w.centroid, zoom: 8.5, duration: 800 });
   };
 
-  const [mapPos, setMapPos] = useState({ w: 0, h: 0, k: 0 });
-  useEffect(() => {
-    const map = mapRef.current?.getMap();
-    if (!map) return;
-    const tick = () => setMapPos((p) => ({ w: map.getContainer().clientWidth, h: map.getContainer().clientHeight, k: p.k + 1 }));
-    map.on('move', tick);
-    map.on('resize', tick);
-    tick();
-    return () => { map.off('move', tick); map.off('resize', tick); };
-  }, []);
-  void mapPos;
+  // Geographic pills anchored at each NEXRAD site visible in the viewport.
+  // Hidden at continent zoom; densifies as you zoom in so switching sites is
+  // one tap on the map instead of hunting the inspector list.
+  const mapPillSites = useMemo<RadarSite[]>(() => {
+    const zoom = viewState.zoom;
+    const center: [number, number] = [viewState.longitude, viewState.latitude];
+
+    // At full-CONUS zoom hide the pill carpet; regional zoom and up show sites.
+    if (zoom < 4 && !selectedSite) return [];
+
+    const inView = mapBounds
+      ? NEXRAD_SITES.filter((s) => {
+          const [lon, lat] = s.center;
+          return lon >= mapBounds.west && lon <= mapBounds.east
+            && lat >= mapBounds.south && lat <= mapBounds.north;
+        })
+      : nearestSites(center, 12);
+
+    const cap = zoom >= 7 ? inView.length : zoom >= 5.5 ? 48 : MAX_MAP_PILLS_LOW_ZOOM;
+    const pool = inView.length > 0 ? inView : nearestSites(center, cap);
+    const ranked = pool
+      .map((s) => ({ s, d: distanceKm(center, s.center) }))
+      .sort((a, b) => a.d - b.d)
+      .slice(0, cap)
+      .map((x) => x.s);
+
+    if (selectedSite && !ranked.some((s) => s.code === selectedSite)) {
+      const sel = NEXRAD_SITES_BY_CODE[selectedSite];
+      if (sel) ranked.push(sel);
+    }
+    return ranked;
+  }, [mapBounds, viewState.zoom, viewState.longitude, viewState.latitude, selectedSite]);
 
   const screenPoint = (lngLat: [number, number]) => {
     const map = mapRef.current?.getMap();
@@ -1030,7 +1112,7 @@ export default function RadarView() {
         <Map
           ref={mapRef}
           initialViewState={viewState}
-          onMove={(e) => setViewState(e.viewState)}
+          onMove={(e) => { setViewState(e.viewState); syncMapViewport(); }}
           onLoad={handleMapLoad}
           onStyleData={handleMapLoad}
           style={{ width: '100%', height: '100%', cursor: mapCursor }}
@@ -1284,17 +1366,68 @@ export default function RadarView() {
             <div>
               <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">Mode</div>
               <div className="flex border border-wx-line rounded-lg overflow-hidden bg-wx-ink">
-                <button onClick={() => setSelectedSite(null)} className={`flex-1 py-1.5 text-sm font-medium ${!selectedSite ? 'bg-wx-card text-wx-fg' : 'text-wx-mute'}`}>CONUS</button>
-                <button onClick={() => { if (!selectedSite) { setSelectedSite('KNQA'); mapRef.current?.flyTo({ center: RADAR_SITES.KNQA.center, zoom: 8, duration: 700 }); } }} className={`flex-1 py-1.5 text-sm font-medium border-l border-wx-line ${selectedSite ? 'bg-wx-card text-wx-fg' : 'text-wx-mute'}`}>Single site</button>
+                <button onClick={() => { setSelectedSite(null); setSiteQuery(''); }} className={`flex-1 py-1.5 text-sm font-medium ${!selectedSite ? 'bg-wx-card text-wx-fg' : 'text-wx-mute'}`}>CONUS</button>
+                <button
+                  onClick={() => {
+                    if (!selectedSite) {
+                      const center: [number, number] = [viewState.longitude, viewState.latitude];
+                      const nearest = nearestSites(center, 1)[0] ?? NEXRAD_SITES_BY_CODE[DEFAULT_SITE_CODE];
+                      setSelectedSite(nearest.code);
+                      mapRef.current?.flyTo({ center: nearest.center, zoom: nearest.zoom, duration: 700 });
+                    }
+                  }}
+                  className={`flex-1 py-1.5 text-sm font-medium border-l border-wx-line ${selectedSite ? 'bg-wx-card text-wx-fg' : 'text-wx-mute'}`}
+                >Single site</button>
               </div>
               {selectedSite && (
-                <div className="grid grid-cols-2 gap-1 mt-1.5">
-                  {Object.keys(RADAR_SITES).map((code) => (
-                    <button key={code} onClick={() => { const s = RADAR_SITES[code]; mapRef.current?.flyTo({ center: s.center, zoom: s.zoom, duration: 700 }); setSelectedSite(code); }} className={`text-left px-2.5 py-1 rounded text-[11px] ${selectedSite === code ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'hover:bg-wx-ink/50 text-wx-mute'}`}>
-                      <div className="font-mono text-[10px] text-wx-accent">{code}</div>
-                      <div>{RADAR_SITES[code].name.split(' ').slice(1).join(' ')}</div>
-                    </button>
-                  ))}
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <div className="relative">
+                    <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-wx-mute pointer-events-none" />
+                    <input
+                      type="text"
+                      value={siteQuery}
+                      onChange={(e) => setSiteQuery(e.target.value)}
+                      placeholder="Search NEXRAD (KOHX, Nashville, TN…)"
+                      className="w-full pl-7 pr-7 py-1.5 text-[11.5px] bg-wx-ink border border-wx-line rounded-md placeholder:text-wx-mute focus:border-wx-accent outline-none"
+                    />
+                    {siteQuery && (
+                      <button
+                        onClick={() => setSiteQuery('')}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 text-wx-mute hover:text-wx-fg"
+                        title="Clear"
+                      ><X size={11} /></button>
+                    )}
+                  </div>
+
+                  <div className="text-[9.5px] uppercase tracking-wider text-wx-mute font-semibold flex items-center justify-between">
+                    <span>{siteQuery ? `Matches · ${pickerSites.length}` : 'Nearest sites'}</span>
+                    <span className="font-mono text-wx-mute/70 normal-case tracking-normal">{NEXRAD_SITES.length} CONUS</span>
+                  </div>
+                  <div className="max-h-[220px] overflow-y-auto wx-scroll pr-0.5 -mr-0.5">
+                    {pickerSites.length === 0 && (
+                      <p className="text-[11px] text-wx-mute px-1 py-2">No matches — try a code (KTLX), city, or state code (OK).</p>
+                    )}
+                    <div className="grid grid-cols-1 gap-0.5">
+                      {pickerSites.map((s) => {
+                        const active = selectedSite === s.code;
+                        const km = distanceKm([viewState.longitude, viewState.latitude], s.center);
+                        return (
+                          <button
+                            key={s.code}
+                            onClick={() => {
+                              mapRef.current?.flyTo({ center: s.center, zoom: s.zoom, duration: 700 });
+                              setSelectedSite(s.code);
+                            }}
+                            className={`w-full text-left px-2 py-1 rounded text-[11.5px] flex items-center gap-2 transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'hover:bg-wx-ink/60 text-wx-mute hover:text-wx-fg'}`}
+                          >
+                            <span className="font-mono text-[10px] text-wx-accent w-[44px] flex-shrink-0">{s.code}</span>
+                            <span className="flex-1 truncate">{s.name}</span>
+                            <span className="text-[9.5px] font-mono text-wx-mute/70 flex-shrink-0">{s.state} · {Math.round(km)}km</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
               {selectedSite && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity') && (
@@ -1628,22 +1761,45 @@ export default function RadarView() {
           </div>
         )}
 
-        <div className="absolute inset-0 pointer-events-none z-10">
-          {Object.keys(RADAR_SITES).map((code) => {
-            const site = RADAR_SITES[code];
-            const isActive = selectedSite === code;
-            const p = screenPoint(site.center);
-            if (!p) return null;
-            return (
-              <div key={code} className="absolute pointer-events-auto" style={{ left: p.x, top: p.y, transform: 'translate(-50%, -100%)' }}>
-                {isActive && <div className="absolute left-1/2 top-full -translate-x-1/2 -translate-y-1/2 w-[230px] h-[230px] rounded-full border border-dashed border-white/10" style={{ background: 'radial-gradient(circle, rgba(251,191,36,0.06) 0%, transparent 70%)' }} />}
-                <button onClick={() => { mapRef.current?.flyTo({ center: site.center, zoom: site.zoom, duration: 700 }); setSelectedSite(code); }} className={`inline-flex items-center gap-1.5 px-2.5 py-1 bg-wx-card border border-wx-line rounded-lg text-[11px] font-semibold ${isActive ? 'bg-wx-accent text-black border-wx-accent' : 'hover:border-wx-accent'}`}>
-                  <span className="w-1.5 h-1.5 rounded-full bg-wx-mute" /> {code} <span className="opacity-60 font-medium text-[10px]">{site.name.split(' ').pop()}</span>
-                </button>
-              </div>
-            );
-          })}
-        </div>
+        {/* NEXRAD site pills — one per radar location in the current view */}
+        {mapPillSites.length > 0 && (
+          <div className="absolute inset-0 pointer-events-none z-[25]">
+            {mapPillSites.map((site) => {
+              const isActive = selectedSite === site.code;
+              const p = screenPoint(site.center);
+              if (!p) return null;
+              return (
+                <div
+                  key={site.code}
+                  className="absolute pointer-events-auto"
+                  style={{ left: p.x, top: p.y, transform: 'translate(-50%, -50%)' }}
+                >
+                  {isActive && (
+                    <div
+                      className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[230px] h-[230px] rounded-full border border-dashed border-white/10 pointer-events-none"
+                      style={{ background: 'radial-gradient(circle, rgba(251,191,36,0.06) 0%, transparent 70%)' }}
+                    />
+                  )}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedSite(site.code);
+                      mapRef.current?.flyTo({ center: site.center, zoom: site.zoom, duration: 700 });
+                    }}
+                    title={`${site.code} · ${site.name}, ${site.state}`}
+                    className={`relative inline-flex items-center whitespace-nowrap px-2.5 py-1 rounded-full text-[11px] font-mono font-semibold border shadow-lg backdrop-blur-sm transition ${
+                      isActive
+                        ? 'bg-wx-accent text-black border-wx-accent scale-105'
+                        : 'bg-wx-card/95 border-wx-line text-wx-fg hover:border-wx-accent hover:bg-wx-card'
+                    }`}
+                  >
+                    {sitePillLabel(site, viewState.zoom)}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {hoverSub && (
           <div
