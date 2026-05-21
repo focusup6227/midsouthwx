@@ -82,13 +82,13 @@ if (failed > 0) process.exit(1);
 // ── implementations ─────────────────────────────────────────────────────────
 
 async function importCounties(statefp) {
-  console.log(`\nFetching Census TIGER counties for state FIPS ${statefp}…`);
-  // Census Cartographic Boundary, 20m generalization (good enough for routing).
+  console.log(`\nFetching Census TIGERweb counties for state FIPS ${statefp}…`);
+  // TIGERweb State_County MapServer, layer 13 = Counties (current). Public, no key.
   const url =
-    'https://services2.arcgis.com/jUpNdisbWqRpMo35/ArcGIS/rest/services/' +
-    'Census_Counties_2022/FeatureServer/0/query' +
-    `?where=STATEFP%3D'${encodeURIComponent(statefp)}'` +
-    '&outFields=STATEFP,COUNTYFP,NAME,NAMELSAD&outSR=4326&f=geojson';
+    'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/13/query' +
+    `?where=${encodeURIComponent(`STATE='${statefp}'`)}` +
+    '&outFields=STATE,COUNTY,NAME,BASENAME' +
+    '&outSR=4326&f=geojson';
   const res = await fetch(url, { headers: { accept: 'application/json' } });
   if (!res.ok) {
     console.error(`  fetch failed: ${res.status}`);
@@ -96,9 +96,11 @@ async function importCounties(statefp) {
     return;
   }
   const fc = await res.json();
+  const abbr = stateAbbrFromFips(statefp);
   for (const feat of fc.features ?? []) {
-    const fips = `${feat.properties.STATEFP}${feat.properties.COUNTYFP}`;
-    const name = `${feat.properties.NAMELSAD ?? feat.properties.NAME} (${stateAbbrFromFips(statefp)})`;
+    const fips = `${feat.properties.STATE}${feat.properties.COUNTY}`;
+    const base = feat.properties.BASENAME ?? feat.properties.NAME;
+    const name = `${base} County (${abbr})`;
     await upsert({
       name,
       kind: 'county',
@@ -117,32 +119,58 @@ async function importZones(stateAbbr) {
     return;
   }
   console.log(`\nFetching NWS forecast zones for state ${stateAbbr}…`);
-  const url = `https://api.weather.gov/zones?area=${encodeURIComponent(stateAbbr)}&type=forecast&include_geometry=true&limit=500`;
-  const res = await fetch(url, {
+  // `/zones?include_geometry=true` currently returns geometry:null (NWS bug 2026-05).
+  // List the zone ids first, then fetch each `/zones/forecast/<id>` for its polygon.
+  const listUrl = `https://api.weather.gov/zones?area=${encodeURIComponent(stateAbbr)}&type=forecast&limit=500`;
+  const listRes = await fetch(listUrl, {
     headers: { accept: 'application/geo+json', 'user-agent': ua },
   });
-  if (!res.ok) {
-    console.error(`  fetch failed: ${res.status}`);
+  if (!listRes.ok) {
+    console.error(`  zones list failed: ${listRes.status}`);
     failed++;
     return;
   }
-  const fc = await res.json();
-  for (const feat of fc.features ?? []) {
-    const ugc = feat.properties.id || feat.properties.code;
-    if (!ugc) continue;
-    if (!feat.geometry) {
-      console.warn(`  ${ugc}: no geometry, skipping`);
-      continue;
+  const list = await listRes.json();
+  const zoneIds = (list.features ?? [])
+    .map((f) => f.properties?.id || f.properties?.code)
+    .filter(Boolean);
+  console.log(`  ${zoneIds.length} zones; fetching geometries…`);
+
+  // Polite concurrency: 6 in flight.
+  const POOL = 6;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < zoneIds.length) {
+      const ugc = zoneIds[cursor++];
+      try {
+        const r = await fetch(`https://api.weather.gov/zones/forecast/${encodeURIComponent(ugc)}`, {
+          headers: { accept: 'application/geo+json', 'user-agent': ua },
+        });
+        if (!r.ok) {
+          console.error(`\n  ${ugc}: fetch ${r.status}`);
+          failed++;
+          continue;
+        }
+        const feat = await r.json();
+        if (!feat.geometry) {
+          console.warn(`\n  ${ugc}: no geometry, skipping`);
+          continue;
+        }
+        const baseName = feat.properties?.name ?? ugc;
+        await upsert({
+          name: `${baseName} (${stateAbbr})`,
+          kind: 'zone',
+          county_fips: null,
+          ugc_code: ugc,
+          geojson: JSON.stringify(feat.geometry),
+        });
+      } catch (e) {
+        console.error(`\n  ${ugc}: ${e.message}`);
+        failed++;
+      }
     }
-    const name = `${feat.properties.name} (${stateAbbr})`;
-    await upsert({
-      name,
-      kind: 'zone',
-      county_fips: null,
-      ugc_code: ugc,
-      geojson: JSON.stringify(feat.geometry),
-    });
   }
+  await Promise.all(Array.from({ length: POOL }, worker));
 }
 
 async function importFile(path) {

@@ -6,14 +6,87 @@ import {
   updateAutoRule,
 } from './actions';
 import RuleToggle from './RuleToggle';
+import NwsApproveButtons from './NwsApproveButtons';
+import NwsRefresher from './NwsRefresher';
+import RunButtons from './RunButtons';
 import DashShell from '@/components/DashShell';
 
 export const dynamic = 'force-dynamic';
 
 type RegionFilter = { region_ids?: string[] };
 
-export default async function NwsPage() {
+type AlertRow = {
+  id: string;
+  nws_id: string;
+  event: string;
+  severity: string | null;
+  headline: string | null;
+  area_desc: string | null;
+  status: string;
+  expires_at: string | null;
+  ingested_at: string;
+};
+
+const ALL_STATUSES = [
+  'new',
+  'dispatched',
+  'skipped',
+  'superseded',
+  'cancelled',
+  'expired',
+] as const;
+
+const SEVERITY_TONE: Record<string, string> = {
+  Extreme: 'bg-wx-danger text-black',
+  Severe: 'bg-orange-500/90 text-black',
+  Moderate: 'bg-yellow-500/80 text-black',
+  Minor: 'bg-blue-500/70 text-white',
+  Unknown: 'bg-wx-line text-wx-mute',
+};
+
+const STATUS_TONE: Record<string, string> = {
+  new: 'bg-wx-accent/20 text-wx-accent',
+  dispatched: 'bg-wx-ok/20 text-wx-ok',
+  skipped: 'bg-wx-line text-wx-mute',
+  superseded: 'bg-wx-line text-wx-mute line-through',
+  cancelled: 'bg-wx-line text-wx-mute',
+  expired: 'bg-wx-line text-wx-mute',
+};
+
+function relTime(iso: string | null, opts: { future?: boolean } = {}): string {
+  if (!iso) return '—';
+  const ms = new Date(iso).getTime() - Date.now();
+  const abs = Math.abs(ms);
+  const m = Math.round(abs / 60000);
+  const h = Math.round(abs / 3600000);
+  const d = Math.round(abs / 86400000);
+  let v: string;
+  if (m < 1) v = 'just now';
+  else if (m < 60) v = `${m}m`;
+  else if (h < 24) v = `${h}h`;
+  else v = `${d}d`;
+  if (opts.future) return ms < 0 ? `expired ${v} ago` : `in ${v}`;
+  return ms <= 0 ? `${v} ago` : `in ${v}`;
+}
+
+export default async function NwsPage({
+  searchParams,
+}: {
+  searchParams?: { status?: string };
+}) {
   const supa = supabaseServer();
+  const filterStatus = ALL_STATUSES.includes(searchParams?.status as never)
+    ? (searchParams!.status as (typeof ALL_STATUSES)[number])
+    : null;
+
+  let alertsQ = supa
+    .from('nws_alerts')
+    .select(
+      'id, nws_id, event, severity, headline, area_desc, status, expires_at, ingested_at',
+    )
+    .order('ingested_at', { ascending: false })
+    .limit(100);
+  if (filterStatus) alertsQ = alertsQ.eq('status', filterStatus);
 
   const [
     { data: alerts },
@@ -21,17 +94,14 @@ export default async function NwsPage() {
     { data: rules },
     { data: templates },
     { data: regions },
+    statusCountsResults,
   ] = await Promise.all([
-    supa
-      .from('nws_alerts')
-      .select(
-        'id, nws_id, event, severity, headline, status, expires_at, ingested_at',
-      )
-      .order('ingested_at', { ascending: false })
-      .limit(75),
+    alertsQ,
     supa
       .from('messages')
-      .select('id, body_md, recipient_count, created_at, nws_alert_id')
+      .select(
+        'id, body_md, recipient_count, created_at, nws_alert_id, quick_replies',
+      )
       .eq('source', 'nws')
       .eq('status', 'pending_approval')
       .order('created_at', { ascending: false }),
@@ -43,34 +113,77 @@ export default async function NwsPage() {
       .order('created_at', { ascending: true }),
     supa.from('templates').select('id, name').order('name'),
     supa.from('regions').select('id, name, kind').order('name'),
+    Promise.all(
+      ALL_STATUSES.map((s) =>
+        supa
+          .from('nws_alerts')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', s)
+          .then((r) => ({ status: s, count: r.count ?? 0 })),
+      ),
+    ),
   ]);
 
+  const statusCounts = new Map(statusCountsResults.map((r) => [r.status, r.count]));
   const regionName = new Map((regions ?? []).map((r) => [r.id, r.name]));
+
+  // Headline number: how many alerts could fire for current subscribers
+  // (server-rendered: count distinct events with status='new' or recent).
+  const totalAlerts = statusCountsResults.reduce((s, r) => s + r.count, 0);
 
   return (
     <DashShell title="NWS automation">
+      <NwsRefresher />
+
       <p className="text-sm text-wx-mute">
-        Active alerts from the national poll, pending approvals, and routing rules.
+        {totalAlerts} alerts tracked · live national poll every minute · matches against
+        subscriber location/county/forecast zone.
       </p>
 
+      <section className="card p-5 space-y-3">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="font-semibold">Pipeline controls</h2>
+            <p className="text-sm text-wx-mute">
+              Cron runs both jobs every minute. Use these to test or re-run on demand.
+            </p>
+          </div>
+        </div>
+        <RunButtons />
+      </section>
+
       <section className="card p-5 space-y-4">
-        <h2 className="font-semibold">Pending approvals</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">
+            Pending approvals
+            {pendingMsgs?.length ? (
+              <span className="ml-2 rounded-full bg-wx-accent px-2 py-0.5 text-xs font-bold text-black">
+                {pendingMsgs.length}
+              </span>
+            ) : null}
+          </h2>
+        </div>
         {!pendingMsgs?.length ? (
           <p className="text-sm text-wx-mute">No NWS messages awaiting approval.</p>
         ) : (
           <ul className="divide-y divide-wx-line">
             {pendingMsgs.map((m) => (
-              <li key={m.id} className="py-3 flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0">
-                  <Link href={`/alerts/${m.id}`} className="text-wx-accent font-medium">
-                    Open message
-                  </Link>
-                  <pre className="whitespace-pre-wrap font-sans text-sm mt-1 text-wx-fg/90 line-clamp-3">
-                    {m.body_md}
-                  </pre>
-                  <div className="text-xs text-wx-mute mt-1">
-                    {m.recipient_count ?? 0} matched subscribers ·{' '}
-                    {new Date(m.created_at).toLocaleString()}
+              <li key={m.id} className="py-4 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <Link href={`/alerts/${m.id}`} className="text-wx-accent text-sm font-medium">
+                      Open message →
+                    </Link>
+                    <pre className="whitespace-pre-wrap font-sans text-sm mt-1 text-wx-fg/90 max-h-32 overflow-y-auto">
+                      {m.body_md}
+                    </pre>
+                    <div className="text-xs text-wx-mute mt-1">
+                      {m.recipient_count ?? 0} matched subscribers ·{' '}
+                      {new Date(m.created_at).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <NwsApproveButtons messageId={m.id} />
                   </div>
                 </div>
               </li>
@@ -80,31 +193,68 @@ export default async function NwsPage() {
       </section>
 
       <section className="card p-5 space-y-4">
-        <h2 className="font-semibold">Recent NWS alerts</h2>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h2 className="font-semibold">Recent NWS alerts</h2>
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <Link
+              href="/nws"
+              className={`px-2 py-1 rounded border ${
+                !filterStatus
+                  ? 'border-wx-accent text-wx-accent'
+                  : 'border-wx-line text-wx-mute hover:text-wx-fg'
+              }`}
+            >
+              all ({totalAlerts})
+            </Link>
+            {ALL_STATUSES.map((s) => (
+              <Link
+                key={s}
+                href={`/nws?status=${s}`}
+                className={`px-2 py-1 rounded border ${
+                  filterStatus === s
+                    ? 'border-wx-accent text-wx-accent'
+                    : 'border-wx-line text-wx-mute hover:text-wx-fg'
+                }`}
+              >
+                {s} ({statusCounts.get(s) ?? 0})
+              </Link>
+            ))}
+          </div>
+        </div>
         {!alerts?.length ? (
-          <p className="text-sm text-wx-mute">No rows yet (poll runs every minute when deployed).</p>
+          <p className="text-sm text-wx-mute">
+            No alerts in this view. Poll runs every minute; check back shortly.
+          </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-wx-mute border-b border-wx-line">
-                  <th className="pb-2 pr-3">Status</th>
-                  <th className="pb-2 pr-3">Event</th>
-                  <th className="pb-2 pr-3">Headline</th>
-                  <th className="pb-2 pr-3">Expires</th>
-                  <th className="pb-2">API</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-wx-line">
-                {alerts.map((a) => (
-                  <tr key={a.id}>
-                    <td className="py-2 pr-3 whitespace-nowrap">{a.status}</td>
-                    <td className="py-2 pr-3">{a.event}</td>
-                    <td className="py-2 pr-3 max-w-xs truncate">{a.headline ?? '—'}</td>
-                    <td className="py-2 pr-3 whitespace-nowrap text-wx-mute">
-                      {a.expires_at ? new Date(a.expires_at).toLocaleString() : '—'}
-                    </td>
-                    <td className="py-2">
+          <ul className="divide-y divide-wx-line">
+            {(alerts as AlertRow[]).map((a) => {
+              const sevTone = SEVERITY_TONE[a.severity ?? 'Unknown'] ?? SEVERITY_TONE.Unknown;
+              const statusTone = STATUS_TONE[a.status] ?? '';
+              return (
+                <li key={a.id} className="py-3">
+                  <div className="flex items-start gap-3 flex-wrap">
+                    <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${sevTone}`}>
+                      {a.severity ?? '?'}
+                    </span>
+                    <span className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${statusTone}`}>
+                      {a.status}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">{a.event}</div>
+                      {a.headline ? (
+                        <div className="text-sm text-wx-fg/80 line-clamp-2">{a.headline}</div>
+                      ) : null}
+                      {a.area_desc ? (
+                        <div className="text-xs text-wx-mute line-clamp-1 mt-0.5">
+                          {a.area_desc}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="text-right text-xs text-wx-mute shrink-0 space-y-0.5">
+                      <div>ingested {relTime(a.ingested_at)}</div>
+                      {a.expires_at ? (
+                        <div>{relTime(a.expires_at, { future: true })}</div>
+                      ) : null}
                       <a
                         href={
                           a.nws_id.startsWith('http')
@@ -115,14 +265,14 @@ export default async function NwsPage() {
                         rel="noreferrer"
                         className="text-wx-accent"
                       >
-                        View
+                        api ↗
                       </a>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
 

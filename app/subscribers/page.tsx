@@ -39,7 +39,10 @@ export default async function SubscribersPage({
   );
 
   return (
-    <DashShell title="Subscribers">
+    <DashShell
+      title="Subscribers"
+      actions={<Link href="/subscribers/invite" className="btn">Invite subscriber</Link>}
+    >
       <div className="flex gap-2 flex-wrap">
         {filterLink(undefined, 'All')}
         {filterLink('active', 'Active')}
@@ -72,7 +75,14 @@ export default async function SubscribersPage({
             </Link>
           ))
         ) : (
-          <p className="text-wx-mute text-sm p-5">No subscribers yet.</p>
+          <div className="p-5 space-y-3">
+            <p className="text-wx-mute text-sm">No subscribers yet.</p>
+            <p className="text-sm">
+              <Link href="/subscribers/invite" className="text-wx-accent">
+                Invite your first subscriber →
+              </Link>
+            </p>
+          </div>
         )}
       </section>
     </DashShell>

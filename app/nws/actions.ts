@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseServer, supabaseAdmin } from '@/lib/supabase/server';
 
 const uuid = z.string().uuid();
 
@@ -197,4 +197,39 @@ export async function rejectNwsMessage(messageId: string) {
   revalidatePath('/nws');
   revalidatePath(`/alerts/${idParse.data}`);
   return { ok: true as const };
+}
+
+// Manually invoke the Edge Function for ad-hoc polling/dispatching from the dashboard.
+// Useful for testing, post-deploy verification, or "process now" after rule edits.
+async function invokeEdgeFunction(
+  name: 'nws-poll' | 'nws-dispatcher',
+): Promise<{ ok: true; result: unknown } | { error: string }> {
+  const supa = supabaseServer();
+  const { data: { user } } = await supa.auth.getUser();
+  if (!user) return { error: 'Not signed in' };
+  const { data: op } = await supa
+    .from('operators')
+    .select('user_id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (!op) return { error: 'Not an operator' };
+
+  // Use the admin (service_role) client so the call satisfies any future
+  // CRON_INVOKER_JWT check, and so it bypasses user-token rate limiting.
+  const admin = supabaseAdmin();
+  const { data, error } = await admin.functions.invoke(name, { body: {} });
+  if (error) return { error: error.message ?? String(error) };
+  return { ok: true, result: data };
+}
+
+export async function runNwsPoll() {
+  const res = await invokeEdgeFunction('nws-poll');
+  if ('ok' in res) revalidatePath('/nws');
+  return res;
+}
+
+export async function runNwsDispatcher() {
+  const res = await invokeEdgeFunction('nws-dispatcher');
+  if ('ok' in res) revalidatePath('/nws');
+  return res;
 }
