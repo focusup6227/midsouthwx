@@ -218,6 +218,9 @@ export default function RadarView() {
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [audienceBreakdown, setAudienceBreakdown] = useState<AudienceBreakdown>({ memphis: 0, tn: 0, ms: 0 });
 
+  const [showSubs, setShowSubs] = useState(true);
+  const subsCount = subsGeo.features?.length ?? 0;
+
   const mapCursor = drawMode !== 'none' ? 'crosshair' : 'grab';
 
   const [viewState, setViewState] = useState({
@@ -616,16 +619,20 @@ export default function RadarView() {
   // Subscribers
   const subsHaloLayer: any = {
     id: 'subs-halo', type: 'circle' as const, source: 'subs-source',
+    layout: { visibility: showSubs ? 'visible' : 'none' },
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4, 8, 8, 12, 14],
-      'circle-color': '#38bdf8', 'circle-opacity': 0.18, 'circle-blur': 0.6,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 6, 7, 12, 10, 20, 14, 28],
+      'circle-color': '#38bdf8', 'circle-opacity': 0.25, 'circle-blur': 0.55,
     },
   };
   const subsPinLayer: any = {
     id: 'subs-pin', type: 'circle' as const, source: 'subs-source',
+    layout: { visibility: showSubs ? 'visible' : 'none' },
     paint: {
-      'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 1.6, 8, 3, 12, 5],
-      'circle-color': '#38bdf8', 'circle-stroke-color': '#0b1220', 'circle-stroke-width': 1.2,
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 3, 7, 5, 10, 7, 14, 9],
+      'circle-color': '#38bdf8',
+      'circle-stroke-color': '#0b1220',
+      'circle-stroke-width': 1.5,
     },
   };
 
@@ -666,9 +673,20 @@ export default function RadarView() {
       return;
     }
 
-    // Not in draw mode → check for warning polygon click and fly to it.
+    // Not in draw mode → see if the click lands on a subscriber pin first
+    // (smaller targets win over the larger warning polygons underneath).
     const map = mapRef.current?.getMap();
     if (!map) return;
+    if (showSubs && map.getLayer('subs-pin')) {
+      const subHits = map.queryRenderedFeatures(e.point, { layers: ['subs-pin'] });
+      if (subHits.length > 0) {
+        const props = subHits[0].properties as any;
+        if (props?.id) {
+          window.open(`/subscribers/${props.id}`, '_blank');
+          return;
+        }
+      }
+    }
     if (!map.getLayer('warning-fill')) return;
     const hits = map.queryRenderedFeatures(e.point, { layers: ['warning-fill'] });
     if (hits.length > 0) {
@@ -929,14 +947,16 @@ export default function RadarView() {
             }
             setHoverPixel({ lng, lat, sample });
 
-            const near = subsGeo.features?.find((f: any) => {
-              const [sx, sy] = f.geometry.coordinates;
-              return Math.hypot(sx - lng, sy - lat) < 0.04;
-            });
-            if (near) {
-              const p = map?.project([lng, lat]);
-              if (p) setHoverPos({ x: p.x, y: p.y });
-              setHoverSub(near.properties);
+            // Use Mapbox's spatial query for subscriber pins so hover lines
+            // up with the rendered pin radius at every zoom.
+            if (map && showSubs && map.getLayer('subs-pin')) {
+              const subHits = map.queryRenderedFeatures(e.point, { layers: ['subs-pin'] });
+              if (subHits.length > 0) {
+                setHoverPos({ x: e.point.x, y: e.point.y });
+                setHoverSub(subHits[0].properties);
+              } else {
+                setHoverSub(null);
+              }
             } else {
               setHoverSub(null);
             }
@@ -1246,6 +1266,25 @@ export default function RadarView() {
             </div>
 
             <div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
+                  Subscribers · {subsCount}
+                </div>
+                <button
+                  onClick={() => setShowSubs((v) => !v)}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showSubs ? 'bg-sky-400' : 'bg-wx-line'}`}
+                  aria-pressed={showSubs}
+                  title={showSubs ? 'Hide subscriber pins' : 'Show subscriber pins'}
+                >
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showSubs ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+              <p className="text-[10px] text-wx-mute mb-3">
+                {subsCount === 0
+                  ? 'No active subscribers with a known location yet.'
+                  : showSubs ? 'Cyan dots are active subscribers. Click a pin to open their profile.' : 'Pins hidden.'}
+              </p>
+
               <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">Active warnings · {warnings.length}</div>
               <div className="flex flex-col gap-1">
                 {warnings.slice(0, 5).map((w) => (
@@ -1490,10 +1529,29 @@ export default function RadarView() {
         </div>
 
         {hoverSub && (
-          <div className="absolute z-50 bg-wx-card border border-wx-line rounded-lg px-2.5 py-2 text-[11px]" style={{ left: hoverPos.x + 12, top: hoverPos.y - 20 }}>
-            <div className="font-semibold text-wx-fg">{hoverSub.name}</div>
-            <div className="text-[10px] text-wx-mute">{hoverSub.zip || '—'}</div>
-            <div className="font-mono text-[10px] text-wx-mute mt-0.5">{hoverPixel?.lat.toFixed(3)}, {hoverPixel?.lng.toFixed(3)}</div>
+          <div
+            className="absolute z-50 bg-wx-card border border-wx-line rounded-lg px-2.5 py-2 text-[11px] pointer-events-none shadow-lg max-w-[240px]"
+            style={{ left: hoverPos.x + 12, top: hoverPos.y - 20 }}
+          >
+            <div className="font-semibold text-wx-fg">{hoverSub.name || 'Subscriber'}</div>
+            <div className="text-[10px] text-wx-mute">
+              {hoverSub.zip ? `ZIP ${hoverSub.zip}` : ''}
+              {hoverSub.telegram_username ? ` · @${hoverSub.telegram_username}` : ''}
+            </div>
+            {hoverSub.current_address && (
+              <div className="text-[10px] text-wx-accent mt-0.5">
+                📍 At: {hoverSub.current_address}
+              </div>
+            )}
+            {!hoverSub.current_address && hoverSub.home_address && (
+              <div className="text-[10px] text-wx-mute mt-0.5 truncate">
+                Home: {hoverSub.home_address}
+              </div>
+            )}
+            <div className="font-mono text-[10px] text-wx-mute mt-1">
+              {hoverPixel?.lat.toFixed(3)}, {hoverPixel?.lng.toFixed(3)}
+            </div>
+            <div className="text-[9.5px] text-wx-mute mt-1">Click to open profile</div>
           </div>
         )}
       </div>
