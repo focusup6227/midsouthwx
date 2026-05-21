@@ -239,16 +239,23 @@ export default function RadarView() {
     }
   }, [token]);
 
+  // Anchor the radar *just below the first line or symbol layer* in the style.
+  // Mapbox stacks layers in array order: background → fills (water, landuse) →
+  // lines (waterways, roads, admin) → symbols (labels). Inserting before the
+  // first non-fill layer pushes the radar above terrain/water but keeps every
+  // road, county/state boundary, and label rendered on top of the radar.
   const resolvedBeforeIdRef = useRef<string | null>(null);
   const handleMapLoad = useCallback(() => {
     if (resolvedBeforeIdRef.current) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
     const layers = map.getStyle()?.layers ?? [];
-    const firstSymbol = layers.find((l: any) => l.type === 'symbol');
-    if (firstSymbol) {
-      resolvedBeforeIdRef.current = firstSymbol.id;
-      setRadarBeforeId(firstSymbol.id);
+    const anchor = layers.find(
+      (l: any) => l.type === 'line' || l.type === 'symbol' || l.type === 'circle',
+    );
+    if (anchor) {
+      resolvedBeforeIdRef.current = anchor.id;
+      setRadarBeforeId(anchor.id);
     }
   }, []);
 
