@@ -239,20 +239,29 @@ export default function RadarView() {
     }
   }, [token]);
 
-  // Anchor the radar *just below the first line or symbol layer* in the style.
-  // Mapbox stacks layers in array order: background → fills (water, landuse) →
-  // lines (waterways, roads, admin) → symbols (labels). Inserting before the
-  // first non-fill layer pushes the radar above terrain/water but keeps every
-  // road, county/state boundary, and label rendered on top of the radar.
+  // Pick a "just enough" anchor: the first style layer that represents either
+  // a state/county boundary, a major highway, or any label. Everything below
+  // (minor streets, water lines, POIs) stays *under* the radar so the imagery
+  // isn't shredded by street grids, but major highways, admin lines, and
+  // city/town names render *over* the radar for orientation.
+  const RADAR_ANCHOR_PATTERNS = [
+    /^admin-/,                  // state + county lines
+    /^road-motorway/,           // interstates
+    /^road-primary/,            // US highways
+    /^road-major-link/,         // major ramps
+    /^settlement-/,             // city/town labels
+    /^state-label/,
+    /^country-label/,
+  ];
   const resolvedBeforeIdRef = useRef<string | null>(null);
   const handleMapLoad = useCallback(() => {
     if (resolvedBeforeIdRef.current) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
     const layers = map.getStyle()?.layers ?? [];
-    const anchor = layers.find(
-      (l: any) => l.type === 'line' || l.type === 'symbol' || l.type === 'circle',
-    );
+    const anchor =
+      layers.find((l: any) => RADAR_ANCHOR_PATTERNS.some((re) => re.test(l.id))) ||
+      layers.find((l: any) => l.type === 'symbol'); // last-ditch fallback
     if (anchor) {
       resolvedBeforeIdRef.current = anchor.id;
       setRadarBeforeId(anchor.id);
