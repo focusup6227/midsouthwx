@@ -669,6 +669,7 @@ export default function RadarView() {
     // Not in draw mode → check for warning polygon click and fly to it.
     const map = mapRef.current?.getMap();
     if (!map) return;
+    if (!map.getLayer('warning-fill')) return;
     const hits = map.queryRenderedFeatures(e.point, { layers: ['warning-fill'] });
     if (hits.length > 0) {
       const w = warnings.find((x) => x.id === (hits[0].properties as any)?.id);
@@ -906,15 +907,17 @@ export default function RadarView() {
           dragRotate={false}
           touchZoomRotate={false}
           boxZoom={false}
-          interactiveLayerIds={['warning-fill']}
           onClick={handleMapClick}
           onMouseMove={(e) => {
             const map = mapRef.current?.getMap();
             const { lng, lat } = e.lngLat;
             // Pull the quantized `v` from any Level II wedge under the pointer
             // and convert back to natural units using the active vmin/vmax.
+            // Guard against the brief window where overlay metadata has
+            // arrived but the GeoJSON layer hasn't been added yet (queryRF
+            // throws on unknown layer ids).
             let sample: number | null = null;
-            if (map && useLevel2 && !pngFallback && level2Overlay) {
+            if (map && useLevel2 && !pngFallback && level2Overlay && map.getLayer('level2-fill')) {
               const hits = map.queryRenderedFeatures(e.point, { layers: ['level2-fill'] });
               if (hits.length > 0) {
                 const q = (hits[0].properties as any)?.v;
