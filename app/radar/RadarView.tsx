@@ -352,9 +352,15 @@ export default function RadarView() {
     if (!map) return;
     if (!resolvedBeforeIdRef.current) {
       const layers = map.getStyle()?.layers ?? [];
-      const anchor = layers.find(
-        (l: any) => l.type === 'line' || l.type === 'symbol' || l.type === 'circle',
-      );
+      // Find the first line/symbol overlay that ISN'T water-related — that way
+      // rivers, waterways, and lake outlines stay underneath the radar
+      // (instead of cutting blue streaks through reflectivity) while roads,
+      // admin boundaries, and labels still render on top.
+      const anchor = layers.find((l: any) => {
+        if (l.type !== 'line' && l.type !== 'symbol' && l.type !== 'circle') return false;
+        if (/water|waterway|hillshade|land-structure|natural/i.test(l.id)) return false;
+        return true;
+      });
       if (anchor) {
         resolvedBeforeIdRef.current = anchor.id;
         setRadarBeforeId(anchor.id);
