@@ -239,34 +239,100 @@ export default function RadarView() {
     }
   }, [token]);
 
-  // Pick a "just enough" anchor: the first style layer that represents either
-  // a state/county boundary, a major highway, or any label. Everything below
-  // (minor streets, water lines, POIs) stays *under* the radar so the imagery
-  // isn't shredded by street grids, but major highways, admin lines, and
-  // city/town names render *over* the radar for orientation.
-  const RADAR_ANCHOR_PATTERNS = [
-    /^admin-/,                  // state + county lines
-    /^road-motorway/,           // interstates
-    /^road-primary/,            // US highways
-    /^road-major-link/,         // major ramps
-    /^settlement-/,             // city/town labels
-    /^state-label/,
-    /^country-label/,
-  ];
+  // Anchor the radar *just below the first line or symbol layer* in the style.
+  // Mapbox stacks layers in array order: background → fills (water, landuse) →
+  // lines (waterways, roads, admin) → symbols (labels). Inserting before the
+  // first non-fill layer pushes the radar above terrain/water but keeps every
+  // road, county/state boundary, and label rendered on top of the radar.
+  //
+  // Then re-paint the road / boundary / label layers so they stay legible on
+  // top of bright reflectivity. dark-v11's defaults are intentionally subtle
+  // for a black basemap and disappear over yellow/red radar pixels.
   const resolvedBeforeIdRef = useRef<string | null>(null);
+  const boostedRef = useRef(false);
+
+  const boostBasemapLegibility = useCallback((map: mapboxgl.Map) => {
+    if (boostedRef.current) return;
+    const layers = map.getStyle()?.layers ?? [];
+    let boosted = 0;
+
+    const tryPaint = (id: string, prop: string, value: any) => {
+      try { (map.setPaintProperty as any)(id, prop, value); } catch {/* ignore */}
+    };
+    const tryLayout = (id: string, prop: string, value: any) => {
+      try { (map.setLayoutProperty as any)(id, prop, value); } catch {/* ignore */}
+    };
+
+    for (const layer of layers as any[]) {
+      const id: string = layer.id || '';
+      const isMajorRoad   = /(motorway|trunk|primary)/i.test(id) && layer.type === 'line';
+      const isMidRoad     = /(secondary|tertiary)/i.test(id) && layer.type === 'line';
+      const isMinorRoad   = /(road|street|bridge|tunnel)/i.test(id) && layer.type === 'line' && !isMajorRoad && !isMidRoad;
+      const isAdmin0      = /^admin-0/i.test(id) && layer.type === 'line';   // country
+      const isAdmin1      = /^admin-1/i.test(id) && layer.type === 'line';   // state
+      const isAdmin2      = /^admin-2/i.test(id) && layer.type === 'line';   // county
+      const isSettlement  = /settlement|place-label/i.test(id) && layer.type === 'symbol';
+
+      if (isMajorRoad) {
+        tryPaint(id, 'line-color', '#fde047');                                          // bright yellow
+        tryPaint(id, 'line-opacity', 1);
+        tryPaint(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 5, 1.5, 8, 2.8, 12, 5, 16, 9]);
+        boosted++;
+      } else if (isMidRoad) {
+        tryPaint(id, 'line-color', '#fcd34d');
+        tryPaint(id, 'line-opacity', 0.95);
+        tryPaint(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 5, 0.6, 8, 1.6, 12, 3.5, 16, 6]);
+        boosted++;
+      } else if (isMinorRoad) {
+        tryPaint(id, 'line-color', '#e2e8f0');
+        tryPaint(id, 'line-opacity', 0.85);
+        tryPaint(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 8, 0.4, 12, 1.2, 16, 3]);
+        boosted++;
+      } else if (isAdmin0) {
+        tryPaint(id, 'line-color', '#ffffff');
+        tryPaint(id, 'line-opacity', 0.95);
+        tryPaint(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 4, 1.4, 10, 3]);
+        boosted++;
+      } else if (isAdmin1) {
+        tryPaint(id, 'line-color', '#f1f5f9');
+        tryPaint(id, 'line-opacity', 0.9);
+        tryPaint(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 4, 1, 10, 2.4]);
+        tryPaint(id, 'line-dasharray', [1, 0]);
+        boosted++;
+      } else if (isAdmin2) {
+        tryPaint(id, 'line-color', '#cbd5e1');
+        tryPaint(id, 'line-opacity', 0.75);
+        tryPaint(id, 'line-width', ['interpolate', ['linear'], ['zoom'], 6, 0.5, 12, 1.4]);
+        boosted++;
+      } else if (isSettlement) {
+        // Beefier text + dark halo so city/town names stay readable on top
+        // of bright radar pixels.
+        tryPaint(id, 'text-color', '#ffffff');
+        tryPaint(id, 'text-halo-color', '#0b1220');
+        tryPaint(id, 'text-halo-width', 2);
+        tryLayout(id, 'text-size', ['interpolate', ['linear'], ['zoom'], 4, 11, 8, 14, 12, 17, 16, 22]);
+        boosted++;
+      }
+    }
+
+    if (boosted > 0) boostedRef.current = true;
+  }, []);
+
   const handleMapLoad = useCallback(() => {
-    if (resolvedBeforeIdRef.current) return;
     const map = mapRef.current?.getMap();
     if (!map) return;
-    const layers = map.getStyle()?.layers ?? [];
-    const anchor =
-      layers.find((l: any) => RADAR_ANCHOR_PATTERNS.some((re) => re.test(l.id))) ||
-      layers.find((l: any) => l.type === 'symbol'); // last-ditch fallback
-    if (anchor) {
-      resolvedBeforeIdRef.current = anchor.id;
-      setRadarBeforeId(anchor.id);
+    if (!resolvedBeforeIdRef.current) {
+      const layers = map.getStyle()?.layers ?? [];
+      const anchor = layers.find(
+        (l: any) => l.type === 'line' || l.type === 'symbol' || l.type === 'circle',
+      );
+      if (anchor) {
+        resolvedBeforeIdRef.current = anchor.id;
+        setRadarBeforeId(anchor.id);
+      }
     }
-  }, []);
+    boostBasemapLegibility(map);
+  }, [boostBasemapLegibility]);
 
   useEffect(() => {
     fetch('/api/radar/subs')
