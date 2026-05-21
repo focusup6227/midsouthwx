@@ -272,6 +272,10 @@ export default function RadarView() {
       const isAdmin1      = /^admin-1/i.test(id) && layer.type === 'line';   // state
       const isAdmin2      = /^admin-2/i.test(id) && layer.type === 'line';   // county
       const isSettlement  = /settlement|place-label/i.test(id) && layer.type === 'symbol';
+      // Highway/interstate shields and route number labels (I-40, US 51, etc).
+      const isShield      = /shield/i.test(id) && layer.type === 'symbol';
+      // Generic road name labels ("Poplar Ave", "Sam Cooper Blvd", …).
+      const isRoadLabel   = /road-label|road-intersection/i.test(id) && layer.type === 'symbol';
 
       if (isMajorRoad) {
         tryPaint(id, 'line-color', '#fde047');                                          // bright yellow
@@ -311,6 +315,31 @@ export default function RadarView() {
         tryPaint(id, 'text-halo-color', '#0b1220');
         tryPaint(id, 'text-halo-width', 2);
         tryLayout(id, 'text-size', ['interpolate', ['linear'], ['zoom'], 4, 11, 8, 14, 12, 17, 16, 22]);
+        boosted++;
+      } else if (isShield) {
+        // Make the I-40 / US-51 / state route shields actually readable. Force
+        // visible (some shield layers default to higher minzoom), scale the
+        // icon up, and shrink the symbol-spacing so a shield appears more
+        // frequently along long stretches of highway.
+        tryLayout(id, 'visibility', 'visible');
+        tryLayout(id, 'icon-size', ['interpolate', ['linear'], ['zoom'], 5, 0.8, 8, 1.1, 12, 1.4, 16, 1.7]);
+        tryLayout(id, 'text-size', ['interpolate', ['linear'], ['zoom'], 5, 10, 8, 12, 12, 14, 16, 17]);
+        tryLayout(id, 'symbol-spacing', 200);
+        tryLayout(id, 'icon-allow-overlap', true);
+        tryLayout(id, 'text-allow-overlap', false);
+        tryPaint(id, 'icon-opacity', 1);
+        tryPaint(id, 'text-color', '#ffffff');
+        tryPaint(id, 'text-halo-color', '#0b1220');
+        tryPaint(id, 'text-halo-width', 1.4);
+        boosted++;
+      } else if (isRoadLabel) {
+        // Street/road names. Brighten, halo, and uncap so names show at
+        // moderate zooms on top of the radar wash.
+        tryLayout(id, 'visibility', 'visible');
+        tryLayout(id, 'text-size', ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 13, 18, 16]);
+        tryPaint(id, 'text-color', '#fef3c7');
+        tryPaint(id, 'text-halo-color', '#0b1220');
+        tryPaint(id, 'text-halo-width', 1.6);
         boosted++;
       }
     }
