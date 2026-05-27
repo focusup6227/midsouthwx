@@ -160,13 +160,13 @@ const THREDDS_WMS_URL = (urlPath: string, layer: string, cacheKey: number) =>
   `&_t=${cacheKey}`;
 
 // LibreWxR Weather Maps API (drop-in for RainViewer v2). Returns 2h of past
-// frames + nowcast. Color scheme 8 = Dark Sky palette; 9 = NWS Reflectivity
-// (matches radar.weather.gov). Operator picks via the dropdown — see
+// frames + nowcast. Default color scheme 9 = NWS Reflectivity (matches
+// radar.weather.gov); 8 = Dark Sky. Operator picks via the dropdown — see
 // LIBREWXR_COLOR_SCHEMES above. Options "1_1" = smoothed + snow-aware. 512px
 // tiles double the spatial resolution at the same z (max zoom 7), so imagery
 // stays readable down to the city block at z~11.
 const LIBREWXR_INDEX_URL = 'https://api.librewxr.net/public/weather-maps.json';
-const LIBREWXR_COLOR = 8;
+const LIBREWXR_COLOR = 9;
 const LIBREWXR_OPTS = '1_1';
 const LIBREWXR_TILE_SIZE = 512;
 const LIBREWXR_MAX_ZOOM = 7;
@@ -620,7 +620,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // LibreWxR storm-motion arrow overlay (radar tiles only — satellite ignores).
   const [showArrows, setShowArrows] = useState(urlInitial.showArrows ?? true);
   // LibreWxR color scheme (1..9 — see LIBREWXR_COLOR_SCHEMES). Radar tiles only.
-  const [colorScheme, setColorScheme] = useState(urlInitial.colorScheme ?? 8);
+  const [colorScheme, setColorScheme] = useState(urlInitial.colorScheme ?? 9);
   // Satellite source: LibreWxR modeled IR (animated) or a real GOES-East band
   // served single-frame live via NASA GIBS WMTS.
   const [satSource, setSatSource] = useState<SatSourceId>(

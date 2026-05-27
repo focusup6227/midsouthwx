@@ -16,7 +16,7 @@ const LIBREWXR_TILE_SIZE = 512;
 // LibreWxR caps at z7; Mapbox auto-scales beyond that, so we treat z7 as the
 // upstream resolution and scale-fit into the output dimensions client-side.
 const LIBREWXR_MAX_ZOOM = 7;
-const LIBREWXR_COLOR_SCHEME = 8;     // Dark Sky palette — matches /radar default
+const LIBREWXR_COLOR_SCHEME = 9;     // NWS Reflectivity — matches /radar default
 const LIBREWXR_OPTS = '1_1';         // smoothed + snow-aware
 
 const OUTPUT_W = 800;

@@ -11,11 +11,11 @@ type Geometry =
 
 // LibreWxR Weather Maps API — same source the operator dashboard's /radar uses.
 // Public, CC-BY-4.0 (attribution lives in the Mapbox attribution control).
-// Color scheme 8 = Dark Sky palette (matches /radar default); "1_1" = smoothed + snow-aware.
+// Color scheme 9 = NWS Reflectivity (matches /radar default); "1_1" = smoothed + snow-aware.
 const LIBREWXR_INDEX_URL = 'https://api.librewxr.net/public/weather-maps.json';
 const LIBREWXR_TILE_SIZE = 512;
 const LIBREWXR_MAX_ZOOM = 7;
-const LIBREWXR_COLOR = 8;
+const LIBREWXR_COLOR = 9;
 const LIBREWXR_OPTS = '1_1';
 
 type LwxrFrame = { time: number; path: string };
