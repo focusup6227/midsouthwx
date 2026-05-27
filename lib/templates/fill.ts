@@ -13,8 +13,15 @@ export function fillTemplate(body: string, ctx: TemplateContext): string {
     .replace(/\{\{area_desc\}\}/g, ctx.areaDesc ?? '');
 }
 
+// {{url}} is auto-filled server-side after the message row is inserted
+// (compose path → /m/<id>; nws-dispatcher → /alert/<nws_id>), so it doesn't
+// need operator input and shouldn't trigger the Template Variables UI when
+// it's the only placeholder in the body.
+const AUTO_FILLED_VARS = new Set(['url']);
+
 export function templateHasVariables(body: string): boolean {
-  return /\{\{[\w_]+\}\}/.test(body);
+  const matches = body.match(/\{\{([\w_]+)\}\}/g) ?? [];
+  return matches.some((m) => !AUTO_FILLED_VARS.has(m.slice(2, -2)));
 }
 
 export const TEMPLATE_VARIABLES = [

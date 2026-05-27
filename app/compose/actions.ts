@@ -101,6 +101,22 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
 
   if (insertErr || !msg) throw new Error(insertErr?.message ?? 'insert failed');
 
+  // Substitute {{url}} → ${NEXT_PUBLIC_SITE_URL}/m/${msg.id} now that we have
+  // the row's id. The dispatcher path fills {{url}} with /alert/<nws_id> for
+  // NWS-sourced messages; operator-composed messages don't have an nws_id, so
+  // they get a per-message public page instead. No-op when {{url}} isn't in
+  // the body or the site URL isn't configured.
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '');
+  if (siteUrl && (parsed.body_md.includes('{{url}}') || bodyRendered.includes('{{url}}'))) {
+    const msgUrl = `${siteUrl}/m/${msg.id}`;
+    const nextBodyMd = parsed.body_md.replaceAll('{{url}}', msgUrl);
+    const nextBodyRendered = bodyRendered.replaceAll('{{url}}', msgUrl);
+    await admin
+      .from('messages')
+      .update({ body_md: nextBodyMd, body_rendered: nextBodyRendered })
+      .eq('id', msg.id);
+  }
+
   // Auto-attach a polygon snapshot for radar-drawn (geometry) alerts when
   // the operator didn't already upload their own media. Synchronous so the
   // media_url is set before enqueue → the worker reads it at claim time.

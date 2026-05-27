@@ -37,6 +37,7 @@ export async function middleware(req: NextRequest) {
     path.startsWith('/api/auth') ||
     path.startsWith('/auth/') ||
     path.startsWith('/alert/') ||
+    path.startsWith('/m/') ||
     path === '/' ||
     path.startsWith('/_next') ||
     path.startsWith('/favicon');

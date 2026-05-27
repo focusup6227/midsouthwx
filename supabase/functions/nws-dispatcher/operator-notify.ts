@@ -36,14 +36,22 @@ export async function notifyOperatorTornado(
     `Severity: ${alert.severity ?? '—'}`,
   ].join('\n');
 
+  // URL button → opens the operator's /nws/<alert.id> page in the browser.
+  // Previously a callback_data button that no handler matched, so it acked
+  // with a generic "got it" reply instead of taking the operator anywhere.
+  const site = Deno.env.get('PUBLIC_SITE_URL')?.replace(/\/$/, '');
+  const detailUrl = site ? `${site}/nws/${alert.id}` : null;
+
   await tgSendMessage(token, {
     chat_id: chatId,
     text: body,
-    reply_markup: {
-      inline_keyboard: [[
-        { text: 'Open on /nws', callback_data: `op:nws:open:${alert.id}` },
-      ]],
-    },
+    reply_markup: detailUrl
+      ? {
+          inline_keyboard: [[
+            { text: 'Open full alert details', url: detailUrl },
+          ]],
+        }
+      : undefined,
   });
 }
 
