@@ -33,7 +33,7 @@ import {
   tgSetMyCommands,
 } from './telegram.ts';
 import { notifyExternalEndpointsForMessage } from './external-notify.ts';
-import { geocodeAddress } from './geocode.ts';
+import { geocodeAddress, reverseGeocodeRelative } from './geocode.ts';
 import {
   advanceScheduleAfterSend,
   scheduleMetaFromAudience,
@@ -599,6 +599,13 @@ async function submitStormReport(
     }
   }
 
+  // Reverse-geocode best-effort — fills place_name with "3 NE Bartlett, TN"
+  // so triage + operator notifications read like NWS LSRs instead of bare
+  // coords. NWS API expects a contactable User-Agent (their docs require it);
+  // we re-use the polling secret so denials are visible to one operator.
+  const ua = Deno.env.get('NWS_USER_AGENT') ?? 'midsouthwx/1.0 (operator)';
+  const placeName = await reverseGeocodeRelative(lat, lon, ua);
+
   const { data: inserted, error: insErr } = await supa
     .from('telegram_storm_reports')
     .insert({
@@ -610,6 +617,7 @@ async function submitStormReport(
       lat,
       lon,
       point: `SRID=4326;POINT(${lon} ${lat})`,
+      place_name: placeName,
     })
     .select('id')
     .single();
@@ -630,28 +638,64 @@ async function submitStormReport(
     chat_id: chatId,
     text:
       `✅ Storm report submitted (${hazardLabel(hazard)}).\n` +
-      `Plotted at ${lat.toFixed(3)}, ${lon.toFixed(3)}.\n\n` +
+      `Plotted ${placeName ? `near ${placeName}` : `at ${lat.toFixed(3)}, ${lon.toFixed(3)}`}.\n\n` +
       'Stay safe — if you are in danger, call 911.',
   });
 
   // Self-Telegram the operator with the report summary + photo if available.
   const opChatId = await operatorChatId(supa);
+  const siteUrl = (Deno.env.get('NEXT_PUBLIC_SITE_URL') ?? '').replace(/\/$/, '');
+  const triageUrl = siteUrl ? `${siteUrl}/reports` : null;
+  const locationLine = placeName
+    ? `Location: ${placeName} (${lat.toFixed(4)}, ${lon.toFixed(4)})`
+    : `Location: ${lat.toFixed(4)}, ${lon.toFixed(4)}`;
   if (opChatId) {
     const summary =
       `📣 Storm report from ${opts.reporterLabel}\n` +
       `Hazard: ${hazardLabel(hazard)}\n` +
-      `Location: ${lat.toFixed(4)}, ${lon.toFixed(4)}` +
+      `${locationLine}` +
       (opts.description ? `\nNote: ${opts.description.slice(0, 400)}` : '') +
       `\nReport id: ${inserted.id}`;
+    const replyMarkup = triageUrl
+      ? { inline_keyboard: [[{ text: 'Open triage', url: triageUrl }]] }
+      : undefined;
     if (photoUrl) {
       // sendPhoto with caption — Telegram fetches the public URL itself.
       await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: opChatId, photo: photoUrl, caption: summary }),
+        body: JSON.stringify({
+          chat_id: opChatId, photo: photoUrl, caption: summary,
+          reply_markup: replyMarkup,
+        }),
       }).catch((e) => console.error('operator sendPhoto failed', e));
     } else {
-      await tgSendMessage(token, { chat_id: opChatId, text: summary });
+      await tgSendMessage(token, {
+        chat_id: opChatId, text: summary, reply_markup: replyMarkup,
+      });
+    }
+  }
+
+  // Cluster detection — if this insert tips ≥2 same-hazard reports into a
+  // 5 km / 10 min window and the cluster hasn't been paged yet, fire one
+  // operator alert with a triage link. The RPC stamps cluster_paged_at on
+  // every nearby report so we don't re-page on the 3rd/4th spotter.
+  if (opChatId) {
+    const { data: cluster } = await supa
+      .rpc('detect_storm_report_cluster', { p_report_id: inserted.id });
+    const row = Array.isArray(cluster) ? cluster[0] : cluster;
+    if (row && row.cluster_size >= 2) {
+      const lines = [
+        `🚨 Cluster: ${row.cluster_size} ${hazardLabel(row.hazard)} reports`,
+        `within 5 km / 10 min near ${placeName ?? `${row.centroid_lat.toFixed(3)}, ${row.centroid_lon.toFixed(3)}`}.`,
+      ];
+      await tgSendMessage(token, {
+        chat_id: opChatId,
+        text: lines.join('\n'),
+        reply_markup: triageUrl
+          ? { inline_keyboard: [[{ text: 'Open triage', url: triageUrl }]] }
+          : undefined,
+      });
     }
   }
 }

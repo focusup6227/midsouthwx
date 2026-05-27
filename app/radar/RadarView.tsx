@@ -690,6 +690,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     photo_url: string | null;
     reported_at: string | null;
     reporter: string | null;
+    place_name: string | null;
+    status: string | null;
   } | null>(null);
   // NWS forecast + fire zone outlines from /public/maps/nws-zones.geojson
   // (run `npm run gen:zones` to rebuild). Off by default — useful for
@@ -2191,6 +2193,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           photo_url: (props?.photo_url as string | null) ?? null,
           reported_at: (props?.reported_at as string | null) ?? null,
           reporter: (props?.reporter as string | null) ?? null,
+          place_name: (props?.place_name as string | null) ?? null,
+          status: (props?.status as string | null) ?? null,
         });
         return;
       }
@@ -5173,12 +5177,23 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
-                    Subscriber report{sr.reporter ? ` · ${sr.reporter}` : ''}
+                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
+                    <span>Subscriber report{sr.reporter ? ` · ${sr.reporter}` : ''}</span>
+                    {sr.status && sr.status !== 'new' ? (
+                      <span className={
+                        'px-1.5 py-0.5 rounded text-[9px] ' +
+                        (sr.status === 'verified' ? 'bg-emerald-400/15 text-emerald-300' :
+                         sr.status === 'promoted' ? 'bg-sky-400/15 text-sky-300' :
+                         'bg-wx-line/40 text-wx-mute')
+                      }>{sr.status}</span>
+                    ) : null}
                   </div>
                   <div className="text-[12px] font-semibold text-wx-fg mt-0.5">
                     {hazardLabelMap[sr.hazard] ?? sr.hazard}
                   </div>
+                  {sr.place_name ? (
+                    <div className="text-[11px] text-wx-mute mt-0.5">{sr.place_name}</div>
+                  ) : null}
                 </div>
                 <button
                   type="button"
@@ -5201,6 +5216,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   rel="noreferrer"
                   className="block rounded-md overflow-hidden border border-wx-line"
                 >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={sr.photo_url}
                     alt="Subscriber storm report"
@@ -5214,6 +5230,16 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   &quot;{sr.description}&quot;
                 </p>
               ) : null}
+              <div className="flex gap-2 pt-1">
+                <a
+                  href="/reports"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[10px] text-wx-accent hover:underline"
+                >
+                  Open in triage →
+                </a>
+              </div>
             </div>
           );
         })()}
