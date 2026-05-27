@@ -1,15 +1,19 @@
 // Render a polygon snapshot for operator-composed alerts that target an
-// audience by geometry (radar-drawn polygon or circle). Mirrors the
-// nws-dispatcher snapshot path but called from the compose server action.
+// audience by geometry (radar-drawn polygon or circle). Calls the local
+// LibreWxR+Mapbox stitcher so we stay off the Fly renderer's memory budget.
 //
-// Failure mode is "skip the snapshot, send text only" — the helper returns
-// null on any error and the caller proceeds without media.
+// Failure mode is "skip the snapshot, send text only" — returns null on any
+// error and the caller proceeds without media.
+
+import { renderReflectivitySnapshot } from '@/lib/snapshot/reflectivity-render';
 
 type CircleSpec = { type: 'circle'; center: [number, number]; radius_km: number };
 type GeoJsonGeom = { type: string; coordinates: unknown };
 type GeometrySpec = CircleSpec | GeoJsonGeom;
+type Polygonish =
+  | { type: 'Polygon'; coordinates: number[][][] }
+  | { type: 'MultiPolygon'; coordinates: number[][][][] };
 
-const REQUEST_TIMEOUT_MS = 25_000;
 const CIRCLE_SEGMENTS = 32;
 
 function circleToPolygon(
@@ -32,11 +36,10 @@ function circleToPolygon(
 
 /**
  * Normalize compose audience_spec.geometry to a GeoJSON Polygon|MultiPolygon
- * that the renderer's /alert-snapshot endpoint accepts. Returns null when
- * the geometry isn't representable (e.g., 'track' corridors — those would
- * need buffering before they're drawable as a polygon).
+ * that the stitcher accepts. Returns null when the geometry isn't representable
+ * (e.g., 'track' corridors — those would need buffering before drawing).
  */
-function normalizeGeometry(g: unknown): { type: string; coordinates: unknown } | null {
+function normalizeGeometry(g: unknown): Polygonish | null {
   if (!g || typeof g !== 'object') return null;
   const geom = g as Partial<GeometrySpec> & { type?: string; coordinates?: unknown };
   if (typeof geom.type !== 'string') return null;
@@ -58,22 +61,18 @@ function normalizeGeometry(g: unknown): { type: string; coordinates: unknown } |
     const first = coords[0];
     if (!Array.isArray(first)) return null;
     if (Array.isArray(first[0])) {
-      // Already nested rings — valid GeoJSON Polygon.
-      return { type: 'Polygon', coordinates: coords };
+      return { type: 'Polygon', coordinates: coords as number[][][] };
     }
     if (typeof first[0] === 'number') {
-      // Single flat ring — wrap one level deeper.
-      return { type: 'Polygon', coordinates: [coords] };
+      return { type: 'Polygon', coordinates: [coords as number[][]] };
     }
     return null;
   }
 
   if (t === 'multipolygon') {
-    return { type: 'MultiPolygon', coordinates: geom.coordinates };
+    return { type: 'MultiPolygon', coordinates: geom.coordinates as number[][][][] };
   }
 
-  // 'track' (storm-corridor LineString + width) — not snapshot-able without
-  // a buffering step. Skip; operator's text-only alert still goes out.
   return null;
 }
 
@@ -82,47 +81,11 @@ export async function renderComposeSnapshot(
   geometry: unknown,
   opts: { event?: string } = {},
 ): Promise<string | null> {
-  const base = process.env.RENDERER_BASE_URL;
-  const token = process.env.RENDERER_TOKEN;
-  if (!base || !token) return null;
-
   const polygon = normalizeGeometry(geometry);
   if (!polygon) return null;
-
-  try {
-    const resp = await fetch(`${base.replace(/\/$/, '')}/alert-snapshot`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        alert_id: messageId,
-        // Event hint drives polygon color in alert_snapshot.py. Pulls from
-        // the operator's optional template_vars.event (e.g., "Tornado
-        // Warning"); falls back to neutral slate when unset.
-        event: opts.event ?? 'Operator Alert',
-        polygon,
-        observed: [],
-        forecast: [],
-      }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      console.error(
-        '[compose-snapshot] renderer rejected',
-        resp.status,
-        body.slice(0, 200),
-      );
-      return null;
-    }
-
-    const data = (await resp.json()) as { url?: string };
-    return data.url ?? null;
-  } catch (e) {
-    console.error('[compose-snapshot] call failed', e);
-    return null;
-  }
+  return renderReflectivitySnapshot({
+    alertId: messageId,
+    geometry: polygon,
+    event: opts.event ?? 'Operator Alert',
+  });
 }

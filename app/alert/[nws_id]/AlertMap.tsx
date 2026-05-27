@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Map, { Source, Layer } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
@@ -8,6 +8,40 @@ import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 type Geometry =
   | { type: 'Polygon'; coordinates: number[][][] }
   | { type: 'MultiPolygon'; coordinates: number[][][][] };
+
+// LibreWxR Weather Maps API — same source the operator dashboard's /radar uses.
+// Public, CC-BY-4.0 (attribution lives in the Mapbox attribution control).
+// Color scheme 8 = NWS Reflectivity palette; "1_1" = smoothed + snow-aware.
+const LIBREWXR_INDEX_URL = 'https://api.librewxr.net/public/weather-maps.json';
+const LIBREWXR_TILE_SIZE = 512;
+const LIBREWXR_MAX_ZOOM = 7;
+const LIBREWXR_COLOR = 8;
+const LIBREWXR_OPTS = '1_1';
+
+type LwxrFrame = { time: number; path: string };
+type LwxrIndex = { host: string; latest: LwxrFrame };
+
+async function fetchLwxrIndex(signal: AbortSignal): Promise<LwxrIndex | null> {
+  try {
+    const r = await fetch(LIBREWXR_INDEX_URL, { cache: 'no-store', signal });
+    if (!r.ok) return null;
+    const j = (await r.json()) as {
+      host?: string;
+      radar?: { nowcast?: LwxrFrame[]; past?: LwxrFrame[] };
+    };
+    const host = j.host;
+    const nowcast = j.radar?.nowcast ?? [];
+    const past = j.radar?.past ?? [];
+    // Prefer the latest *observed* frame (last entry in `past`) over the
+    // first nowcast; users on a public alert page expect real data, not a
+    // forecast extrapolation, when interpreting "current radar".
+    const latest = past[past.length - 1] ?? nowcast[0];
+    if (!host || !latest) return null;
+    return { host, latest };
+  } catch {
+    return null;
+  }
+}
 
 function bounds(geom: Geometry): [[number, number], [number, number]] {
   let minLon = Infinity;
@@ -56,6 +90,23 @@ export default function AlertMap({
     };
   }, [geometry]);
 
+  // Pull the LibreWxR index on mount. Failure mode = no radar layer; the
+  // polygon-on-basemap still renders so the page is never useless.
+  const [lwxr, setLwxr] = useState<LwxrIndex | null>(null);
+  useEffect(() => {
+    const ctrl = new AbortController();
+    fetchLwxrIndex(ctrl.signal).then(setLwxr);
+    return () => ctrl.abort();
+  }, []);
+
+  const radarTileUrl = useMemo(() => {
+    if (!lwxr) return null;
+    return (
+      `${lwxr.host}${lwxr.latest.path}/${LIBREWXR_TILE_SIZE}` +
+      `/{z}/{x}/{y}/${LIBREWXR_COLOR}/${LIBREWXR_OPTS}.png`
+    );
+  }, [lwxr]);
+
   if (!token) {
     return (
       <div className="card p-4 text-sm text-wx-mute">
@@ -72,7 +123,25 @@ export default function AlertMap({
         initialViewState={initialView}
         attributionControl
         cooperativeGestures
+        customAttribution='<a href="https://librewxr.net" target="_blank" rel="noopener noreferrer">© LibreWxR</a> (CC BY 4.0)'
       >
+        {radarTileUrl ? (
+          <Source
+            id="alert-radar"
+            type="raster"
+            tiles={[radarTileUrl]}
+            tileSize={LIBREWXR_TILE_SIZE}
+            maxzoom={LIBREWXR_MAX_ZOOM}
+          >
+            {/* Radar sits beneath the polygon so the warning outline stays
+                readable on top of busy reflectivity. */}
+            <Layer
+              id="alert-radar-layer"
+              type="raster"
+              paint={{ 'raster-opacity': 0.78 }}
+            />
+          </Source>
+        ) : null}
         <Source
           id="alert-polygon"
           type="geojson"
@@ -81,12 +150,12 @@ export default function AlertMap({
           <Layer
             id="alert-polygon-fill"
             type="fill"
-            paint={{ 'fill-color': fill, 'fill-opacity': 0.25 }}
+            paint={{ 'fill-color': fill, 'fill-opacity': 0.18 }}
           />
           <Layer
             id="alert-polygon-line"
             type="line"
-            paint={{ 'line-color': fill, 'line-width': 2 }}
+            paint={{ 'line-color': fill, 'line-width': 2.5 }}
           />
         </Source>
       </Map>

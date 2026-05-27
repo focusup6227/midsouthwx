@@ -19,6 +19,9 @@ import { nearestNexradSite } from './_shared_sites.ts';
 const KTS_TO_KM_PER_MIN = 1.852 / 60;
 const FORECAST_MINUTES = 30; // projection horizon for the rendered arrow
 const REQUEST_TIMEOUT_MS = 25_000;
+// Reflectivity stitcher (Vercel route) does basemap + tile fetches in
+// parallel and one sharp composite; warm path ~3-8 s, cold ~15-25 s.
+const REFLECTIVITY_TIMEOUT_MS = 30_000;
 
 type AlertGeoSummary = {
   polygon: unknown; // GeoJSON geometry (Polygon | MultiPolygon)
@@ -133,6 +136,32 @@ export async function attachAlertSnapshot(
   const summary = buildGeoSummary(args.raw);
   if (!summary) return; // no usable polygon
 
+  // Try the reflectivity stitcher on Vercel first — same alert page basemap
+  // the public /alert/[id] embeds, plus LibreWxR reflectivity tiles. Falls
+  // back to the renderer's basemap-only PNG on failure so the alert still
+  // ships an image.
+  const reflectivityUrl = await renderReflectivityViaInternalApi({
+    alertId: args.alertId,
+    event: args.event,
+    polygon: summary.polygon,
+  });
+  if (reflectivityUrl) {
+    const { error } = await supa
+      .from('messages')
+      .update({ media_url: reflectivityUrl, media_type: 'photo' })
+      .eq('id', args.messageId);
+    if (error) console.error('[snapshot] update messages.media_url (refl)', error);
+    fireAlertLoopAsync(supa, {
+      messageId: args.messageId,
+      alertId: args.alertId,
+      event: args.event,
+      polygon: summary.polygon,
+    });
+    return;
+  }
+
+  // Fallback: renderer's basemap+polygon PNG. Keeps the alert visual even
+  // when LibreWxR or the Vercel route is having a bad minute.
   try {
     const resp = await fetch(`${base.replace(/\/$/, '')}/alert-snapshot`, {
       method: 'POST',
@@ -179,8 +208,45 @@ export async function attachAlertSnapshot(
       polygon: summary.polygon,
     });
   } catch (e) {
-    // Cold starts can hit the 25 s timeout; that's fine — we send text-only.
     console.error('[snapshot] call failed', e);
+  }
+}
+
+/** POST the Vercel reflectivity stitcher. Returns null on any failure so the
+ *  caller can fall back to the renderer's basemap path. */
+async function renderReflectivityViaInternalApi(args: {
+  alertId: string;
+  event: string;
+  polygon: unknown;
+}): Promise<string | null> {
+  const siteUrl = Deno.env.get('PUBLIC_SITE_URL')?.replace(/\/$/, '');
+  const token = Deno.env.get('INTERNAL_API_TOKEN');
+  if (!siteUrl || !token) return null;
+
+  try {
+    const resp = await fetch(`${siteUrl}/api/snapshot/reflectivity`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        alert_id: args.alertId,
+        event: args.event,
+        polygon: args.polygon,
+      }),
+      signal: AbortSignal.timeout(REFLECTIVITY_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.error('[snapshot:refl] rejected', resp.status, body.slice(0, 200));
+      return null;
+    }
+    const data = (await resp.json()) as { url?: string };
+    return data.url ?? null;
+  } catch (e) {
+    console.error('[snapshot:refl] call failed', e);
+    return null;
   }
 }
 

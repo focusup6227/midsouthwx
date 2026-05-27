@@ -86,6 +86,11 @@ class AlertSnapshotRequest(BaseModel):
     observed: list[list[float]] = Field(default_factory=list)
     forecast: list[list[float]] = Field(default_factory=list)
     force: bool = False
+    # Accepted for forward compat with callers that pass a NEXRAD site code,
+    # but this renderer only produces the lightweight basemap+polygon PNG.
+    # Reflectivity-overlay images are stitched on the Vercel side from
+    # LibreWxR tiles to keep memory off this box.
+    site: Optional[str] = Field(default=None, min_length=4, max_length=4)
 
 
 class AlertSnapshotResponse(BaseModel):

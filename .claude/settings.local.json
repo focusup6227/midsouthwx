@@ -35,7 +35,18 @@
       "Bash(git init *)",
       "Bash(git remote *)",
       "Bash(git fetch *)",
-      "Bash(git reset *hhhhkjl)"
+      "Bash(git reset *hhhhkjl)",
+      "Bash(node *)",
+      "Bash(fly deploy *)",
+      "Bash(fly status *)",
+      "Bash(curl -sS -o /tmp/r-h2 -w \"HTTP %{http_code} time:%{time_total}s\\\\n\" --max-time 60 \"https://midsouthwx-radar.fly.dev/healthz\")",
+      "Bash(git -C /Users/tylerdixon/Desktop/midsouthwx-main status --short)",
+      "Bash(git -C /Users/tylerdixon/Desktop/midsouthwx-radar-renderer status --short)",
+      "Bash(git -C /Users/tylerdixon/Desktop/midsouthwx-radar-renderer remote -v)",
+      "Bash(git add *)",
+      "Bash(git -c commit.gpgsign=false commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(fly logs *)"
     ]
   }
 }
