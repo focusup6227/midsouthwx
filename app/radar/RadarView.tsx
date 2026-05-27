@@ -3765,7 +3765,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             <button
               type="button"
               onClick={() => setInspectorCollapsed(false)}
-              className="md:hidden absolute bottom-3 right-3 z-20 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-wx-card/95 border border-wx-line text-xs font-semibold text-wx-fg shadow-lg backdrop-blur-sm"
+              className="md:hidden absolute bottom-[68px] right-3 z-20 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-wx-card/95 border border-wx-line text-xs font-semibold text-wx-fg shadow-lg backdrop-blur-sm"
               aria-label="Open layers panel"
             >
               <ChevronLeft size={14} className="text-wx-mute" />
@@ -4830,40 +4830,40 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
           return (
             <div className="absolute bottom-2 md:bottom-4 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[min(880px,calc(100%-380px))] md:min-w-[520px] z-30">
-              <div className="bg-wx-card border border-wx-line rounded-xl px-3 md:px-4 py-2.5 md:py-3.5 flex items-center gap-2 md:gap-3.5">
+              <div className="bg-wx-card border border-wx-line rounded-xl px-2.5 md:px-4 py-1.5 md:py-3.5 flex items-center gap-2 md:gap-3.5">
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => { setPlaying(false); setFrame((f) => Math.max(0, f - 1)); }}
-                    className="w-7 h-9 grid place-items-center text-wx-mute hover:text-wx-fg"
+                    className="hidden md:grid w-7 h-9 place-items-center text-wx-mute hover:text-wx-fg"
                     title="Previous frame (←)"
                     aria-label="Previous frame"
                   >‹</button>
                   <button
                     onClick={() => setPlaying((p) => !p)}
-                    className="w-9 h-9 rounded-lg bg-wx-accent text-black grid place-items-center hover:bg-amber-300"
+                    className="w-8 h-8 md:w-9 md:h-9 rounded-lg bg-wx-accent text-black grid place-items-center hover:bg-amber-300"
                     title={playing ? 'Pause (space)' : 'Play (space)'}
                   >
-                    {playing ? <Pause size={16} /> : <Play size={16} />}
+                    {playing ? <Pause size={14} /> : <Play size={14} />}
                   </button>
                   <button
                     onClick={() => { setPlaying(false); setFrame((f) => Math.min(totalFrames - 1, f + 1)); }}
-                    className="w-7 h-9 grid place-items-center text-wx-mute hover:text-wx-fg"
+                    className="hidden md:grid w-7 h-9 place-items-center text-wx-mute hover:text-wx-fg"
                     title="Next frame (→)"
                     aria-label="Next frame"
                   >›</button>
                   <button
                     onClick={() => { setPlaying(false); setFrame(Math.max(0, lwxrPastCount - 1)); }}
                     disabled={frame === nowIdx}
-                    className={`ml-1 px-2 h-9 rounded-md text-[10px] font-bold tracking-wider border transition disabled:opacity-40 disabled:cursor-default ${frame === nowIdx ? 'border-wx-line text-wx-mute' : 'border-wx-accent text-wx-accent hover:bg-wx-accent/10'}`}
+                    className={`ml-0.5 md:ml-1 px-1.5 md:px-2 h-8 md:h-9 rounded-md text-[10px] font-bold tracking-wider border transition disabled:opacity-40 disabled:cursor-default ${frame === nowIdx ? 'border-wx-line text-wx-mute' : 'border-wx-accent text-wx-accent hover:bg-wx-accent/10'}`}
                     title="Jump to live frame (N)"
                     aria-label="Jump to NOW"
                   >NOW</button>
                 </div>
 
-                <div className="flex-1 flex flex-col gap-1.5">
+                <div className="flex-1 flex flex-col gap-1 md:gap-1.5">
                   <div
                     ref={trackRef}
-                    className="relative h-7 cursor-pointer select-none"
+                    className="relative h-6 md:h-7 cursor-pointer select-none"
                     onMouseDown={(e) => {
                       draggingRef.current = true;
                       setPlaying(false);
@@ -4926,8 +4926,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                     )}
                   </div>
 
-                  {/* Time-axis labels under the track */}
-                  <div className="relative h-3 select-none pointer-events-none">
+                  {/* Time-axis labels under the track — desktop only; on
+                      mobile they crowd the slim timeline pill. */}
+                  <div className="relative h-3 select-none pointer-events-none hidden md:block">
                     {labels.map(({ idx, label }) => (
                       <span
                         key={label}
@@ -4940,8 +4941,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   </div>
                 </div>
 
-                <div className="flex flex-col items-end gap-0.5 min-w-[96px]">
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${
+                <div className="flex flex-col items-end gap-0.5 md:min-w-[96px]">
+                  <span className={`hidden md:inline-flex text-[10px] px-1.5 py-0.5 rounded border font-semibold tracking-wider uppercase ${
                     replayDiffMin != null
                       ? 'border-amber-400 text-amber-300'
                       : isForecastFrame
@@ -4954,8 +4955,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                         ? 'NOWCAST'
                         : 'OBSERVED'}
                   </span>
-                  <span className="text-[15px] font-bold tabular-nums">{frameTimeLabel}</span>
-                  <span className="text-[11px] text-wx-mute tabular-nums">{relLabel}</span>
+                  <span className="text-[12px] md:text-[15px] font-bold tabular-nums">{frameTimeLabel}</span>
+                  <span className="hidden md:inline text-[11px] text-wx-mute tabular-nums">{relLabel}</span>
                 </div>
 
                 {(() => {
@@ -4964,7 +4965,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   return (
                     <button
                       onClick={() => setSpeed(nextSpeed)}
-                      className="text-[11px] px-2.5 py-1.5 border border-wx-line rounded-md hover:border-wx-accent font-mono tabular-nums flex items-center gap-1"
+                      className="hidden md:flex text-[11px] px-2.5 py-1.5 border border-wx-line rounded-md hover:border-wx-accent font-mono tabular-nums items-center gap-1"
                       title={`Click for ${nextSpeed} (cycles 0.5× / 1× / 2× / 4×)`}
                     >
                       <span className="text-wx-fg font-semibold">{speed.replace('x', '×')}</span>
@@ -4973,7 +4974,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   );
                 })()}
               </div>
-              <div className="text-[10px] text-wx-mute text-center mt-1.5 font-mono">
+              <div className="hidden md:block text-[10px] text-wx-mute text-center mt-1.5 font-mono">
                 Space play/pause · ← → step · Home/End · N to jump to NOW
               </div>
             </div>

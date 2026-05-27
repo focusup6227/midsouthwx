@@ -793,7 +793,7 @@ export function AnnotationToolbar(props: UseRadarAnnotations) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={`pointer-events-auto absolute bottom-3 left-3 z-20 flex items-center gap-1.5 rounded-lg border bg-wx-card/95 px-2.5 py-1.5 text-xs shadow-lg backdrop-blur transition-colors ${
+        className={`pointer-events-auto absolute bottom-[68px] md:bottom-3 left-3 z-20 flex items-center gap-1.5 rounded-lg border bg-wx-card/95 px-2.5 py-1.5 text-xs shadow-lg backdrop-blur transition-colors ${
           isLive
             ? 'border-wx-accent text-wx-accent'
             : 'border-wx-line text-wx-mute hover:text-wx-fg'
@@ -814,7 +814,7 @@ export function AnnotationToolbar(props: UseRadarAnnotations) {
   }
 
   return (
-    <div className="pointer-events-auto absolute bottom-3 left-3 z-20 flex w-[210px] flex-col gap-2 rounded-lg border border-wx-line bg-wx-card/95 p-2 shadow-lg backdrop-blur">
+    <div className="pointer-events-auto absolute bottom-[68px] md:bottom-3 left-3 z-20 flex w-[210px] flex-col gap-2 rounded-lg border border-wx-line bg-wx-card/95 p-2 shadow-lg backdrop-blur">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5 text-[11px] font-semibold text-wx-mute">
           <Pencil size={12} />
