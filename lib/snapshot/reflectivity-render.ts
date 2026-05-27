@@ -9,6 +9,7 @@
 import sharp from 'sharp';
 import { createHash } from 'node:crypto';
 import { supabaseAdmin } from '@/lib/supabase/server';
+import { NEXRAD_SITES, distanceKm } from '@/lib/radar/sites';
 
 const LIBREWXR_INDEX_URL = 'https://api.librewxr.net/public/weather-maps.json';
 const LIBREWXR_TILE_SIZE = 512;
@@ -23,7 +24,12 @@ const OUTPUT_H = 600;
 const BBOX_PADDING = 0.25;           // 25% padding around polygon bbox
 const TILE_FETCH_TIMEOUT_MS = 8_000;
 const BASEMAP_FETCH_TIMEOUT_MS = 12_000;
+const NCEP_FETCH_TIMEOUT_MS = 12_000;
 const RADAR_OPACITY = 0.78;
+// WSR-88D scans out to ~230 km. Beyond that the per-site BREF image is
+// mostly empty, so we fall back to the CONUS LibreWxR composite for the
+// faraway-polygon case rather than ship a snapshot with no data.
+const BREF_SITE_MAX_KM = 250;
 
 const SNAPSHOT_BUCKET = 'alert-snapshots';
 
@@ -151,6 +157,78 @@ function polygonSvgOverlay(geom: Geometry, event: string, w: number, h: number, 
   return Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${paths.join('')}</svg>`,
   );
+}
+
+/** Web Mercator (EPSG:3857) projection of a lon/lat point in meters. NCEP's
+ *  GeoServer accepts WMS bbox in CRS:3857 — we have to project the polygon's
+ *  geographic bbox into meters before requesting the image. */
+function lonLatToMercator(lon: number, lat: number): [number, number] {
+  const x = (lon * 20037508.34) / 180;
+  const yRad = Math.log(Math.tan(((90 + lat) * Math.PI) / 360));
+  const y = (yRad * 20037508.34) / Math.PI;
+  return [x, y];
+}
+
+function bboxToMercatorString(bbox: Bbox): string {
+  const [w, s, e, n] = bbox;
+  const [xW, yS] = lonLatToMercator(w, s);
+  const [xE, yN] = lonLatToMercator(e, n);
+  return `${xW},${yS},${xE},${yN}`;
+}
+
+type SitePick = { code: string; km: number };
+function pickNearestSite(centroid: [number, number]): SitePick | null {
+  let best: SitePick | null = null;
+  for (const s of NEXRAD_SITES) {
+    const km = distanceKm(centroid, s.center);
+    if (!best || km < best.km) best = { code: s.code, km };
+  }
+  return best;
+}
+
+function bboxCentroid(bbox: Bbox): [number, number] {
+  const [w, s, e, n] = bbox;
+  return [(w + e) / 2, (s + n) / 2];
+}
+
+/** NCEP GeoServer per-site BREF (lowest-elevation base reflectivity, 0.5°
+ *  super-res). Same source `/radar` uses when the operator selects the
+ *  "Base Reflectivity" product. Returns null on any HTTP error — caller
+ *  falls back to the LibreWxR composite. */
+async function fetchNcepBref(
+  siteCode: string,
+  bbox: Bbox,
+  w: number,
+  h: number,
+): Promise<Buffer | null> {
+  const site = siteCode.toLowerCase();
+  const layer = `${site}:${site}_sr_bref`;
+  const url =
+    `https://opengeo.ncep.noaa.gov/geoserver/${site}/ows` +
+    `?service=WMS&request=GetMap&version=1.3.0` +
+    `&layers=${encodeURIComponent(layer)}&styles=` +
+    `&format=image/png&transparent=true` +
+    `&width=${w}&height=${h}&crs=EPSG:3857` +
+    `&bbox=${bboxToMercatorString(bbox)}`;
+  return fetchBuffer(url, NCEP_FETCH_TIMEOUT_MS);
+}
+
+/** Apply a uniform alpha multiplier to an RGBA layer so it composites at the
+ *  desired transparency. dest-in blend with a single-pixel tile is the
+ *  standard sharp idiom for "fade this whole image to N% alpha." */
+async function applyOpacity(input: Buffer, opacity: number): Promise<Buffer> {
+  return sharp(input)
+    .ensureAlpha()
+    .composite([
+      {
+        input: Buffer.from([255, 255, 255, Math.round(255 * opacity)]),
+        raw: { width: 1, height: 1, channels: 4 },
+        tile: true,
+        blend: 'dest-in',
+      },
+    ])
+    .png()
+    .toBuffer();
 }
 
 async function fetchMapboxBasemap(bbox: Bbox, w: number, h: number, token: string): Promise<Buffer | null> {
@@ -293,35 +371,37 @@ export async function renderReflectivitySnapshot(args: {
     }
   }
 
-  const [lwxr, basemap] = await Promise.all([
-    fetchLwxrIndex(),
-    fetchMapboxBasemap(bbox, OUTPUT_W, OUTPUT_H, mapboxToken),
-  ]);
+  // Try the nearest WSR-88D site's base reflectivity first — that's what
+  // /radar shows in BREF mode (single-site, 0.5° tilt super-res). If the
+  // polygon is too far from any covered site, or the NCEP request fails,
+  // fall back to LibreWxR's CONUS composite so we still ship a radar image.
+  const site = pickNearestSite(bboxCentroid(bbox));
+  const useBref = site && site.km <= BREF_SITE_MAX_KM;
+
+  const basemapPromise = fetchMapboxBasemap(bbox, OUTPUT_W, OUTPUT_H, mapboxToken);
+  const brefPromise: Promise<Buffer | null> = useBref
+    ? fetchNcepBref(site.code, bbox, OUTPUT_W, OUTPUT_H)
+    : Promise.resolve(null);
+  const [basemap, brefRaw] = await Promise.all([basemapPromise, brefPromise]);
   if (!basemap) return null;
 
-  // Always have the basemap to start. If LibreWxR is unavailable, we still
-  // produce a polygon-on-basemap PNG — same outcome as the renderer's path,
-  // but generated locally so we don't bounce a request to Fly.
   const overlays: sharp.OverlayOptions[] = [];
-  if (lwxr) {
-    const mosaic = await buildRadarMosaic(bbox, OUTPUT_W, OUTPUT_H, lwxr);
-    if (mosaic) {
-      // Apply opacity in a chained call so the original mosaic stays sharp.
-      const dimmed = await sharp(mosaic)
-        .ensureAlpha()
-        .composite([
-          {
-            input: Buffer.from([255, 255, 255, Math.round(255 * RADAR_OPACITY)]),
-            raw: { width: 1, height: 1, channels: 4 },
-            tile: true,
-            blend: 'dest-in',
-          },
-        ])
-        .png()
-        .toBuffer();
-      overlays.push({ input: dimmed });
+
+  let radarLayer: Buffer | null = null;
+  if (brefRaw) {
+    radarLayer = await applyOpacity(brefRaw, RADAR_OPACITY);
+  } else {
+    // BREF unavailable (site out of range or NCEP timeout) → fall back to
+    // the CONUS composite. Same flow we shipped originally; preserves a
+    // useful image for faraway polygons or when NCEP is having a bad day.
+    const lwxr = await fetchLwxrIndex();
+    if (lwxr) {
+      const mosaic = await buildRadarMosaic(bbox, OUTPUT_W, OUTPUT_H, lwxr);
+      if (mosaic) radarLayer = await applyOpacity(mosaic, RADAR_OPACITY);
     }
   }
+  if (radarLayer) overlays.push({ input: radarLayer });
+
   // Polygon outline always on top.
   overlays.push({ input: polygonSvgOverlay(args.geometry, args.event, OUTPUT_W, OUTPUT_H, bbox) });
 
