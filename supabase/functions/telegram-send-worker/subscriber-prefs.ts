@@ -82,6 +82,10 @@ export function deliveryDecision(input: {
   const qh = parseQuietHours(input.quietHours);
   if (!qh.enabled || isWarningClass(input.nwsEvent)) return 'send';
 
+  // Recaps are post-event summaries — never urgent, always defer during
+  // quiet hours so a recap of an evening warning doesn't ping at 2 AM.
+  if (input.messageSource === 'recap' && inQuietHours(qh)) return 'defer';
+
   if (input.messageSource === 'scheduled' || input.messageSource === 'nws') {
     if (inQuietHours(qh)) return 'defer';
   }

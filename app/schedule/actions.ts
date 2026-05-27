@@ -2,6 +2,7 @@
 
 import { buildWeeklyRruleIc } from '@/lib/schedule/weekly-rrule';
 import { supabaseServer } from '@/lib/supabase/server';
+import { requireOperator } from '@/lib/auth/require-operator';
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
@@ -33,23 +34,24 @@ const SchedulePayload = z.object({
 export type SchedulePayloadT = z.infer<typeof SchedulePayload>;
 
 export async function createSchedule(input: SchedulePayloadT) {
-  const parsed = SchedulePayload.parse(input);
-  const supa = supabaseServer();
+  const parsed = SchedulePayload.safeParse(input);
+  if (!parsed.success) throw new Error('invalid schedule input');
+  const supa = await requireOperator();
   const { data: userRes } = await supa.auth.getUser();
   const userId = userRes.user?.id;
   if (!userId) throw new Error('not authenticated');
 
-  const start = new Date(parsed.scheduled_for_iso);
+  const start = new Date(parsed.data.scheduled_for_iso);
   if (Number.isNaN(start.getTime())) throw new Error('invalid schedule time');
 
-  const rrule = parsed.recurrence === 'weekly' ? buildWeeklyRruleIc(start) : null;
+  const rrule = parsed.data.recurrence === 'weekly' ? buildWeeklyRruleIc(start) : null;
 
   const { error } = await supa.from('scheduled_messages').insert({
-    body_md: parsed.body_md,
-    audience_spec: parsed.audience_spec,
+    body_md: parsed.data.body_md,
+    audience_spec: parsed.data.audience_spec,
     scheduled_for: start.toISOString(),
     rrule,
-    template_id: parsed.template_id,
+    template_id: parsed.data.template_id,
     created_by: userId,
   });
 
@@ -58,24 +60,23 @@ export async function createSchedule(input: SchedulePayloadT) {
 }
 
 export async function updateSchedule(id: string, input: SchedulePayloadT) {
-  const parsed = SchedulePayload.parse(input);
-  const supa = supabaseServer();
-  const { data: userRes } = await supa.auth.getUser();
-  if (!userRes.user?.id) throw new Error('not authenticated');
+  const parsed = SchedulePayload.safeParse(input);
+  if (!parsed.success) throw new Error('invalid schedule input');
+  const supa = await requireOperator();
 
-  const start = new Date(parsed.scheduled_for_iso);
+  const start = new Date(parsed.data.scheduled_for_iso);
   if (Number.isNaN(start.getTime())) throw new Error('invalid schedule time');
 
-  const rrule = parsed.recurrence === 'weekly' ? buildWeeklyRruleIc(start) : null;
+  const rrule = parsed.data.recurrence === 'weekly' ? buildWeeklyRruleIc(start) : null;
 
   const { data, error } = await supa
     .from('scheduled_messages')
     .update({
-      body_md: parsed.body_md,
-      audience_spec: parsed.audience_spec,
+      body_md: parsed.data.body_md,
+      audience_spec: parsed.data.audience_spec,
       scheduled_for: start.toISOString(),
       rrule,
-      template_id: parsed.template_id,
+      template_id: parsed.data.template_id,
       status: 'pending',
       locked_at: null,
       locked_by: null,
@@ -93,7 +94,7 @@ export async function updateSchedule(id: string, input: SchedulePayloadT) {
 }
 
 export async function cancelSchedule(id: string) {
-  const supa = supabaseServer();
+  const supa = await requireOperator();
   const { error } = await supa
     .from('scheduled_messages')
     .update({

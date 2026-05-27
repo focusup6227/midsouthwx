@@ -32,7 +32,10 @@ export async function GET() {
         { status: 502 },
       );
     }
-    return NextResponse.json({ urlPath: m[1], fetchedAt: Date.now() });
+    return NextResponse.json(
+      { urlPath: m[1], fetchedAt: Date.now() },
+      { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300' } },
+    );
   } catch (e: any) {
     return NextResponse.json(
       { urlPath: null, error: e?.message || 'fetch_error' },

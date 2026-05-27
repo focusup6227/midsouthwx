@@ -2,7 +2,21 @@ import { supabaseServer } from '@/lib/supabase/server';
 import { notFound } from 'next/navigation';
 import NwsApproveButtons from '@/app/nws/NwsApproveButtons';
 import CheckinTally from './CheckinTally';
+import CheckinRecipients from './CheckinRecipients';
+import CheckinMap from './CheckinMap';
 import DashShell from '@/components/DashShell';
+
+// Auto safety-button warnings (tornado/severe/flood) get treated as
+// implicit check-ins on the /alerts and /checkins pages — mirrors the
+// send-worker's pickQuickReplies() condition.
+function isAutoWxCheckin(source: string, event: string | null | undefined): boolean {
+  if (source !== 'nws' || !event) return false;
+  const e = event.toLowerCase();
+  return (
+    e.includes('warning') &&
+    (e.includes('tornado') || e.includes('severe') || e.includes('flood'))
+  );
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -32,10 +46,27 @@ export default async function AlertDetail({ params }: { params: { id: string } }
   const spec = (msg.audience_spec ?? {}) as Spec;
 
   const { data: nwsRow } = msg.nws_alert_id
-    ? await supa.from('nws_alerts').select('nws_id, event, headline').eq('id', msg.nws_alert_id).single()
+    ? await supa
+        .from('nws_alerts')
+        .select('nws_id, event, headline, raw')
+        .eq('id', msg.nws_alert_id)
+        .single()
     : { data: null };
 
-  const [groupRes, regionRes, subRes, queueRes, checkinRes, extLogRes] = await Promise.all([
+  // Pull the warning polygon out of the raw NWS feature (already valid
+  // GeoJSON geometry) so the check-in map can overlay it without a second
+  // round trip. Null for manually-composed messages with no nws_alert.
+  const warningPolygon =
+    nwsRow?.raw &&
+    typeof nwsRow.raw === 'object' &&
+    'geometry' in (nwsRow.raw as Record<string, unknown>)
+      ? ((nwsRow.raw as { geometry: GeoJSON.Geometry }).geometry as
+          | GeoJSON.Polygon
+          | GeoJSON.MultiPolygon
+          | null)
+      : null;
+
+  const [groupRes, regionRes, subRes, queueRes, checkinRes, extLogRes, recipientsRes] = await Promise.all([
     spec.groups?.length
       ? supa.from('custom_groups').select('id, name').in('id', spec.groups)
       : Promise.resolve({ data: [] as { id: string; name: string }[] }),
@@ -46,14 +77,18 @@ export default async function AlertDetail({ params }: { params: { id: string } }
       ? supa.from('subscribers').select('id, display_name').in('id', spec.subscribers)
       : Promise.resolve({ data: [] as { id: string; display_name: string }[] }),
     supa.from('outbound_queue').select('status').eq('message_id', params.id),
-    msg.source === 'checkin'
-      ? supa.from('check_in_responses').select('response_code').eq('message_id', params.id)
-      : Promise.resolve({ data: [] as { response_code: string | null }[] }),
+    // Pull responses unconditionally — tiny table, simpler to filter on the
+    // render side via `hasCheckin` below than to thread the source check
+    // into this Promise.all in two passes.
+    supa.from('check_in_responses').select('response_code').eq('message_id', params.id),
     supa
       .from('external_delivery_logs')
       .select('id, status, occurred_at, response, integration_endpoints(name)')
       .eq('message_id', params.id)
       .order('occurred_at', { ascending: false }),
+    // Seed the map with the same RPC the client refetches via realtime —
+    // first paint is fully interactive without a client roundtrip.
+    supa.rpc('checkin_recipients', { p_message_id: params.id }),
   ]);
 
   const tally: Record<string, number> = {};
@@ -185,12 +220,20 @@ export default async function AlertDetail({ params }: { params: { id: string } }
         </section>
       )}
 
-      {msg.source === 'checkin' && (
-        <CheckinTally
-          messageId={msg.id}
-          initial={checkinTally}
-          recipientCount={msg.recipient_count ?? 0}
-        />
+      {(msg.source === 'checkin' || isAutoWxCheckin(msg.source, nwsRow?.event)) && (
+        <>
+          <CheckinTally
+            messageId={msg.id}
+            initial={checkinTally}
+            recipientCount={msg.recipient_count ?? 0}
+          />
+          <CheckinMap
+            messageId={msg.id}
+            initial={(recipientsRes.data ?? []) as any[]}
+            polygon={warningPolygon}
+          />
+          <CheckinRecipients messageId={msg.id} />
+        </>
       )}
     </DashShell>
   );

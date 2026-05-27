@@ -1,9 +1,11 @@
 'use client';
 
+import '@/lib/mapbox/patch-remove-source';
+
 import { useEffect, useMemo, useState } from 'react';
 import Map, { Source, Layer } from 'react-map-gl';
 import Link from 'next/link';
-import { mapboxAccessToken } from '@/lib/supabase/env';
+import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 
 type FeatureCollection = {
   type: 'FeatureCollection';
@@ -88,7 +90,7 @@ export default function MapPage() {
           <Map
             mapboxAccessToken={token}
             initialViewState={MID_SOUTH}
-            mapStyle="mapbox://styles/mapbox/dark-v11"
+            mapStyle={mapboxStyleUrl()}
             style={{ width: '100%', height: '100%' }}
             interactiveLayerIds={['region-fill']}
             onMouseMove={(e) => {

@@ -24,9 +24,12 @@ export default function ThreadAutoRead({ conversationId }: { conversationId: str
           table: 'replies',
           filter: `conversation_id=eq.${conversationId}`,
         },
-        () => {
+        (payload) => {
           router.refresh();
-          markRead(conversationId).catch(() => {});
+          const row = payload.new as { direction?: string };
+          if (row.direction !== 'outbound') {
+            markRead(conversationId).catch(() => {});
+          }
         },
       )
       .subscribe();

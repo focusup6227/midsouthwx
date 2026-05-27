@@ -57,3 +57,30 @@ verify_jwt = false
 
 [functions.nws-dispatcher]
 verify_jwt = false
+
+[functions.lsr-poll]
+verify_jwt = false
+
+[functions.spc-poll]
+verify_jwt = false
+
+[functions.afd-poll]
+verify_jwt = false
+
+[functions.librewxr-poll]
+verify_jwt = false
+
+[functions.cap-dispatcher]
+verify_jwt = false
+
+[functions.health-monitor]
+verify_jwt = false
+
+[functions.event-recap]
+verify_jwt = false
+
+[functions.couplet-poll]
+verify_jwt = false
+
+[functions.couplet-dispatcher]
+verify_jwt = false

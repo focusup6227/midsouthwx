@@ -9,10 +9,11 @@ export const dynamic = 'force-dynamic';
 //   { type: 'polygon'|'Polygon', coordinates: ring }            // single ring shorthand
 //   { type: 'Polygon', coordinates: [ring, ...] }               // canonical GeoJSON
 //   { type: 'MultiPolygon', coordinates: [[ring,...], ...] }
-// and returns the canonical GeoJSON shape resolve_audience expects.
+//   { type: 'track', line: <LineString>, corridor_km: 8 }       // F3: storm-track corridor
+// and returns the canonical shape resolve_audience expects.
 function normalizeGeometry(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
-  const g = raw as { type?: unknown; coordinates?: unknown };
+  const g = raw as { type?: unknown; coordinates?: unknown; line?: unknown; corridor_km?: unknown };
   const t = String(g.type ?? '').toLowerCase();
   if (t === 'circle') return raw;
   if (t === 'polygon') {
@@ -27,18 +28,30 @@ function normalizeGeometry(raw: unknown): unknown {
     };
   }
   if (t === 'multipolygon') return { ...raw, type: 'MultiPolygon' };
+  if (t === 'track') {
+    const line = g.line as { type?: string; coordinates?: unknown } | undefined;
+    if (!line || String(line.type).toLowerCase() !== 'linestring') return null;
+    const km = Number(g.corridor_km);
+    return {
+      type: 'track',
+      line: { type: 'LineString', coordinates: line.coordinates },
+      corridor_km: Number.isFinite(km) && km > 0 ? km : 8,
+    };
+  }
   return raw;
 }
+
+const HAZARD_KINDS = new Set(['tornado', 'severe', 'flood', 'winter', 'heat', 'wind']);
 
 export default async function ComposePage({
   searchParams,
 }: {
-  searchParams: { geo?: string };
+  searchParams: { geo?: string; hazard?: string; body?: string };
 }) {
   const supa = supabaseServer();
 
   const [templatesRes, groupsRes, regionsRes, subsRes] = await Promise.all([
-    supa.from('templates').select('id, name, category, body_md, default_quick_replies').order('name'),
+    supa.from('templates').select('id, name, category, hazard, body_md, default_quick_replies').order('name'),
     supa.from('custom_groups').select('id, name').order('name'),
     supa.from('regions').select('id, name, kind').order('name'),
     supa
@@ -57,6 +70,16 @@ export default async function ComposePage({
     }
   }
 
+  const initialHazard =
+    searchParams.hazard && HAZARD_KINDS.has(searchParams.hazard) ? searchParams.hazard : null;
+
+  // F2: when launched from a warning, the AI summary (or fallback) seeds the
+  // body. Cap to a reasonable length to avoid URL bloat and bad pastes.
+  const initialBody =
+    typeof searchParams.body === 'string' && searchParams.body.trim()
+      ? searchParams.body.slice(0, 1000)
+      : null;
+
   return (
     <DashShell title="New alert" width="narrow">
       <ComposeForm
@@ -65,6 +88,8 @@ export default async function ComposePage({
         regions={regionsRes.data ?? []}
         subscribers={subsRes.data ?? []}
         initialGeometry={initialGeometry}
+        initialHazard={initialHazard}
+        initialBody={initialBody}
       />
     </DashShell>
   );

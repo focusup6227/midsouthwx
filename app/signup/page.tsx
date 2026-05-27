@@ -65,7 +65,7 @@ export default function SignupPage() {
             Open Telegram
           </a>
           <p className="text-xs text-wx-mute">
-            If the button doesn't open Telegram, copy this link:
+            If the button doesn&apos;t open Telegram, copy this link:
             <br />
             <span className="break-all">{result.deeplink}</span>
           </p>

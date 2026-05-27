@@ -16,7 +16,7 @@ Single-operator severe weather alert system. Supabase backend, Next.js PWA front
 Defaults applied without re-prompting:
 - NWS rules: whitelist via `auto_alert_rules`, seeded with Tornado/Severe Thunderstorm/Flash Flood/Winter Storm Warnings.
 - Retention: 2 years on replies + delivery_logs + nws_alerts.
-- Map tiles: MapLibre GL + OSM (no key) for most pages; radar (/radar) uses Mapbox GL + OSM Streets dark-v11 (free token) for superior dark theme, built-in political boundaries and place labels. Radar includes site chooser, quality toggle (RainViewer high-res for reflectivity), and area draw alerts.
+- Map tiles: MapLibre GL + OSM (no key) for most pages; radar (/radar) uses Mapbox GL + OSM Streets dark-v11 (free token) for superior dark theme, built-in political boundaries and place labels. Radar includes site chooser, quality toggle (LibreWxR high-res for reflectivity; RainViewer-compatible v2 API), and area draw alerts.
 - Push: Web Push + Telegram self-notify (both).
 
 ---
@@ -84,7 +84,7 @@ Defaults applied without re-prompting:
 | Cron | pg_cron + `net.http_post` | Triggers Edge Functions on schedule; no external scheduler |
 | Frontend | Next.js 14 App Router | Best Supabase SSR story (`@supabase/ssr`), mobile-friendly, PWA-ready |
 | UI | Tailwind + shadcn/ui | Touch-friendly out of the box, easy theming |
-| Map | MapLibre GL + OSM tiles | No API key for most views; radar uses Mapbox (free token) dark OSM with native boundaries/labels + IEM/RainViewer radar |
+| Map | MapLibre GL + OSM tiles | No API key for most views; radar uses Mapbox (free token) dark OSM with native boundaries/labels + IEM/LibreWxR radar |
 | Editor | `react-markdown` + textarea or `@uiw/react-md-editor` | Markdown is enough; no need for a heavy WYSIWYG |
 | PWA | `next-pwa` (Workbox) | Service worker + manifest + Web Push hooks |
 | Hosting | Vercel | Free tier covers it; preview branches; Edge runtime if needed |

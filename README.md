@@ -26,12 +26,13 @@ You'll do three things outside the repo, then everything else is in here.
 # from the repo root
 npm install
 
-# Supabase CLI (one-time install if you don't have it)
-brew install supabase/tap/supabase   # macOS
-# or: see https://supabase.com/docs/guides/cli for Linux/Windows
+# Supabase CLI — pick one:
+#   A) From the repo (no Homebrew): npm install  then  npx supabase login
+#   B) Homebrew: brew install supabase/tap/supabase
+#   C) https://supabase.com/docs/guides/cli
 
-supabase login
-supabase link --project-ref <YOUR_PROJECT_REF>
+npx supabase login
+npx supabase link --project-ref <YOUR_PROJECT_REF>
 
 # Apply migrations + seed
 supabase db push
@@ -64,6 +65,11 @@ PROJECT_REF="<your project ref>"
 curl -X POST "https://api.telegram.org/bot${TOKEN}/setWebhook" \
   -d "url=https://${PROJECT_REF}.supabase.co/functions/v1/telegram-webhook" \
   -d "secret_token=${SECRET}"
+
+# Register /help, /prefs, etc. in Telegram's command menu (☰ next to the message box)
+npm run telegram:commands
+# Or after deploy: curl -X POST "https://${PROJECT_REF}.supabase.co/functions/v1/telegram-webhook?setup_commands=1" \
+#   -H "X-Telegram-Bot-Api-Secret-Token: ${SECRET}"
 
 # Schedule the send worker (run in Supabase SQL Editor)
 # Replace <PROJECT_REF> and <CRON_JWT>; create CRON_JWT in Vault first.
@@ -115,6 +121,7 @@ server-side.
 - **Scheduled alerts** (`/schedule`): recurring or one-shot; `scheduled-dispatcher` enqueues the same pipeline as compose.
 - **NWS automation** (`/nws`): national active-alert poll (`nws-poll`), rule-based dispatch (`nws-dispatcher`), approve/reject for `pending_approval` NWS messages. Set secret **`NWS_USER_AGENT`**. Region geometry for Mid-South routing: see `scripts/regions-backfill.md`.
 - Inbound replies + callback queries land in `replies` / `check_in_responses`.
+- **Inbox thread replies:** reply to a subscriber from `/inbox/[conversation_id]` (Telegram DM + outbound row in the thread). Requires migration `20260529000001_inbox_outbound_replies.sql` and `TELEGRAM_BOT_TOKEN` on the Next server.
 - Distress-keyword detection DMs the operator via Telegram self-notify.
 
 What's stubbed (lands in a future code drop):

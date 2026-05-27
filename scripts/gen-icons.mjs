@@ -1,75 +1,51 @@
-// Generate solid wx-accent PNG icons for the PWA.
-// Swap them later for a proper logo; the install prompt only needs ≥192px PNGs.
+// Regenerate PWA + favicon icons from public/icons/logo.png using macOS `sips`.
+// Outputs: public/icons/{icon-192,icon-512,apple-touch-icon,favicon-16,favicon-32}.png
+//          public/favicon.ico (PNG bytes — browsers content-sniff this fine)
 //
 // Usage: node scripts/gen-icons.mjs
+// Requires: macOS (sips ships with the OS). On Linux, swap in ImageMagick `convert`.
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { copyFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { deflateSync } from 'node:zlib';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outDir = resolve(here, '..', 'public', 'icons');
-mkdirSync(outDir, { recursive: true });
+const repo = resolve(here, '..');
+const iconsDir = resolve(repo, 'public', 'icons');
+const source = resolve(iconsDir, 'logo.png');
 
-function crc32(buf) {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
-    table[n] = c;
-  }
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) c = table[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
+if (!existsSync(source)) {
+  console.error(`error: ${source} not found. Drop the master logo there first.`);
+  process.exit(1);
 }
 
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const t = Buffer.from(type, 'ascii');
-  const td = Buffer.concat([t, data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(td), 0);
-  return Buffer.concat([len, td, crc]);
+mkdirSync(iconsDir, { recursive: true });
+
+const sipsCheck = spawnSync('which', ['sips']);
+if (sipsCheck.status !== 0) {
+  console.error('error: sips not found (macOS only). On Linux, run `convert` from ImageMagick instead.');
+  process.exit(1);
 }
 
-function solidPng(size, [r, g, b]) {
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
+const sizes = [
+  { size: 16,  out: 'favicon-16.png' },
+  { size: 32,  out: 'favicon-32.png' },
+  { size: 180, out: 'apple-touch-icon.png' },
+  { size: 192, out: 'icon-192.png' },
+  { size: 512, out: 'icon-512.png' },
+];
 
-  const rowLen = 1 + size * 3;
-  const raw = Buffer.alloc(rowLen * size);
-  for (let y = 0; y < size; y++) {
-    raw[y * rowLen] = 0;
-    for (let x = 0; x < size; x++) {
-      const i = y * rowLen + 1 + x * 3;
-      raw[i] = r;
-      raw[i + 1] = g;
-      raw[i + 2] = b;
-    }
-  }
-  const idat = deflateSync(raw);
-  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  return Buffer.concat([
-    sig,
-    chunk('IHDR', ihdr),
-    chunk('IDAT', idat),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
+for (const { size, out } of sizes) {
+  const outPath = resolve(iconsDir, out);
+  execFileSync('sips', [
+    '-Z', String(size), '--setProperty', 'format', 'png',
+    source, '--out', outPath,
+  ], { stdio: ['ignore', 'ignore', 'inherit'] });
+  console.log(`wrote ${outPath}`);
 }
 
-const wxAccent = [0xfb, 0xbf, 0x24];
-
-for (const size of [192, 512]) {
-  const png = solidPng(size, wxAccent);
-  const path = resolve(outDir, `icon-${size}.png`);
-  writeFileSync(path, png);
-  console.log(`wrote ${path} (${png.length} bytes)`);
-}
+// /favicon.ico — browsers content-sniff, so PNG bytes at this path work.
+const faviconIco = resolve(repo, 'public', 'favicon.ico');
+copyFileSync(resolve(iconsDir, 'favicon-32.png'), faviconIco);
+console.log(`wrote ${faviconIco}`);

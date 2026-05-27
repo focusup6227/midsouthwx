@@ -23,7 +23,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendEmailResult> {
 
   // `onboarding@resend.dev` works without verifying a domain — handy for dev.
   // Set EMAIL_FROM once you've verified a domain in Resend.
-  const from = args.from ?? process.env.EMAIL_FROM ?? 'Mid-South WX <onboarding@resend.dev>';
+  const from = args.from ?? process.env.EMAIL_FROM ?? 'MidSouthWX <onboarding@resend.dev>';
 
   try {
     const res = await fetch('https://api.resend.com/emails', {

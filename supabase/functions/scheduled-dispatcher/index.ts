@@ -5,7 +5,7 @@
 // with approve/skip buttons instead of enqueueing immediately.
 
 import { rrulestr } from 'https://esm.sh/rrule@2.8.1';
-import { serviceClient, json } from './supabase.ts';
+import { serviceClient, json, withHealthLog } from './supabase.ts';
 import { notifyExternalEndpointsForMessage } from './external-notify.ts';
 import { notifyOperatorScheduledPending } from './operator-notify.ts';
 
@@ -134,7 +134,7 @@ async function claimBatch(supa: ReturnType<typeof serviceClient>): Promise<Claim
   return (data ?? []) as ClaimedRow[];
 }
 
-Deno.serve(async (req) => {
+Deno.serve(withHealthLog('scheduled-dispatcher', async (req) => {
   if (req.method !== 'POST' && req.method !== 'GET') {
     return json({ ok: false }, 405);
   }
@@ -300,4 +300,4 @@ Deno.serve(async (req) => {
   }
 
   return json({ ok: true, processed });
-});
+}));

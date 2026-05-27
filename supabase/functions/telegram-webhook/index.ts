@@ -1,5 +1,6 @@
 // Telegram webhook. Receives every update from the bot:
 //   - /start <link_token>   → claim a pending subscriber row
+//   - /help, /prefs, menu buttons → command list + preferences
 //   - /unsubscribe          → flip status
 //   - location share        → update lat/lng
 //   - text message          → insert into replies + conversation
@@ -8,8 +9,28 @@
 // the webhook with setWebhook) — Telegram does not sign requests otherwise.
 
 import { serviceClient, json } from './supabase.ts';
-import { tgAnswerCallbackQuery, tgSendMessage } from './telegram.ts';
+import {
+  commandsHelpText,
+  helpInlineKeyboard,
+  isCommandsMenuText,
+  isHelpMenuText,
+  isLocationMenuText,
+  isPrefsMenuText,
+  isStatusMenuText,
+  locationInlineKeyboard,
+  parseCmdCallback,
+  subscriberReplyKeyboard,
+  SUBSCRIBER_BOT_COMMANDS,
+} from './bot-commands.ts';
+import { clearAwaiting, getAwaiting, setAwaiting } from './state.ts';
+import {
+  tgAnswerCallbackQuery,
+  tgSendMessage,
+  tgSetChatMenuButtonCommands,
+  tgSetMyCommands,
+} from './telegram.ts';
 import { notifyExternalEndpointsForMessage } from './external-notify.ts';
+import { geocodeAddress } from './geocode.ts';
 import {
   advanceScheduleAfterSend,
   scheduleMetaFromAudience,
@@ -17,6 +38,7 @@ import {
 import {
   DEFAULT_ALERT_PREFERENCES,
   DEFAULT_QUIET_HOURS,
+  HAZARD_KINDS,
   formatPrefsSummary,
   parseAlertPreferences,
   parseQuietHours,
@@ -166,7 +188,10 @@ async function handleOperatorCallback(
   return false;
 }
 
-const PREF_TOGGLE = /^pref:toggle:(warnings|watches|advisories|statements|quiet)$/;
+const PREF_TOGGLE = /^pref:toggle:(warnings|watches|advisories|statements|quiet|aggregate)$/;
+// F6: hazard-specific opt-out. Kept separate from PREF_TOGGLE so the existing
+// boolean-toggle path doesn't have to special-case array membership.
+const PREF_HAZARD = /^pref:hazard:(tornado|severe|flood|winter|heat|wind)$/;
 
 async function sendPrefsMenu(
   token: string,
@@ -188,10 +213,10 @@ async function handlePrefCallback(
   cqId: string,
   data: string,
 ): Promise<boolean> {
-  const m = PREF_TOGGLE.exec(data);
-  if (!m) return false;
+  const mToggle = PREF_TOGGLE.exec(data);
+  const mHazard = PREF_HAZARD.exec(data);
+  if (!mToggle && !mHazard) return false;
 
-  const field = m[1];
   const { data: sub, error } = await supa
     .from('subscribers')
     .select('id, alert_preferences, quiet_hours')
@@ -207,29 +232,259 @@ async function handlePrefCallback(
   const prefs = parseAlertPreferences(sub.alert_preferences);
   const qh = parseQuietHours(sub.quiet_hours);
 
-  if (field === 'quiet') {
-    qh.enabled = !qh.enabled;
-    if (qh.enabled && !sub.quiet_hours) {
-      qh.start = DEFAULT_QUIET_HOURS.start;
-      qh.end = DEFAULT_QUIET_HOURS.end;
-      qh.timezone = DEFAULT_QUIET_HOURS.timezone;
-    }
-    await supa
-      .from('subscribers')
-      .update({ quiet_hours: qh, updated_at: new Date().toISOString() })
-      .eq('id', sub.id);
-  } else {
-    const key = field as keyof typeof prefs;
-    prefs[key] = !prefs[key];
+  if (mHazard) {
+    // F6: toggle hazard membership in skip_hazards. Present → remove, absent
+    // → add. The SQL gate (subscriber_wants_nws_event) reads the same array
+    // on the next NWS fan-out.
+    const kind = mHazard[1] as typeof HAZARD_KINDS[number];
+    const i = prefs.skip_hazards.indexOf(kind);
+    if (i >= 0) prefs.skip_hazards.splice(i, 1);
+    else prefs.skip_hazards.push(kind);
     await supa
       .from('subscribers')
       .update({ alert_preferences: prefs, updated_at: new Date().toISOString() })
       .eq('id', sub.id);
+  } else if (mToggle) {
+    const field = mToggle[1];
+    if (field === 'quiet') {
+      qh.enabled = !qh.enabled;
+      if (qh.enabled && !sub.quiet_hours) {
+        qh.start = DEFAULT_QUIET_HOURS.start;
+        qh.end = DEFAULT_QUIET_HOURS.end;
+        qh.timezone = DEFAULT_QUIET_HOURS.timezone;
+      }
+      await supa
+        .from('subscribers')
+        .update({ quiet_hours: qh, updated_at: new Date().toISOString() })
+        .eq('id', sub.id);
+    } else if (field === 'aggregate') {
+      // Outbreak grouping opt-out — read by aggregation.ts in the send worker
+      // (subscriberWantsAggregation). Stored under the same alert_preferences
+      // jsonb as the category toggles.
+      prefs.aggregate_warnings = !prefs.aggregate_warnings;
+      await supa
+        .from('subscribers')
+        .update({ alert_preferences: prefs, updated_at: new Date().toISOString() })
+        .eq('id', sub.id);
+    } else {
+      const key = field as 'warnings' | 'watches' | 'advisories' | 'statements';
+      prefs[key] = !prefs[key];
+      await supa
+        .from('subscribers')
+        .update({ alert_preferences: prefs, updated_at: new Date().toISOString() })
+        .eq('id', sub.id);
+    }
   }
 
   await tgAnswerCallbackQuery(token, cqId, 'Updated.');
   await sendPrefsMenu(token, chatId, prefs, qh);
   return true;
+}
+
+async function sendCommandsHelp(token: string, chatId: number) {
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text: commandsHelpText(),
+    reply_markup: helpInlineKeyboard(),
+  });
+  // Reply keyboard cannot share a message with inline buttons — send separately so
+  // existing subscribers get the 📋 / ⚙️ / 📍 buttons below the input field.
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text: '⌨️ Quick buttons are below the message box.',
+    reply_markup: subscriberReplyKeyboard(),
+  });
+}
+
+async function handleSubscriberCmdCallback(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+  cqId: string,
+  cmd: string,
+): Promise<boolean> {
+  if (cmd === 'help') {
+    await tgAnswerCallbackQuery(token, cqId);
+    await sendCommandsHelp(token, chatId);
+    return true;
+  }
+  if (cmd === 'prefs') {
+    await tgAnswerCallbackQuery(token, cqId);
+    await showPrefsForChat(supa, token, chatId);
+    return true;
+  }
+  if (cmd === 'where_help') {
+    await tgAnswerCallbackQuery(token, cqId);
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text:
+        'Send `/where` followed by your address, e.g.:\n`/where 123 Main St, Memphis TN`\n\n' +
+        'Use this when you are not home during severe weather.',
+    });
+    return true;
+  }
+  if (cmd === 'home') {
+    await supa
+      .from('subscribers')
+      .update({
+        current_address: null,
+        current_address_updated_at: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('telegram_chat_id', chatId);
+    await tgAnswerCallbackQuery(token, cqId, 'Home location restored.');
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'Cleared. We will assume you are at your home address.',
+    });
+    return true;
+  }
+  return false;
+}
+
+/** Parse "for 24h" / "for 2 days" / "for 3 hours" trailing on a /where input.
+ *  Returns hours (rounded to int) or null if no TTL was specified. */
+function parseTtlHours(raw: string): { address: string; ttlHours: number | null } {
+  const m = raw.match(/^(.*?)\s+for\s+(\d+(?:\.\d+)?)\s*(h|hr|hrs|hour|hours|d|day|days)\s*$/i);
+  if (!m) return { address: raw, ttlHours: null };
+  const n = parseFloat(m[2]);
+  const unit = m[3].toLowerCase();
+  const isDays = unit.startsWith('d');
+  return { address: m[1].trim(), ttlHours: Math.round(isDays ? n * 24 : n) };
+}
+
+/** Shared /where logic — geocodes the address, updates the subscriber's
+ *  `location` (so the map pin moves) and `current_address`. Optional TTL
+ *  ("/where ... for 24h") sets current_location_expires_at; a cron job sweeps
+ *  expired rows back to home. Returns true on success so callers can clear
+ *  conversational state. */
+async function processWhereInput(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+  rawAddress: string,
+): Promise<boolean> {
+  const { address, ttlHours } = parseTtlHours(rawAddress.trim());
+  if (!address) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'I didn\'t get an address. Tap 📍 Location again and try once more.',
+    });
+    return false;
+  }
+  const geo = await geocodeAddress(address);
+  if (!geo) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text:
+        'Couldn\'t find that address. Try a more specific format — e.g. ' +
+        '"123 Main St, Memphis TN 38103".',
+    });
+    return false;
+  }
+  const wkt = `SRID=4326;POINT(${geo.lng} ${geo.lat})`;
+  const expiresAt = ttlHours != null
+    ? new Date(Date.now() + ttlHours * 3600_000).toISOString()
+    : null;
+  const { error } = await supa
+    .from('subscribers')
+    .update({
+      current_address: geo.matchedAddress ?? address,
+      current_address_updated_at: new Date().toISOString(),
+      current_location_expires_at: expiresAt,
+      location: wkt,
+      ...(geo.countyFips ? { county_fips: geo.countyFips } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('telegram_chat_id', chatId);
+  if (error) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'Could not update your location. Are you signed up? Try /start.',
+    });
+    return false;
+  }
+  const ttlBlurb = ttlHours != null
+    ? `\n\nAuto-reverts to home in ${ttlHours}h (${new Date(Date.now() + ttlHours * 3600_000).toLocaleString()}).`
+    : '\n\nTap 🏠 Back to home (Location menu) when you are home again.';
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text: `Got it — pin moved to:\n${geo.matchedAddress ?? address}${ttlBlurb}`,
+  });
+  return true;
+}
+
+/** Shared /home logic — reverts the subscriber's location to home_location
+ *  and clears current_address. */
+async function processHomeInput(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+): Promise<void> {
+  const { data: subRow } = await supa
+    .from('subscribers')
+    .select('home_location')
+    .eq('telegram_chat_id', chatId)
+    .maybeSingle();
+  const update: Record<string, unknown> = {
+    current_address: null,
+    current_address_updated_at: null,
+    current_location_expires_at: null,
+    updated_at: new Date().toISOString(),
+  };
+  if (subRow?.home_location) update.location = subRow.home_location;
+  await supa
+    .from('subscribers')
+    .update(update)
+    .eq('telegram_chat_id', chatId);
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text: 'Pin moved back to your home address.',
+  });
+}
+
+async function sendStatusForChat(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+) {
+  const { data: sub } = await supa
+    .from('subscribers')
+    .select('display_name, status, zip, county_fips, home_address, current_address, current_address_updated_at, alert_preferences, quiet_hours')
+    .eq('telegram_chat_id', chatId)
+    .maybeSingle();
+  if (!sub) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'I do not have you on file. Please sign up on the website first.',
+    });
+    return;
+  }
+  const prefs = parseAlertPreferences(sub.alert_preferences ?? DEFAULT_ALERT_PREFERENCES);
+  const qh = parseQuietHours(sub.quiet_hours);
+  const onOff = (b: boolean) => (b ? 'on' : 'off');
+  const enabledTypes = [
+    prefs.warnings && 'warnings',
+    prefs.watches && 'watches',
+    prefs.advisories && 'advisories',
+    prefs.statements && 'statements',
+  ].filter(Boolean).join(', ') || 'none';
+  const lines = [
+    `Status — ${sub.display_name ?? 'subscriber'}`,
+    `• Account: ${sub.status ?? '—'}`,
+    sub.current_address
+      ? `• Now at (temporary): ${sub.current_address}`
+      : sub.home_address
+        ? `• Home: ${sub.home_address}`
+        : `• Location: ZIP ${sub.zip ?? '—'}`,
+    `• Alert types: ${enabledTypes}`,
+    `• Quiet hours: ${qh.enabled ? `${onOff(qh.enabled)} (${qh.start}–${qh.end} ${qh.timezone})` : 'off'}`,
+  ];
+  if (prefs.skip_hazards.length > 0) {
+    lines.push(`• Muted hazards: ${prefs.skip_hazards.join(', ')}`);
+  }
+  lines.push('', 'Tap ⚙️ Alerts to change anything, or 📍 Location to update where you are.');
+  await tgSendMessage(token, { chat_id: chatId, text: lines.join('\n') });
 }
 
 async function showPrefsForChat(
@@ -272,6 +527,18 @@ Deno.serve(async (req) => {
   const token = Deno.env.get('TELEGRAM_BOT_TOKEN');
   if (!token) return json({ ok: false, error: 'bot token missing' }, 500);
 
+  // One-time setup query: POST .../telegram-webhook?setup_commands=1
+  const setupUrl = new URL(req.url);
+  if (setupUrl.searchParams.get('setup_commands') === '1') {
+    try {
+      await tgSetMyCommands(token, [...SUBSCRIBER_BOT_COMMANDS]);
+      await tgSetChatMenuButtonCommands(token);
+      return json({ ok: true, setup: 'commands_registered' });
+    } catch (e) {
+      return json({ ok: false, error: String(e) }, 500);
+    }
+  }
+
   let update: any;
   try {
     update = await req.json();
@@ -282,6 +549,41 @@ Deno.serve(async (req) => {
   const supa = serviceClient();
 
   try {
+    // ── edited_message: live-location refresh ────────────────────────────
+    // Telegram emits an edited_message every ~30 s while a subscriber is
+    // sharing live location. We treat these as silent position refreshes —
+    // no reply (would be ~960 messages per 8 h share). Only refresh rows
+    // already marked as an active telegram_live share so an unrelated
+    // edit (e.g. corrected text message that happens to carry a stale
+    // location preview) can't clobber a static pin.
+    const edited = update.edited_message ?? update.edited_channel_post;
+    if (edited?.location && edited?.chat?.id) {
+      const { latitude, longitude } = edited.location as {
+        latitude: number; longitude: number;
+      };
+      const chatId: number = edited.chat.id;
+      const { data: sub } = await supa
+        .from('subscribers')
+        .select('id, current_location_source, current_location_expires_at')
+        .eq('telegram_chat_id', chatId)
+        .maybeSingle();
+      if (
+        sub &&
+        sub.current_location_source === 'telegram_live' &&
+        sub.current_location_expires_at &&
+        new Date(sub.current_location_expires_at as string).getTime() > Date.now()
+      ) {
+        await supa
+          .from('subscribers')
+          .update({
+            location: `SRID=4326;POINT(${longitude} ${latitude})`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', sub.id);
+      }
+      return json({ ok: true });
+    }
+
     // ── callback_query (inline keyboard tap) ─────────────────────────────
     if (update.callback_query) {
       const cq = update.callback_query;
@@ -294,6 +596,238 @@ Deno.serve(async (req) => {
       }
 
       if (await handlePrefCallback(supa, token, chatId, cqId, data)) {
+        return json({ ok: true });
+      }
+
+      const cmd = parseCmdCallback(data);
+      if (cmd && (await handleSubscriberCmdCallback(supa, token, chatId, cqId, cmd))) {
+        return json({ ok: true });
+      }
+
+      // ── wx:safe / wx:sos — active-weather safety check-in (Phase #35) ──
+      // Auto-attached to tornado/severe/flood warnings by telegram-send-worker.
+      // Records the response on check_in_responses + replies for the operator,
+      // and for SOS additionally pages the operator via self-Telegram with
+      // the subscriber's current location.
+      if (data === 'wx:safe' || data === 'wx:sos') {
+        const { data: sub } = await supa
+          .from('subscribers')
+          .select('id, display_name, telegram_username, current_address, home_address')
+          .eq('telegram_chat_id', chatId)
+          .maybeSingle();
+        if (!sub) {
+          await tgAnswerCallbackQuery(token, cqId);
+          return json({ ok: true });
+        }
+        // Resolve which outbound this was a tap on (cq.message.message_id).
+        const tgMsgId = cq.message?.message_id ?? null;
+        let messageId: string | null = null;
+        if (tgMsgId) {
+          const { data: outRow } = await supa
+            .from('outbound_queue')
+            .select('message_id')
+            .eq('subscriber_id', sub.id)
+            .eq('telegram_message_id', tgMsgId)
+            .maybeSingle();
+          messageId = outRow?.message_id ?? null;
+        }
+        if (messageId) {
+          await supa.from('check_in_responses').upsert(
+            {
+              message_id: messageId,
+              subscriber_id: sub.id,
+              response_code: data === 'wx:safe' ? 'safe' : 'sos',
+              responded_at: new Date().toISOString(),
+            },
+            { onConflict: 'message_id,subscriber_id' },
+          );
+        }
+        // Mirror to inbox so the operator's thread shows the response.
+        const { data: conv } = await supa
+          .from('conversations')
+          .upsert(
+            { subscriber_id: sub.id, last_message_at: new Date().toISOString() },
+            { onConflict: 'subscriber_id' },
+          )
+          .select('id')
+          .single();
+        if (conv) {
+          await supa.from('replies').insert({
+            conversation_id: conv.id,
+            subscriber_id: sub.id,
+            parent_message_id: messageId,
+            callback_data: data,
+            body: data === 'wx:safe' ? '[check-in] safe' : '[check-in] SOS',
+            telegram_message_id: tgMsgId,
+            is_distress: data === 'wx:sos',
+          });
+        }
+        // Reply to the subscriber + acknowledge the button press.
+        if (data === 'wx:safe') {
+          await tgAnswerCallbackQuery(token, cqId, 'Got it — stay safe.');
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              '✅ Marked safe. Operator has been notified you are OK.\n\n' +
+              'If conditions change, tap 🆘 Need help on the warning message.',
+          });
+        } else {
+          await tgAnswerCallbackQuery(token, cqId, 'CALL 911. Operator alerted.', {
+            show_alert: true,
+          });
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              '🆘 *Call 911 immediately.* The bot has alerted the operator, ' +
+              'but 911 is the fastest way to get rescue services to you.\n\n' +
+              'Stay sheltered if it is safe to do so. Tap 📡 Share live ' +
+              'location below so help can find you.',
+            parse_mode: 'MarkdownV2',
+          });
+          // Self-Telegram the operator.
+          const opChatId = Number(Deno.env.get('OPERATOR_TELEGRAM_CHAT_ID') ?? 0);
+          if (opChatId) {
+            const where = sub.current_address ?? sub.home_address ?? '(no address on file)';
+            const handle = sub.telegram_username ? `@${sub.telegram_username}` : sub.display_name ?? 'subscriber';
+            await tgSendMessage(token, {
+              chat_id: opChatId,
+              text:
+                `🆘 SOS from ${handle}\n` +
+                `Location: ${where}\n` +
+                `Sent in response to a warning.`,
+            });
+          }
+        }
+        return json({ ok: true });
+      }
+
+      // ── fb:* — post-alert feedback (👍 👎 💬) ─────────────────────────
+      // Auto-attached to NWS-sourced messages by telegram-send-worker. Writes
+      // public.alert_feedback so the operator can tune which categories /
+      // hazards subscribers find useful vs. noise. Tapping again overwrites
+      // (unique on message_id, subscriber_id). The 💬 Reply variant primes a
+      // force_reply prompt — actual reply goes through the normal reply path
+      // and lands in conversations/replies the way any text reply would.
+      if (data === 'fb:up' || data === 'fb:down' || data === 'fb:reply') {
+        const { data: sub } = await supa
+          .from('subscribers')
+          .select('id')
+          .eq('telegram_chat_id', chatId)
+          .maybeSingle();
+        if (!sub) {
+          await tgAnswerCallbackQuery(token, cqId);
+          return json({ ok: true });
+        }
+        const tgMsgId = cq.message?.message_id ?? null;
+        let messageId: string | null = null;
+        if (tgMsgId) {
+          const { data: outRow } = await supa
+            .from('outbound_queue')
+            .select('message_id')
+            .eq('subscriber_id', sub.id)
+            .eq('telegram_message_id', tgMsgId)
+            .maybeSingle();
+          messageId = outRow?.message_id ?? null;
+        }
+        if (messageId) {
+          const sentiment =
+            data === 'fb:up' ? 'up' : data === 'fb:down' ? 'down' : 'reply';
+          await supa.from('alert_feedback').upsert(
+            { message_id: messageId, subscriber_id: sub.id, sentiment },
+            { onConflict: 'message_id,subscriber_id' },
+          );
+        }
+        if (data === 'fb:reply') {
+          await tgAnswerCallbackQuery(token, cqId);
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              '💬 Send your reply as a normal message — it goes straight to the operator.',
+            reply_markup: { force_reply: true, selective: true },
+          });
+        } else {
+          const ack =
+            data === 'fb:up' ? 'Thanks — noted as useful.' : 'Thanks — noted.';
+          await tgAnswerCallbackQuery(token, cqId, ack);
+        }
+        return json({ ok: true });
+      }
+
+      // ── onb:* — onboarding follow-up actions (Phase #37) ───────────────
+      if (data === 'onb:add_watches' || data === 'onb:location_help' || data === 'onb:done') {
+        const { data: sub } = await supa
+          .from('subscribers')
+          .select('id, alert_preferences')
+          .eq('telegram_chat_id', chatId)
+          .maybeSingle();
+        if (!sub) {
+          await tgAnswerCallbackQuery(token, cqId);
+          return json({ ok: true });
+        }
+        if (data === 'onb:add_watches') {
+          const prefs = (sub.alert_preferences ?? {}) as Record<string, unknown>;
+          await supa
+            .from('subscribers')
+            .update({
+              alert_preferences: { ...prefs, watches: true },
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', sub.id);
+          await tgAnswerCallbackQuery(token, cqId, 'Watches enabled.');
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              '✅ Watches enabled. You will now get heads-up notifications ' +
+              "(severe thunderstorm, tornado, etc.) before any warning is " +
+              'issued for your area. Tap ⚙️ Alerts to fine-tune anytime.',
+          });
+        } else if (data === 'onb:location_help') {
+          await tgAnswerCallbackQuery(token, cqId);
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              "📍 Two ways to tell me where you are:\n\n" +
+              '• Tap 📡 Share live location below — Telegram drops your real pin.\n' +
+              '• Tap 📍 Location → ✏️ Update temporary address — for when you\'re traveling.\n\n' +
+              'You can also use /where 123 Main St, Memphis TN — and add ' +
+              '"for 24h" or "for 3 days" to auto-revert to your home address.',
+          });
+        } else {
+          await tgAnswerCallbackQuery(token, cqId, "You're all set.");
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text: "👍 You're set. I'll only message you when something actually matters.",
+          });
+        }
+        return json({ ok: true });
+      }
+
+      // ── loc:* — Location submenu (Phase #34) ───────────────────────────
+      if (data === 'loc:set' || data === 'loc:home') {
+        const { data: sub } = await supa
+          .from('subscribers')
+          .select('id')
+          .eq('telegram_chat_id', chatId)
+          .maybeSingle();
+        if (!sub) {
+          await tgAnswerCallbackQuery(token, cqId, 'Not signed up yet.');
+          return json({ ok: true });
+        }
+        if (data === 'loc:set') {
+          await setAwaiting(supa, sub.id, 'address');
+          await tgAnswerCallbackQuery(token, cqId);
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              '✏️ Reply with your current address, e.g.\n' +
+              '"123 Main St, Memphis TN 38103"\n\n' +
+              "I'll move your map pin there until you tap 🏠 Back to home.",
+            reply_markup: { force_reply: true, selective: true },
+          });
+        } else {
+          await processHomeInput(supa, token, chatId);
+          await tgAnswerCallbackQuery(token, cqId);
+        }
         return json({ ok: true });
       }
 
@@ -428,16 +962,62 @@ Deno.serve(async (req) => {
       await tgSendMessage(token, {
         chat_id: chatId,
         text:
-          'You are signed up for Mid-South WX alerts.\n\n' +
-          '• Send `/prefs` to choose warnings vs watches, advisories, and quiet hours.\n' +
-          '• If you are not home during severe weather, send `/where <address>` so we know where to send help.\n' +
-          '• Send `/home` to clear your current-location override.\n' +
-          '• Reply STOP or send /unsubscribe to opt out.',
+          'You are signed up for Mid-South WX alerts. 🌩\n\n' +
+          'The buttons under the message box are your menu:\n' +
+          '🌩 Status · 📍 Location · ⚙️ Alerts · 💬 Help · 📡 Share live location',
+        reply_markup: subscriberReplyKeyboard(),
+      });
+      // Onboarding follow-up — gives the operator a guided opt-in to watches
+      // and a nudge to share their live location. Each button maps to a
+      // `onb:*` callback handled below.
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text:
+          '⚡ Quick setup — pick the ones that fit you:\n\n' +
+          'By default you only get the most urgent alerts (warnings). If you ' +
+          'also want a heads-up (watches), tap below. You can change this ' +
+          'anytime under ⚙️ Alerts.',
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '⚙️ Also send me watches', callback_data: 'onb:add_watches' }],
+            [{ text: '📍 How do I update my location?', callback_data: 'onb:location_help' }],
+            [{ text: '✅ I am all set', callback_data: 'onb:done' }],
+          ],
+        },
       });
       return json({ ok: true });
     }
 
-    // /where <address> — update current address (when subscriber isn't home)
+    if (isCommandsMenuText(text) || isHelpMenuText(text)) {
+      await sendCommandsHelp(token, chatId);
+      return json({ ok: true });
+    }
+
+    if (isPrefsMenuText(text)) {
+      await showPrefsForChat(supa, token, chatId);
+      return json({ ok: true });
+    }
+
+    if (isStatusMenuText(text)) {
+      await sendStatusForChat(supa, token, chatId);
+      return json({ ok: true });
+    }
+
+    if (isLocationMenuText(text)) {
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text:
+          'Location options — tap one:\n\n' +
+          '✏️ Update temporary address — for when you are traveling.\n' +
+          '🏠 Back to home address — restores your map pin to home.\n' +
+          'Or tap "📡 Share live location" on the keyboard to attach a Telegram pin.',
+        reply_markup: locationInlineKeyboard(),
+      });
+      return json({ ok: true });
+    }
+
+    // /where <address> — geocode + move the map pin. Same helper that the
+    // guided "📍 Location → ✏️ Update temporary address" flow calls.
     if (text?.startsWith('/where') || text?.startsWith('/here')) {
       const address = text.replace(/^\/(where|here)\s*/, '').trim();
       if (!address) {
@@ -445,31 +1025,11 @@ Deno.serve(async (req) => {
           chat_id: chatId,
           text:
             'Send `/where` followed by an address, e.g. `/where 123 Main St, Memphis TN`. ' +
-            'This tells the operator where you are if you signal distress.',
+            'Or tap 📍 Location for a guided flow.',
         });
         return json({ ok: true });
       }
-      const { error: updErr } = await supa
-        .from('subscribers')
-        .update({
-          current_address: address,
-          current_address_updated_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('telegram_chat_id', chatId);
-      if (updErr) {
-        await tgSendMessage(token, {
-          chat_id: chatId,
-          text: 'Could not update your location. Are you signed up? Try /start.',
-        });
-        return json({ ok: true });
-      }
-      await tgSendMessage(token, {
-        chat_id: chatId,
-        text:
-          `Got it. We have you at:\n${address}\n\n` +
-          'Send /home when you are back at your home address.',
-      });
+      await processWhereInput(supa, token, chatId, address);
       return json({ ok: true });
     }
 
@@ -480,18 +1040,7 @@ Deno.serve(async (req) => {
     }
 
     if (text === '/home') {
-      await supa
-        .from('subscribers')
-        .update({
-          current_address: null,
-          current_address_updated_at: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('telegram_chat_id', chatId);
-      await tgSendMessage(token, {
-        chat_id: chatId,
-        text: 'Cleared. We will assume you are at your home address.',
-      });
+      await processHomeInput(supa, token, chatId);
       return json({ ok: true });
     }
 
@@ -502,24 +1051,89 @@ Deno.serve(async (req) => {
         .eq('telegram_chat_id', chatId);
       await tgSendMessage(token, {
         chat_id: chatId,
-        text: 'You are unsubscribed from Mid-South WX. Send /start again to re-enable (a new sign-up link is required).',
+        text: 'You are unsubscribed from Mid-South WX. Send /resume to turn alerts back on.',
       });
       return json({ ok: true });
     }
 
-    // Location share — update the subscriber's geometry
-    if (msg.location) {
-      const { latitude, longitude } = msg.location;
+    // /resume — re-activate a previously-unsubscribed subscriber. No new
+    // sign-up link required. Only flips status if the row already exists in
+    // 'unsubscribed' or 'paused'; pending subscribers still need /start.
+    if (text === '/resume' || /^resume$/i.test(text ?? '') || /^start$/i.test(text ?? '')) {
+      const { data: existing } = await supa
+        .from('subscribers')
+        .select('id, status')
+        .eq('telegram_chat_id', chatId)
+        .maybeSingle();
+      if (!existing) {
+        await tgSendMessage(token, {
+          chat_id: chatId,
+          text: 'I do not have you on file. Sign up via the website link first.',
+        });
+        return json({ ok: true });
+      }
+      if (existing.status === 'active') {
+        await tgSendMessage(token, {
+          chat_id: chatId,
+          text: 'You are already active — alerts are flowing.',
+        });
+        return json({ ok: true });
+      }
+      if (existing.status !== 'unsubscribed' && existing.status !== 'paused') {
+        await tgSendMessage(token, {
+          chat_id: chatId,
+          text: 'Use the website sign-up link to finish setup.',
+        });
+        return json({ ok: true });
+      }
       await supa
         .from('subscribers')
-        .update({
-          location: `SRID=4326;POINT(${longitude} ${latitude})`,
-          updated_at: new Date().toISOString(),
-        })
+        .update({ status: 'active', updated_at: new Date().toISOString() })
+        .eq('id', existing.id);
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text: '✅ Alerts re-enabled. Tap ⚙️ Alerts to review what types you receive.',
+        reply_markup: subscriberReplyKeyboard(),
+      });
+      return json({ ok: true });
+    }
+
+    // Location share — update the subscriber's geometry. Two flavors:
+    //   - Static: a one-shot pin (no `live_period`). Just save the point.
+    //   - Live: `live_period` set → save the point AND set an expiry so the
+    //     existing /where TTL cron sweeps the subscriber back to home when
+    //     Telegram stops emitting edits. Subsequent edited_message updates
+    //     (handled at the top of this serve()) refresh the same row in place.
+    if (msg.location) {
+      const { latitude, longitude, live_period } = msg.location as {
+        latitude: number; longitude: number; live_period?: number;
+      };
+      const isLive = typeof live_period === 'number' && live_period > 0;
+      const update: Record<string, unknown> = {
+        location: `SRID=4326;POINT(${longitude} ${latitude})`,
+        updated_at: new Date().toISOString(),
+      };
+      if (isLive) {
+        // msg.date is unix seconds (Telegram's standard). Add live_period
+        // and convert to ISO timestamp for the TTL column.
+        const expiresMs = ((msg.date as number) + live_period!) * 1000;
+        update.current_location_expires_at = new Date(expiresMs).toISOString();
+        update.current_location_source = 'telegram_live';
+      } else {
+        // A static pin replaces any prior source tag so a later live share
+        // doesn't see this row as already-tracked.
+        update.current_location_source = null;
+      }
+      await supa
+        .from('subscribers')
+        .update(update)
         .eq('telegram_chat_id', chatId);
       await tgSendMessage(token, {
         chat_id: chatId,
-        text: 'Location updated. You will now receive alerts based on your precise position.',
+        text: isLive
+          ? `📡 Live location active for ${Math.round(live_period! / 60)} min. ` +
+            'Alerts will follow you while Telegram is sharing; we auto-revert to home when the share ends.'
+          : 'Location updated. You will now receive alerts based on your precise position.',
       });
       return json({ ok: true });
     }
@@ -540,6 +1154,19 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
+    // State-aware: if the bot was awaiting a specific kind of input from
+    // this subscriber (e.g. "reply with your current address" after they
+    // tapped the Location → Update temporary address button), consume the
+    // text as that input instead of treating it as a chat reply.
+    if (text) {
+      const state = await getAwaiting(supa, sub.id);
+      if (state?.awaiting === 'address') {
+        const ok = await processWhereInput(supa, token, chatId, text);
+        if (ok) await clearAwaiting(supa, sub.id);
+        return json({ ok: true });
+      }
+    }
+
     const { data: conv } = await supa
       .from('conversations')
       .upsert(
@@ -554,12 +1181,22 @@ Deno.serve(async (req) => {
 
     if (!conv) return json({ ok: true });
 
-    const parent_message_id = msg.reply_to_message
-      ? // We do not have a clean way to map reply_to_message → our message UUID
-        // without storing telegram_message_id on outbound_queue. Skip for v1
-        // and rely on recency-based threading in the dashboard.
-        null
-      : null;
+    // Threading: if the user long-pressed → Reply on a specific outbound
+    // message, Telegram passes its telegram_message_id back to us. The send
+    // worker stamps every outbound_queue row with its telegram_message_id so
+    // we can resolve back to messages.id here. Scope the lookup to THIS
+    // subscriber's deliveries so we never thread across users.
+    let parent_message_id: string | null = null;
+    const rtmId = msg.reply_to_message?.message_id;
+    if (rtmId) {
+      const { data: outRow } = await supa
+        .from('outbound_queue')
+        .select('message_id')
+        .eq('subscriber_id', sub.id)
+        .eq('telegram_message_id', rtmId)
+        .maybeSingle();
+      parent_message_id = outRow?.message_id ?? null;
+    }
 
     await supa.from('replies').insert({
       conversation_id: conv.id,

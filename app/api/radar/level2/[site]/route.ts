@@ -93,8 +93,13 @@ export async function GET(
 
     const data = (await upstream.json()) as RendererResponse;
     return NextResponse.json(data, {
-      // Browser cache: 60s. Cache key is the URL (which includes ?product=).
-      headers: { 'Cache-Control': 'private, max-age=60' },
+      // Edge: 5 min, browser: 2 min, SWR 10 min. A render costs 30–90 s of CPU
+      // on Fly so the edge holds a copy long enough that repeat hits during
+      // the lifetime of a scan don't re-render.
+      headers: {
+        'Cache-Control': 's-maxage=300, max-age=120, stale-while-revalidate=600',
+        'CDN-Cache-Control': 'public, s-maxage=300',
+      },
     });
   } catch (e: any) {
     const msg = e?.message || String(e);

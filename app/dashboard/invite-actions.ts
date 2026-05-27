@@ -59,7 +59,7 @@ export async function inviteOperatorAction(
   }
 
   const admin = supabaseAdmin();
-  const { error } = await admin.auth.admin.inviteUserByEmail(email, {
+  const { data, error } = await admin.auth.admin.inviteUserByEmail(email, {
     redirectTo,
   });
 
@@ -76,6 +76,20 @@ export async function inviteOperatorAction(
     }
     console.error('[inviteOperator]', error);
     return { ok: false, error: error.message || 'Could not send invite. Check Supabase Auth settings.' };
+  }
+
+  if (data.user?.id) {
+    const { error: opErr } = await admin.from('operators').upsert(
+      { user_id: data.user.id, display_name: email },
+      { onConflict: 'user_id' },
+    );
+    if (opErr) {
+      console.error('[inviteOperator] operator upsert', opErr);
+      return {
+        ok: false,
+        error: 'Invite was sent, but the operator row could not be created. Check migrations and retry.',
+      };
+    }
   }
 
   return { ok: true, error: null };

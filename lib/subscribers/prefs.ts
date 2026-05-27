@@ -1,8 +1,20 @@
+// F6: hazard kinds a subscriber can opt out of (e.g. "don't send me flood
+// warnings"). Must match the SQL `nws_event_hazard()` heuristics in
+// supabase/migrations/20260601000002_subscriber_hazard_prefs.sql AND
+// classifyNwsEvent() in lib/nws/radar.ts — these three places are the
+// canonical hazard vocabulary and have to move together.
+export const HAZARD_KINDS = ['tornado', 'severe', 'flood', 'winter', 'heat', 'wind'] as const;
+export type HazardKind = typeof HAZARD_KINDS[number];
+
 export type AlertPreferences = {
   warnings: boolean;
   watches: boolean;
   advisories: boolean;
   statements: boolean;
+  skip_hazards: HazardKind[];
+  // F-aggregation: when false, the send worker skips outbreak aggregation
+  // for this subscriber. Subscribers toggle it via /prefs in Telegram.
+  aggregate_warnings: boolean;
 };
 
 export type QuietHours = {
@@ -12,12 +24,22 @@ export type QuietHours = {
   timezone: string;
 };
 
+// Conservative defaults: only Warnings (highest urgency) ship by default so
+// a brand-new subscriber doesn't get blasted with watches/advisories before
+// they understand the bot. The Telegram onboarding flow nudges them to opt
+// into watches if they want a heads-up before warnings arrive.
 export const DEFAULT_ALERT_PREFERENCES: AlertPreferences = {
   warnings: true,
-  watches: true,
-  advisories: true,
+  watches: false,
+  advisories: false,
   statements: false,
+  skip_hazards: [],
+  aggregate_warnings: true,
 };
+
+export function isHazardKind(x: unknown): x is HazardKind {
+  return typeof x === 'string' && (HAZARD_KINDS as readonly string[]).includes(x);
+}
 
 export const DEFAULT_QUIET_HOURS: QuietHours = {
   enabled: false,
@@ -28,11 +50,15 @@ export const DEFAULT_QUIET_HOURS: QuietHours = {
 
 export function parseAlertPreferences(raw: unknown): AlertPreferences {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const rawHazards = Array.isArray(o.skip_hazards) ? o.skip_hazards : [];
+  const skip_hazards = rawHazards.filter(isHazardKind);
   return {
     warnings: o.warnings !== false,
     watches: o.watches !== false,
     advisories: o.advisories !== false,
     statements: o.statements === true,
+    skip_hazards,
+    aggregate_warnings: o.aggregate_warnings !== false,
   };
 }
 
@@ -48,12 +74,27 @@ export function parseQuietHours(raw: unknown): QuietHours | null {
   };
 }
 
-export function nwsEventCategory(event: string | null | undefined): keyof AlertPreferences | 'other' {
+export function nwsEventCategory(event: string | null | undefined): 'warnings' | 'watches' | 'advisories' | 'statements' | 'other' {
   const e = (event ?? '').toLowerCase();
   if (e.includes('warning')) return 'warnings';
   if (e.includes('watch')) return 'watches';
   if (e.includes('advisory')) return 'advisories';
   if (e.includes('statement')) return 'statements';
+  return 'other';
+}
+
+// F6: SQL/TS-parity classifier. Must match `public.nws_event_hazard` in
+// supabase/migrations/20260601000002_subscriber_hazard_prefs.sql exactly —
+// the SQL gate is authoritative at fan-out, this is what we use locally
+// for previews and deliveryDecision().
+export function nwsEventHazard(event: string | null | undefined): HazardKind | 'other' {
+  const e = (event ?? '').toLowerCase();
+  if (e.includes('tornado')) return 'tornado';
+  if (e.includes('severe thunderstorm')) return 'severe';
+  if (e.includes('flood')) return 'flood';
+  if (e.includes('winter') || e.includes('ice') || e.includes('blizzard') || e.includes('freeze')) return 'winter';
+  if (e.includes('heat')) return 'heat';
+  if (e.includes('wind') || e.includes('gale')) return 'wind';
   return 'other';
 }
 
@@ -142,6 +183,10 @@ export function deliveryDecision(input: {
   if (input.messageSource === 'nws' && input.nwsEvent) {
     const cat = nwsEventCategory(input.nwsEvent);
     if (cat !== 'other' && !prefs[cat]) return 'skip';
+    // F6: hazard-level skip. Independent of category — a tornado WARNING can
+    // be skipped if the subscriber opted out of all tornado alerts.
+    const hazard = nwsEventHazard(input.nwsEvent);
+    if (hazard !== 'other' && prefs.skip_hazards.includes(hazard)) return 'skip';
   }
 
   if (qh?.enabled && !isWarningClass(input.nwsEvent)) {
@@ -153,6 +198,15 @@ export function deliveryDecision(input: {
   return 'send';
 }
 
+const HAZARD_LABEL: Record<HazardKind, string> = {
+  tornado: 'tornado',
+  severe: 'severe thunderstorm',
+  flood: 'flood',
+  winter: 'winter weather',
+  heat: 'heat',
+  wind: 'wind',
+};
+
 export function formatPrefsSummary(prefs: AlertPreferences, qh: QuietHours | null): string {
   const lines = [
     `Warnings: ${prefs.warnings ? 'ON' : 'off'}`,
@@ -160,10 +214,21 @@ export function formatPrefsSummary(prefs: AlertPreferences, qh: QuietHours | nul
     `Advisories: ${prefs.advisories ? 'ON' : 'off'}`,
     `Statements: ${prefs.statements ? 'ON' : 'off'}`,
   ];
+  if (prefs.skip_hazards.length === 0) {
+    lines.push('Hazards: all kinds');
+  } else {
+    const skipped = prefs.skip_hazards.map((h) => HAZARD_LABEL[h]).join(', ');
+    lines.push(`Hazards: skipping ${skipped}`);
+  }
   if (qh?.enabled) {
     lines.push(`Quiet hours: ${qh.start}–${qh.end} ${qh.timezone} (warnings still come through)`);
   } else {
     lines.push('Quiet hours: off');
   }
+  lines.push(
+    prefs.aggregate_warnings
+      ? 'Outbreak grouping: ON (3+ simultaneous warnings arrive as one message)'
+      : 'Outbreak grouping: off (each warning arrives separately)',
+  );
   return lines.join('\n');
 }

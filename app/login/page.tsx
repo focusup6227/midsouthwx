@@ -1,7 +1,9 @@
 'use client';
 
 import { Suspense, useState } from 'react';
+import Image from 'next/image';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { safeRedirectPath } from '@/lib/auth/redirect';
 import { supabaseBrowser } from '@/lib/supabase/client';
 
 type Mode = 'password' | 'magiclink';
@@ -9,7 +11,7 @@ type Mode = 'password' | 'magiclink';
 function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
-  const next = search.get('next') || '/dashboard';
+  const next = safeRedirectPath(search.get('next'));
 
   const [mode, setMode] = useState<Mode>('password');
   const [email, setEmail] = useState('');
@@ -38,7 +40,10 @@ function LoginForm() {
 
     const { error } = await supa.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}` },
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+        shouldCreateUser: false,
+      },
     });
     setLoading(false);
     if (error) setError(error.message);
@@ -61,7 +66,10 @@ function LoginForm() {
   return (
     <main className="min-h-screen flex items-center justify-center px-6">
       <form onSubmit={submit} className="card p-8 max-w-md w-full space-y-4">
-        <h1 className="text-2xl font-semibold">Operator sign-in</h1>
+        <div className="flex flex-col items-center gap-2">
+          <Image src="/icons/logo.png" alt="MidSouthWX logo" width={96} height={96} priority className="rounded-full" />
+          <h1 className="text-2xl font-semibold">Operator sign-in</h1>
+        </div>
 
         <div className="flex gap-2 text-sm">
           <button

@@ -4,15 +4,57 @@ const TG_BASE = 'https://api.telegram.org';
 
 export type QuickReply = { label: string; data: string };
 
+export type ReplyKeyboardMarkup = {
+  keyboard: { text: string; request_location?: boolean }[][];
+  resize_keyboard?: boolean;
+  is_persistent?: boolean;
+  one_time_keyboard?: boolean;
+};
+
+export type InlineKeyboardMarkup = {
+  inline_keyboard: { text: string; callback_data: string }[][];
+};
+
+export type ForceReplyMarkup = {
+  force_reply: true;
+  selective?: boolean;
+  input_field_placeholder?: string;
+};
+
 export type SendMessageInput = {
   chat_id: number;
   text: string;
   parse_mode?: 'MarkdownV2' | 'HTML';
-  reply_markup?: {
-    inline_keyboard: { text: string; callback_data: string }[][];
-  };
+  reply_markup?: InlineKeyboardMarkup | ReplyKeyboardMarkup | ForceReplyMarkup;
   disable_web_page_preview?: boolean;
 };
+
+export type BotCommand = { command: string; description: string };
+
+export async function tgSetMyCommands(token: string, commands: BotCommand[]) {
+  const res = await fetch(`${TG_BASE}/bot${token}/setMyCommands`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.ok) {
+    throw new Error(`setMyCommands failed: ${JSON.stringify(body)}`);
+  }
+}
+
+/** Shows the "/" command menu on the button beside the message field. */
+export async function tgSetChatMenuButtonCommands(token: string) {
+  const res = await fetch(`${TG_BASE}/bot${token}/setChatMenuButton`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ menu_button: { type: 'commands' } }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.ok) {
+    throw new Error(`setChatMenuButton failed: ${JSON.stringify(body)}`);
+  }
+}
 
 export class TelegramRateLimit extends Error {
   retryAfterSec: number;
@@ -45,11 +87,16 @@ export async function tgAnswerCallbackQuery(
   token: string,
   callbackQueryId: string,
   text?: string,
+  opts: { show_alert?: boolean } = {},
 ) {
   await fetch(`${TG_BASE}/bot${token}/answerCallbackQuery`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text,
+      show_alert: opts.show_alert,
+    }),
   });
 }
 

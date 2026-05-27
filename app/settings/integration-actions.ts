@@ -2,7 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { supabaseAdmin, supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin } from '@/lib/supabase/server';
+import { requireOperator } from '@/lib/auth/require-operator';
 import { buildAlertQueuedPayload, hmacSha256Hex } from '@/lib/integrations/payload';
 
 const uuid = z.string().uuid();
@@ -16,19 +17,6 @@ function parseEndpointForm(formData: FormData) {
     severity_threshold: String(formData.get('severity_threshold') ?? '').trim(),
     enabled: enabledRaw === 'on' || enabledRaw === 'true' || enabledRaw === '1',
   };
-}
-
-async function requireOperator() {
-  const supa = supabaseServer();
-  const { data: userRes } = await supa.auth.getUser();
-  if (!userRes.user) throw new Error('not authenticated');
-  const { data: op } = await supa
-    .from('operators')
-    .select('user_id')
-    .eq('user_id', userRes.user.id)
-    .maybeSingle();
-  if (!op) throw new Error('operators only');
-  return supa;
 }
 
 export async function createIntegrationEndpoint(formData: FormData): Promise<void> {

@@ -6,7 +6,8 @@ import { supabasePublishableKey } from '@/lib/supabase/env';
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
 // Refreshes the operator's session cookie on every request so it doesn't go
-// stale, and gates everything under /(dash) on being logged in.
+// stale, and gates private routes on being logged in. Operator authorization is
+// enforced by page/action RLS checks to avoid a database round trip here.
 export async function middleware(req: NextRequest) {
   let res = NextResponse.next({ request: req });
 
@@ -35,6 +36,7 @@ export async function middleware(req: NextRequest) {
     path.startsWith('/signup') ||
     path.startsWith('/api/auth') ||
     path.startsWith('/auth/') ||
+    path.startsWith('/alert/') ||
     path === '/' ||
     path.startsWith('/_next') ||
     path.startsWith('/favicon');
@@ -50,5 +52,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|sw.js).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icons/|maps/|sw.js).*)'],
 };

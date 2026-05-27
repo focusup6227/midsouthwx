@@ -2,7 +2,9 @@
 // Requires secret NWS_USER_AGENT (contact string per NWS policy).
 // Self-schedules a follow-up poll ~30s later when invoked by cron (2×/min effective rate).
 
-import { serviceClient, json } from './supabase.ts';
+import { serviceClient, json, withHealthLog } from './supabase.ts';
+import { fetchSpcMesoscaleDiscussions, nwsIdFromAlertFeature } from './spc-md.ts';
+import { summarizePendingWarnings } from './summarize.ts';
 
 declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void };
 
@@ -50,7 +52,7 @@ function scheduleFollowUpPoll(req: Request) {
   }
 }
 
-Deno.serve(async (req) => {
+Deno.serve(withHealthLog('nws-poll', async (req) => {
   if (req.method !== 'POST' && req.method !== 'GET') return json({ ok: false }, 405);
 
   const cronJwt = Deno.env.get('CRON_INVOKER_JWT');
@@ -68,14 +70,20 @@ Deno.serve(async (req) => {
   const features: Record<string, unknown>[] = [];
   let url: string | null = 'https://api.weather.gov/alerts/active';
   let pages = 0;
+  // Sanity cap: prevents an infinite loop if NWS pagination ever loops, but
+  // high enough that even a major nationwide outbreak (10K+ active alerts)
+  // doesn't drop tail pages. The earlier 30-page cap silently lost alerts
+  // during multi-state severe-weather days.
+  const HARD_PAGE_CAP = 200;
 
   try {
-    while (url && pages < 30) {
+    while (url && pages < HARD_PAGE_CAP) {
       const res = await fetch(url, {
         headers: {
           'User-Agent': ua,
           Accept: 'application/geo+json, application/json',
         },
+        signal: AbortSignal.timeout(15_000),
       });
       if (!res.ok) {
         const t = await res.text();
@@ -86,15 +94,24 @@ Deno.serve(async (req) => {
       url = parseNextUrl(res.headers.get('Link'));
       pages++;
     }
+    if (url) {
+      console.warn(`nws-poll hit HARD_PAGE_CAP (${HARD_PAGE_CAP}); more pages exist`);
+    }
   } catch (e) {
     console.error('nws-poll fetch', e);
     return json({ ok: false, error: String(e) }, 500);
   }
 
+  const spcFeatures = await fetchSpcMesoscaleDiscussions();
+  features.push(...spcFeatures);
+
+  const activeNwsIds: string[] = [];
   let upserted = 0;
   let supersededRefs = 0;
 
   for (const feature of features) {
+    const nid = nwsIdFromAlertFeature(feature);
+    if (nid) activeNwsIds.push(nid);
     const { error: upErr } = await supa.rpc('nws_upsert_geojson_feature', {
       p_feature: feature as unknown as Record<string, unknown>,
     });
@@ -105,9 +122,30 @@ Deno.serve(async (req) => {
     upserted++;
 
     const props = feature.properties as Record<string, unknown> | undefined;
-    const refsRaw = typeof props?.references === 'string' ? props.references.trim() : '';
-    if (refsRaw) {
-      const urls = refsRaw.split(/\s+/).filter(Boolean);
+    // api.weather.gov returns `references` as an array of objects
+    // ({ '@id', identifier, sent, sender }); some upstream sources
+    // (e.g. SPC MD scraping in spc-md.ts) still emit it as a space-
+    // separated string. Accept both shapes — without this the supersede
+    // path silently no-ops, leaving every continuation/update polygon
+    // stacked on top of its predecessors on /radar.
+    const refsField = props?.references;
+    let urls: string[] = [];
+    if (Array.isArray(refsField)) {
+      urls = refsField
+        .map((r) => {
+          if (typeof r === 'string') return r;
+          if (r && typeof r === 'object') {
+            const o = r as { '@id'?: unknown; identifier?: unknown };
+            if (typeof o['@id'] === 'string') return o['@id'];
+            if (typeof o.identifier === 'string') return o.identifier;
+          }
+          return '';
+        })
+        .filter((u) => u.length > 0);
+    } else if (typeof refsField === 'string' && refsField.trim()) {
+      urls = refsField.trim().split(/\s+/).filter(Boolean);
+    }
+    if (urls.length) {
       const { error: refErr } = await supa.rpc('nws_mark_references_superseded', {
         p_reference_urls: urls,
       });
@@ -116,14 +154,40 @@ Deno.serve(async (req) => {
     }
   }
 
+  let expiredStale = 0;
+  const { data: syncCount, error: syncErr } = await supa.rpc('nws_sync_active_alerts', {
+    p_active_nws_ids: activeNwsIds,
+  });
+  if (syncErr) console.error('nws_sync_active_alerts', syncErr);
+  else if (typeof syncCount === 'number') expiredStale = syncCount;
+
+  // F2: kick off AI summarization for any unsummarized warning rows. Runs
+  // after the response is sent (waitUntil) so a slow DeepSeek call never
+  // delays the next poll cycle. Failures are swallowed inside the helper —
+  // the next poll picks up whatever stayed null.
+  try {
+    EdgeRuntime.waitUntil(
+      summarizePendingWarnings(supa).catch((e) =>
+        console.error('summarizePendingWarnings', e),
+      ),
+    );
+  } catch {
+    // Local dev may not expose EdgeRuntime.waitUntil — fire-and-forget.
+    summarizePendingWarnings(supa).catch((e) =>
+      console.error('summarizePendingWarnings', e),
+    );
+  }
+
   scheduleFollowUpPoll(req);
 
   return json({
     ok: true,
     pages,
     features: features.length,
+    spc_md: spcFeatures.length,
     upsert_attempts: upserted,
     superseded_ref_urls: supersededRefs,
+    expired_stale: expiredStale,
     followup_scheduled: req.headers.get('X-NWS-Poll-Followup') !== '1',
   });
-});
+}));

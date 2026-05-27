@@ -1,6 +1,52 @@
 import type { SupabaseClient } from 'jsr:@supabase/supabase-js@2';
 import { tgSendMessage } from './telegram.ts';
 
+/** Fire an urgent push to the operator's Telegram for tornado warnings and
+ *  emergencies. Decoupled from the regular dispatch path so the operator is
+ *  alerted even when no auto-rule matches (status='skipped') and even when an
+ *  auto-rule fires (status='dispatched'). Idempotency: the caller already
+ *  claimed the right to notify via an atomic UPDATE on operator_alerted_at,
+ *  so this function trusts that and just sends. */
+export async function notifyOperatorTornado(
+  supa: SupabaseClient,
+  token: string,
+  alert: {
+    id: string;
+    nws_id?: string | null;
+    event: string;
+    headline: string | null;
+    area_desc: string | null;
+    severity: string | null;
+    expires_at: string | null;
+  },
+): Promise<void> {
+  const chatId = await operatorChatId(supa);
+  if (!chatId) return;
+
+  const isEmergency = /tornado emergency/i.test(alert.event);
+  const sigil = isEmergency ? '🚨🌪️ TORNADO EMERGENCY' : '🌪️ TORNADO WARNING';
+  const expires = alert.expires_at
+    ? new Date(alert.expires_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : '—';
+  const body = [
+    sigil,
+    alert.headline ?? alert.event,
+    `Area: ${alert.area_desc ?? '—'}`,
+    `Until: ${expires}`,
+    `Severity: ${alert.severity ?? '—'}`,
+  ].join('\n');
+
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text: body,
+    reply_markup: {
+      inline_keyboard: [[
+        { text: 'Open on /nws', callback_data: `op:nws:open:${alert.id}` },
+      ]],
+    },
+  });
+}
+
 async function operatorChatId(supa: SupabaseClient): Promise<number> {
   const fromEnv = Number(Deno.env.get('OPERATOR_TELEGRAM_CHAT_ID') ?? 0);
   if (fromEnv) return fromEnv;

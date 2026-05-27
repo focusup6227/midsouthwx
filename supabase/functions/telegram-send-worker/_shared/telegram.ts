@@ -23,10 +23,82 @@ export class TelegramRateLimit extends Error {
 }
 
 export async function tgSendMessage(token: string, input: SendMessageInput) {
-  const res = await fetch(`${TG_BASE}/bot${token}/sendMessage`, {
+  return tgPost(token, 'sendMessage', input);
+}
+
+export type SendMediaInput = {
+  chat_id: number;
+  caption?: string;
+  parse_mode?: 'MarkdownV2' | 'HTML';
+  reply_markup?: SendMessageInput['reply_markup'];
+  url: string;
+  /** animation = GIFs / soundless MP4; photo = jpg/png/webp; video = mp4 */
+  kind: 'animation' | 'photo' | 'video' | 'document';
+};
+
+/** Send a media message (GIF/photo/video/document). We fetch the bytes from
+ *  storage and multipart-upload to Telegram instead of letting Telegram fetch
+ *  the URL server-side — the URL path caps animations/video/document at 20 MB
+ *  (5 MB for photos) and also surfaces opaque "wrong type of the web page
+ *  content" errors when their fetcher times out. Multipart raises the cap to
+ *  50 MB at the cost of one extra hop through the worker. */
+export async function tgSendMedia(token: string, input: SendMediaInput) {
+  const method = {
+    animation: 'sendAnimation',
+    photo: 'sendPhoto',
+    video: 'sendVideo',
+    document: 'sendDocument',
+  }[input.kind];
+  const fileField = {
+    animation: 'animation',
+    photo: 'photo',
+    video: 'video',
+    document: 'document',
+  }[input.kind];
+
+  // 30s cap on the storage fetch — a hung storage round-trip would otherwise
+  // pin a worker slot indefinitely and starve the rest of the batch. 50 MB at
+  // even a few Mbps fits comfortably inside this window.
+  const mediaRes = await fetch(input.url, { signal: AbortSignal.timeout(30_000) });
+  if (!mediaRes.ok) {
+    throw new Error(`failed to fetch media URL ${input.url}: ${mediaRes.status} ${mediaRes.statusText}`);
+  }
+  const mediaBlob = await mediaRes.blob();
+  // Telegram uses the filename to infer extension. Strip query string and any
+  // leading path so the bot API sees a clean name. Fall back to a sensible
+  // default per-kind so untyped URLs still upload.
+  const fallbackExt = { animation: 'gif', photo: 'jpg', video: 'mp4', document: 'bin' }[input.kind];
+  const filename = input.url.split('?')[0].split('/').pop() || `media.${fallbackExt}`;
+
+  const form = new FormData();
+  form.set('chat_id', String(input.chat_id));
+  form.set(fileField, mediaBlob, filename);
+  if (input.caption) form.set('caption', input.caption);
+  if (input.parse_mode) form.set('parse_mode', input.parse_mode);
+  if (input.reply_markup) form.set('reply_markup', JSON.stringify(input.reply_markup));
+
+  const res = await fetch(`${TG_BASE}/bot${token}/${method}`, {
+    method: 'POST',
+    body: form,
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (res.status === 429) {
+      const retry = body?.parameters?.retry_after ?? 1;
+      throw new TelegramRateLimit(retry);
+    }
+    throw new Error(
+      `Telegram ${res.status} ${res.statusText}: ${JSON.stringify(body)}`,
+    );
+  }
+  return body.result as { message_id: number; chat: { id: number } };
+}
+
+async function tgPost(token: string, method: string, payload: unknown) {
+  const res = await fetch(`${TG_BASE}/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {

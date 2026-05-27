@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(grep -q 'id=\"__TRACKED_VAR__\"' /Users/tylerdixon/Desktop/midsouthwx-main/app/radar/RadarView.tsx)",
+      "Bash(continue)",
+      "Bash(sed -i '' '/^              id=\"__TRACKED_VAR__\"$/a\\\\ *)",
+      "WebFetch(domain:api.librewxr.net)",
+      "WebFetch(domain:gibs.earthdata.nasa.gov)",
+      "Bash(curl -s \"https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/1.0.0/WMTSCapabilities.xml\")",
+      "Read(//tmp/**)",
+      "Bash(curl -s https://shaycvisygpxaogplylo.supabase.co/rest/v1/rpc/fill_default_expires_at -X POST -H 'Content-Type: application/json' -H 'apikey: __CMDSUB_OUTPUT__')",
+      "Bash(curl -s --max-time 10 \"https://opengeo.ncep.noaa.gov/geoserver/klix/ows?service=WMS&request=GetMap&version=1.3.0&layers=klix:klix_sr_bvel&styles=&format=image/png&transparent=true&width=64&height=64&crs=EPSG:3857&bbox=-10000000,3500000,-9000000,4500000\")",
+      "Bash(curl -s -o /dev/null -w 'bref %{http_code} %{content_type}\\\\n' --max-time 10 \"https://opengeo.ncep.noaa.gov/geoserver/khdc/ows?service=WMS&request=GetMap&version=1.3.0&layers=khdc:khdc_sr_bref&styles=&format=image/png&transparent=true&width=64&height=64&crs=EPSG:3857&bbox=-10000000,3500000,-9000000,4500000\")",
+      "Bash(curl -s -o /dev/null -w 'bvel %{http_code} %{content_type}\\\\n' --max-time 10 \"https://opengeo.ncep.noaa.gov/geoserver/khdc/ows?service=WMS&request=GetMap&version=1.3.0&layers=khdc:khdc_sr_bvel&styles=&format=image/png&transparent=true&width=64&height=64&crs=EPSG:3857&bbox=-10000000,3500000,-9000000,4500000\")",
+      "Bash(curl -s --max-time 10 \"https://api.weather.gov/radar/stations/KLIX\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('KLIX:', d.get\\('properties',{}\\).get\\('name'\\), '| station:', d.get\\('properties',{}\\).get\\('stationIdentifier'\\), '| performance.reportingHost:', d.get\\('properties',{}\\).get\\('rda',{}\\).get\\('properties',{}\\).get\\('reportingHost'\\)\\)\")",
+      "Bash(flyctl version *)",
+      "Bash(flyctl auth *)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('glm.py'\\).read\\(\\)\\); ast.parse\\(open\\('main.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(flyctl deploy *)",
+      "Bash(find *)",
+      "Bash(grep -r \"timestamp[^t]\\\\|timestamp$\\\\|timestamp'\" /Users/tylerdixon/Desktop/midsouthwx-main/supabase/migrations --include=\"*.sql\")",
+      "Read(//Users/tylerdixon/Desktop/midsouthwx-radar-renderer/**)",
+      "Read(//Users/tylerdixon/Desktop/**)",
+      "Bash(curl -sS -o /tmp/h.txt -w \"HTTP %{http_code}\\\\n\" --max-time 30 https://midsouthwx-radar.fly.dev/healthz)",
+      "Bash(curl -sS -o /tmp/d.txt -w \"HTTP %{http_code}\\\\n\" --max-time 30 https://midsouthwx-radar.fly.dev/docs)",
+      "Bash(curl -sS https://midsouthwx-radar.fly.dev/openapi.json)",
+      "Bash(python3 -c \"import sys,json; print\\('\\\\n'.join\\(sorted\\(json.load\\(sys.stdin\\)['paths'].keys\\(\\)\\)\\)\\)\")",
+      "Bash(flyctl logs *)",
+      "Bash(python3 -m py_compile /Users/tylerdixon/Desktop/midsouthwx-radar-renderer/couplet_detect.py)",
+      "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code} \\(%{time_total}s\\)\\\\n\" --max-time 30 \"https://shaycvisygpxaogplylo.supabase.co/rest/v1/?apikey=$\\(grep '^NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=\\\\|^NEXT_PUBLIC_SUPABASE_ANON_KEY=' /Users/tylerdixon/Desktop/midsouthwx-main/.env.local)",
+      "Bash(npx supabase *)",
+      "Bash(curl -sS -X POST -o /tmp/cd.txt -w \"HTTP %{http_code} \\(%{time_total}s\\)\\\\n\" --max-time 90 -H \"Content-Type: application/json\" -d '{}' https://shaycvisygpxaogplylo.supabase.co/functions/v1/couplet-dispatcher)",
+      "Bash(git init *)",
+      "Bash(git remote *)",
+      "Bash(git fetch *)",
+      "Bash(git reset *hhhhkjl)"
+    ]
+  }
+}

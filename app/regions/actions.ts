@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { z } from 'zod';
-import { supabaseAdmin, supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin } from '@/lib/supabase/server';
+import { requireOperator } from '@/lib/auth/require-operator';
 
 const Kind = z.enum(['county', 'zone', 'custom_polygon']);
 
@@ -35,13 +36,18 @@ const RegionInput = z
   });
 
 function readInput(formData: FormData) {
-  return RegionInput.parse({
+  const parsed = RegionInput.safeParse({
     name: String(formData.get('name') ?? ''),
     kind: String(formData.get('kind') ?? ''),
     county_fips: String(formData.get('county_fips') ?? ''),
     ugc_code: String(formData.get('ugc_code') ?? ''),
     geojson: String(formData.get('geojson') ?? ''),
   });
+  if (!parsed.success) {
+    const first = parsed.error.issues[0];
+    throw new Error(`${first.path.join('.') || 'input'}: ${first.message}`);
+  }
+  return parsed.data;
 }
 
 function geojsonForRpc(raw: string): string | null {
@@ -57,6 +63,7 @@ function geojsonForRpc(raw: string): string | null {
 }
 
 export async function createRegion(formData: FormData): Promise<void> {
+  await requireOperator();
   const input = readInput(formData);
   const admin = supabaseAdmin();
   const { error } = await admin.rpc('upsert_region_geojson', {
@@ -76,7 +83,7 @@ export async function updateRegion(formData: FormData): Promise<void> {
   if (!idParse.success) throw new Error('invalid region id');
   const input = readInput(formData);
 
-  const supa = supabaseServer();
+  const supa = await requireOperator();
   const updates: Record<string, unknown> = {
     name: input.name,
     kind: input.kind,
@@ -107,7 +114,7 @@ export async function deleteRegion(formData: FormData): Promise<void> {
   if (!idParse.success) throw new Error('invalid region id');
   const id = idParse.data;
 
-  const supa = supabaseServer();
+  const supa = await requireOperator();
   const { data: rules } = await supa
     .from('auto_alert_rules')
     .select('id, region_filter')

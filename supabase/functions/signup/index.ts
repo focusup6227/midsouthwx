@@ -27,7 +27,13 @@ async function zipToCountyFips(zip: string): Promise<string | null> {
       `https://geocoding.geo.census.gov/geocoder/geographies/address` +
       `?street=&city=&state=&zip=${encodeURIComponent(zip)}` +
       `&benchmark=Public_AR_Current&vintage=Current_Current&format=json&layers=Counties`;
-    const res = await fetch(url, { headers: { accept: 'application/json' } });
+    // Census is occasionally slow; cap the wait so signups don't hang on a
+    // sluggish upstream. Null result means the subscriber lands without a
+    // county_fips and the operator/dispatch backfills later.
+    const res = await fetch(url, {
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(3_000),
+    });
     if (!res.ok) return null;
     const data = await res.json();
     const matches = data?.result?.addressMatches ?? [];
@@ -106,7 +112,13 @@ Deno.serve(async (req) => {
     link_expires_at,
   };
   if (typeof lat === 'number' && typeof lng === 'number') {
-    insert.location = `SRID=4326;POINT(${lng} ${lat})`;
+    // Set both: `location` is the live point (audience, map pin) and
+    // `home_location` is the snapshot the Telegram /home command reverts to
+    // when the subscriber travels via /where.
+    const wkt = `SRID=4326;POINT(${lng} ${lat})`;
+    insert.location = wkt;
+    insert.home_location = wkt;
+    insert.home_location_updated_at = new Date().toISOString();
   }
 
   const { error } = await supa.from('subscribers').insert(insert);

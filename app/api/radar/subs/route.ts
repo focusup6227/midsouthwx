@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
+const CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=900';
+
 // Subscriber locations live in a PostGIS geography column; supabase-js
 // surfaces it as WKB hex unless we explicitly call ST_AsGeoJSON. The RPC
 // returns a ready-to-render FeatureCollection.
@@ -15,5 +17,7 @@ export async function GET() {
       { status: 500 },
     );
   }
-  return NextResponse.json(data ?? { type: 'FeatureCollection', features: [] });
+  return NextResponse.json(data ?? { type: 'FeatureCollection', features: [] }, {
+    headers: { 'Cache-Control': CACHE_CONTROL },
+  });
 }

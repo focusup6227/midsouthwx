@@ -1,8 +1,11 @@
 import Link from 'next/link';
+import Image from 'next/image';
 import { cookies } from 'next/headers';
 import type { ReactNode } from 'react';
-import { supabaseServer } from '@/lib/supabase/server';
 import FieldModeToggle from './FieldModeToggle';
+import HealthIndicator from './HealthIndicator';
+import NotificationPermissionButton from './NotificationPermissionButton';
+import SevereAlertAudio from './SevereAlertAudio';
 
 type Props = {
   title?: string;
@@ -34,26 +37,14 @@ export default async function DashShell({
 }: Props) {
   const field = await isFieldMode();
 
-  const supa = supabaseServer();
-  const { count: unread } = await supa
-    .from('replies')
-    .select('*', { count: 'exact', head: true })
-    .is('read_at', null);
-
-  const inboxBadge =
-    unread && unread > 0 ? (
-      <span className="ml-1.5 inline-flex min-w-[1.25rem] justify-center rounded-full bg-wx-accent px-1.5 text-[11px] font-bold leading-5 text-black">
-        {unread > 99 ? '99+' : unread}
-      </span>
-    ) : null;
-
   type NavLink = { href: string; label: string; extra?: ReactNode };
   const primary: NavLink[] = [
     { href: '/compose', label: 'Compose' },
-    { href: '/inbox', label: 'Inbox', extra: inboxBadge },
+    { href: '/inbox', label: 'Inbox' },
     { href: '/schedule', label: 'Schedule' },
     { href: '/nws', label: 'NWS' },
     { href: '/radar', label: 'Radar' },
+    { href: '/forecast', label: 'Forecast' },
     { href: '/map', label: 'Map' },
   ];
 
@@ -62,15 +53,20 @@ export default async function DashShell({
     { href: '/groups', label: 'Groups' },
     { href: '/regions', label: 'Regions' },
     { href: '/alerts', label: 'Alerts' },
+    { href: '/checkins', label: 'Check-ins' },
+    { href: '/log', label: 'Log' },
+    { href: '/health', label: 'Health' },
     { href: '/settings', label: 'Settings' },
   ];
 
   return (
     <>
+      <SevereAlertAudio />
       <header className="sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur">
         <nav className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5">
-          <Link href="/dashboard" className="font-semibold whitespace-nowrap">
-            Mid-South WX
+          <Link href="/dashboard" className="flex items-center gap-2 font-semibold whitespace-nowrap">
+            <Image src="/icons/icon-192.png" alt="" width={28} height={28} className="rounded-full" />
+            MidSouthWX
           </Link>
           <div className="hidden flex-wrap items-center gap-1 md:flex">
             {primary.map((l) => (
@@ -85,6 +81,8 @@ export default async function DashShell({
             ))}
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <HealthIndicator />
+            <NotificationPermissionButton />
             <details className="relative hidden md:block">
               <summary className="cursor-pointer list-none px-2.5 py-1 text-sm text-wx-mute hover:text-wx-fg">
                 More ▾

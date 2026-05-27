@@ -275,13 +275,87 @@ export function nearestSites(
     .map((x) => x.s);
 }
 
+// Fuzzy ordered subsequence match. Returns 0 if query chars aren't all
+// present in `target` in order, else a score that's higher when the matched
+// characters are tightly packed. Caps below word-prefix scores so it never
+// outranks a clean hit.
+function fuzzySubseqScore(q: string, target: string): number {
+  let qi = 0;
+  let lastIdx = -1;
+  let gaps = 0;
+  for (let i = 0; i < target.length && qi < q.length; i++) {
+    if (target[i] === q[qi]) {
+      if (lastIdx >= 0) gaps += i - lastIdx - 1;
+      lastIdx = i;
+      qi++;
+    }
+  }
+  if (qi < q.length) return 0;
+  return Math.max(0, 80 - gaps);
+}
+
+// Tiny Levenshtein for typo tolerance ('memphsi' → Memphis). 155 sites × short
+// strings means we don't need anything fancier.
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a) return b.length;
+  if (!b) return a.length;
+  const m = a.length, n = b.length;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
 export function searchSites(query: string, limit = 20): RadarSite[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  return NEXRAD_SITES.filter((s) =>
-    s.code.toLowerCase().includes(q) ||
-    s.name.toLowerCase().includes(q) ||
-    s.state.toLowerCase() === q ||
-    `${s.name}, ${s.state}`.toLowerCase().includes(q),
-  ).slice(0, limit);
+
+  const scored = NEXRAD_SITES.map((s) => {
+    const code = s.code.toLowerCase();
+    const name = s.name.toLowerCase();
+    const state = s.state.toLowerCase();
+    const words = name.split(/[\s/,()]+/).filter(Boolean);
+
+    let score = 0;
+    if (code === q) score = 1000;
+    else if (name === q) score = 900;
+    else if (code.startsWith(q)) score = 700;
+    else if (name.startsWith(q)) score = 600;
+    else if (words.some((w) => w.startsWith(q))) score = 500;
+    else if (code.includes(q)) score = 300;
+    else if (name.includes(q)) score = 250;
+    else if (state === q) score = 200;
+    else {
+      const subseq = fuzzySubseqScore(q, `${name} ${code}`);
+      let levScore = 0;
+      if (q.length >= 4) {
+        let best = Infinity;
+        for (const w of words) {
+          if (Math.abs(w.length - q.length) > 2) continue;
+          const d = levenshtein(q, w);
+          if (d < best) best = d;
+        }
+        if (best <= 2) levScore = (3 - best) * 60;
+      }
+      score = Math.max(subseq, levScore);
+    }
+
+    return { s, score };
+  });
+
+  return scored
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.s);
 }

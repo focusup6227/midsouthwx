@@ -84,7 +84,7 @@ export default async function DashboardHome({
 
   return (
     <DashShell
-      title="Mid-South WX"
+      title="MidSouthWX"
       actions={
         <>
           <Link href="/compose" className="btn">New alert</Link>

@@ -77,10 +77,16 @@ export async function refreshSubscriberLocation(id: string): Promise<RefreshLoca
     };
   }
 
+  // Re-geocoding the home address counts as a "home" coordinate update —
+  // refresh both `location` (current) and `home_location` (so /home reverts
+  // to the latest geocode, not whatever the previous home_location was).
+  const wkt = `SRID=4326;POINT(${geo.lng} ${geo.lat})`;
   const { error: updErr } = await admin
     .from('subscribers')
     .update({
-      location: `SRID=4326;POINT(${geo.lng} ${geo.lat})`,
+      location: wkt,
+      home_location: wkt,
+      home_location_updated_at: new Date().toISOString(),
       county_fips: geo.countyFips,
       updated_at: new Date().toISOString(),
     })

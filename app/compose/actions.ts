@@ -24,6 +24,14 @@ const TemplateVars = z
   })
   .optional();
 
+const MediaInput = z
+  .object({
+    url: z.string().url(),
+    type: z.enum(['animation', 'photo', 'video', 'document']),
+  })
+  .nullable()
+  .optional();
+
 const SendInput = z.object({
   body_md: z.string().min(1, 'Body cannot be empty'),
   audience_spec: AudienceSpec,
@@ -31,6 +39,7 @@ const SendInput = z.object({
   template_id: z.string().uuid().nullable(),
   source: z.enum(['manual', 'checkin']),
   template_vars: TemplateVars,
+  media: MediaInput,
 });
 
 export type AudienceSpecT = z.infer<typeof AudienceSpec>;
@@ -84,11 +93,31 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
       quick_replies: parsed.quick_replies.length ? parsed.quick_replies : null,
       template_id: parsed.template_id,
       created_by: userId,
+      media_url: parsed.media?.url ?? null,
+      media_type: parsed.media?.type ?? null,
     })
     .select('id')
     .single();
 
   if (insertErr || !msg) throw new Error(insertErr?.message ?? 'insert failed');
+
+  // Auto-attach a polygon snapshot for radar-drawn (geometry) alerts when
+  // the operator didn't already upload their own media. Synchronous so the
+  // media_url is set before enqueue → the worker reads it at claim time.
+  // Renderer failure is swallowed (helper returns null) — alert still sends
+  // as text-only.
+  if (!parsed.media && parsed.audience_spec.geometry) {
+    const { renderComposeSnapshot } = await import('@/lib/snapshot/compose-snapshot');
+    const snapshotUrl = await renderComposeSnapshot(msg.id, parsed.audience_spec.geometry, {
+      event: parsed.template_vars?.event,
+    });
+    if (snapshotUrl) {
+      await admin
+        .from('messages')
+        .update({ media_url: snapshotUrl, media_type: 'photo' })
+        .eq('id', msg.id);
+    }
+  }
 
   const { data: count, error: enqErr } = await admin.rpc('enqueue_message_system', {
     p_message_id: msg.id,

@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import Link from 'next/link';
+import { useMemo, useState } from 'react';
 import { createRegion, updateRegion } from './actions';
+import GeometryPreview from './GeometryPreview';
 
 type Initial = {
   id?: string;
@@ -11,9 +13,19 @@ type Initial = {
   ugc_code?: string | null;
 };
 
-export default function RegionForm({ initial }: { initial?: Initial }) {
+export default function RegionForm({
+  initial,
+  existingGeometry,
+}: {
+  initial?: Initial;
+  existingGeometry?: GeoJSON.Geometry | null;
+}) {
   const action = initial?.id ? updateRegion : createRegion;
   const [kind, setKind] = useState<Initial['kind']>(initial?.kind ?? 'county');
+  const [geojson, setGeojson] = useState('');
+
+  const parsed = useMemo(() => parseGeojson(geojson), [geojson]);
+  const previewGeometry = parsed.geometry ?? existingGeometry ?? null;
 
   return (
     <form action={action} className="card p-5 space-y-4">
@@ -76,21 +88,78 @@ export default function RegionForm({ initial }: { initial?: Initial }) {
         </span>
         <textarea
           name="geojson"
-          rows={8}
+          rows={6}
           className="input font-mono text-xs"
           placeholder='{"type":"Polygon","coordinates":[[[...]]]}'
+          value={geojson}
+          onChange={(e) => setGeojson(e.target.value)}
         />
         <p className="text-xs text-wx-mute mt-1">
           Paste a GeoJSON <code>Feature</code>, <code>Polygon</code>, or <code>MultiPolygon</code>.
           For edits, leave blank to keep the existing geometry. Coordinates must be WGS84 (lng, lat).
         </p>
+        {geojson.trim() && parsed.error ? (
+          <p className="mt-1 text-xs text-wx-danger">{parsed.error}</p>
+        ) : null}
       </label>
 
+      <GeometryPreview
+        geometry={previewGeometry}
+        label={
+          parsed.geometry
+            ? 'Preview (pasted)'
+            : existingGeometry
+              ? 'Preview (current)'
+              : 'Preview'
+        }
+      />
+
       <div className="flex justify-end gap-2">
+        <Link href="/regions" className="btn-ghost">Cancel</Link>
         <button type="submit" className="btn">
           {initial?.id ? 'Save changes' : 'Create region'}
         </button>
       </div>
     </form>
   );
+}
+
+function parseGeojson(raw: string): { geometry: GeoJSON.Geometry | null; error: string | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { geometry: null, error: null };
+  let value: unknown;
+  try {
+    value = JSON.parse(trimmed);
+  } catch {
+    return { geometry: null, error: 'Not valid JSON.' };
+  }
+  const extract = (v: unknown): GeoJSON.Geometry | null => {
+    if (!v || typeof v !== 'object') return null;
+    const obj = v as { type?: string; geometry?: unknown; features?: unknown };
+    if (obj.type === 'Feature' && obj.geometry) return extract(obj.geometry);
+    if (
+      obj.type === 'FeatureCollection' &&
+      Array.isArray(obj.features) &&
+      obj.features.length === 1
+    ) {
+      return extract((obj.features[0] as { geometry?: unknown }).geometry);
+    }
+    if (
+      obj.type === 'Polygon' ||
+      obj.type === 'MultiPolygon' ||
+      obj.type === 'Point' ||
+      obj.type === 'LineString' ||
+      obj.type === 'MultiLineString' ||
+      obj.type === 'MultiPoint' ||
+      obj.type === 'GeometryCollection'
+    ) {
+      return v as GeoJSON.Geometry;
+    }
+    return null;
+  };
+  const geometry = extract(value);
+  if (!geometry) {
+    return { geometry: null, error: 'Could not find a geometry in the pasted JSON.' };
+  }
+  return { geometry, error: null };
 }

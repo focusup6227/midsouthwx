@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
-import { supabaseServer } from '@/lib/supabase/server';
+import { requireOperator } from '@/lib/auth/require-operator';
 
 const QuickReply = z.object({ label: z.string().min(1), data: z.string().min(1) });
 
@@ -17,19 +17,6 @@ function parseQuickReplies(raw: string): { label: string; data: string }[] | nul
   } catch {
     throw new Error('Quick replies must be valid JSON array');
   }
-}
-
-async function requireOperator() {
-  const supa = supabaseServer();
-  const { data: userRes } = await supa.auth.getUser();
-  if (!userRes.user) throw new Error('not authenticated');
-  const { data: op } = await supa
-    .from('operators')
-    .select('user_id')
-    .eq('user_id', userRes.user.id)
-    .maybeSingle();
-  if (!op) throw new Error('operators only');
-  return supa;
 }
 
 function parseTemplateForm(formData: FormData) {
