@@ -182,36 +182,59 @@ function bboxToMercatorString(bbox: Bbox): string {
   return `${xW},${yS},${xE},${yN}`;
 }
 
-/** Expand a lon/lat bbox so its Mercator aspect ratio matches w/h. Mapbox
- *  Static API auto-extends a bbox to fill the image's aspect ratio, but NCEP
- *  WMS doesn't — without this, the basemap covers a wider area than the
- *  radar overlay and the radar shows as a rectangle inside the basemap. */
-function fitBboxToAspect(bbox: Bbox, w: number, h: number): Bbox {
+// Earth circumference in meters at the equator (Web Mercator). Used to map
+// between zoom level and meters-per-pixel for the Mapbox Static center+zoom
+// API. Mapbox uses 512-px tiles by default for its newer styles.
+const EARTH_CIRCUMFERENCE_M = 40075016.686;
+const MAPBOX_TILE_SIZE = 512;
+
+/** Plan the static-image viewport: from a polygon bbox, pick the center +
+ *  zoom + final lon/lat bbox so a Mapbox center+zoom request and an NCEP WMS
+ *  bbox request cover EXACTLY the same map area. Mapbox's `[lng,lat,lng,lat]`
+ *  bbox-fit mode adds a hard-to-predict amount of padding; switching both
+ *  upstreams to a shared center+zoom-derived bbox makes them align pixel for
+ *  pixel. */
+function planViewport(
+  bbox: Bbox,
+  w: number,
+  h: number,
+): { centerLng: number; centerLat: number; zoom: number; rendered: Bbox } {
   const [west, south, east, north] = bbox;
   const [xW, yS] = lonLatToMercator(west, south);
   const [xE, yN] = lonLatToMercator(east, north);
   const mercW = xE - xW;
   const mercH = yN - yS;
-  const targetAspect = w / h;
-  const currentAspect = mercW / mercH;
-  let newXW = xW;
-  let newXE = xE;
-  let newYS = yS;
-  let newYN = yN;
-  if (currentAspect < targetAspect) {
-    const newMercW = mercH * targetAspect;
-    const cx = (xW + xE) / 2;
-    newXW = cx - newMercW / 2;
-    newXE = cx + newMercW / 2;
-  } else {
-    const newMercH = mercW / targetAspect;
-    const cy = (yS + yN) / 2;
-    newYS = cy - newMercH / 2;
-    newYN = cy + newMercH / 2;
-  }
-  const [newWest, newSouth] = mercatorToLonLat(newXW, newYS);
-  const [newEast, newNorth] = mercatorToLonLat(newXE, newYN);
-  return [newWest, newSouth, newEast, newNorth];
+
+  // Largest zoom that still fits the bbox in both axes. log2 because each
+  // zoom level halves the meters-per-pixel.
+  const zoomW = Math.log2((w * EARTH_CIRCUMFERENCE_M) / (MAPBOX_TILE_SIZE * mercW));
+  const zoomH = Math.log2((h * EARTH_CIRCUMFERENCE_M) / (MAPBOX_TILE_SIZE * mercH));
+  const zoom = Math.min(zoomW, zoomH);
+
+  // Center in Mercator (linear midpoint) → reproject to lon/lat for Mapbox.
+  // The center is the same regardless of which axis was the constraint.
+  const cxM = (xW + xE) / 2;
+  const cyM = (yS + yN) / 2;
+  const [centerLng, centerLat] = mercatorToLonLat(cxM, cyM);
+
+  // From the chosen zoom, compute the actual rendered bbox in Mercator and
+  // convert to lon/lat. Whichever axis Mapbox would have padded on bbox-fit
+  // is now naturally extended here, and NCEP receives the same extent.
+  const metersPerPixel = EARTH_CIRCUMFERENCE_M / (MAPBOX_TILE_SIZE * Math.pow(2, zoom));
+  const halfW = (w / 2) * metersPerPixel;
+  const halfH = (h / 2) * metersPerPixel;
+  const renderedXW = cxM - halfW;
+  const renderedXE = cxM + halfW;
+  const renderedYS = cyM - halfH;
+  const renderedYN = cyM + halfH;
+  const [renderedWest, renderedSouth] = mercatorToLonLat(renderedXW, renderedYS);
+  const [renderedEast, renderedNorth] = mercatorToLonLat(renderedXE, renderedYN);
+  return {
+    centerLng,
+    centerLat,
+    zoom,
+    rendered: [renderedWest, renderedSouth, renderedEast, renderedNorth],
+  };
 }
 
 type SitePick = { code: string; km: number };
@@ -275,10 +298,19 @@ async function applyOpacity(input: Buffer, opacity: number): Promise<Buffer> {
     .toBuffer();
 }
 
-async function fetchMapboxBasemap(bbox: Bbox, w: number, h: number, token: string): Promise<Buffer | null> {
-  const bboxStr = `[${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]}]`;
+async function fetchMapboxBasemap(
+  centerLng: number,
+  centerLat: number,
+  zoom: number,
+  w: number,
+  h: number,
+  token: string,
+): Promise<Buffer | null> {
+  // Center+zoom (not bbox-fit) so we control the exact rendered extent and
+  // can hand the matching bbox to NCEP for the radar overlay.
   const url =
-    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/${bboxStr}/${w}x${h}@2x` +
+    `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/` +
+    `${centerLng},${centerLat},${zoom}/${w}x${h}@2x` +
     `?access_token=${token}&logo=false&attribution=false`;
   return fetchBuffer(url, BASEMAP_FETCH_TIMEOUT_MS);
 }
@@ -388,9 +420,11 @@ export async function renderReflectivitySnapshot(args: {
   if (!mapboxToken) return null;
 
   const rawBbox = polygonBbox(args.geometry);
-  // Mapbox Static API expands the bbox to fill the image's aspect ratio; NCEP
-  // WMS does not. Pre-expand once so both upstreams cover the same map area.
-  const bbox = fitBboxToAspect(rawBbox, OUTPUT_W, OUTPUT_H);
+  // One viewport plan drives everything: Mapbox gets center+zoom, NCEP gets
+  // the matching Mercator bbox, the polygon SVG projects to the same extent.
+  // Eliminates the bbox-fit mismatch that left the radar inside a wider basemap.
+  const viewport = planViewport(rawBbox, OUTPUT_W, OUTPUT_H);
+  const bbox = viewport.rendered;
   // 5-minute wall-clock bucket in the cache key so long-lived alerts pick up
   // fresh radar scans instead of serving the first render for 30+ minutes.
   const bucketMs = 5 * 60 * 1000;
@@ -424,7 +458,14 @@ export async function renderReflectivitySnapshot(args: {
   // Same product `/radar` shows in BREF mode, just composited across sites.
   const sites = sitesInRange(bboxCentroid(bbox), BREF_SITE_MAX_KM);
 
-  const basemapPromise = fetchMapboxBasemap(bbox, OUTPUT_W, OUTPUT_H, mapboxToken);
+  const basemapPromise = fetchMapboxBasemap(
+    viewport.centerLng,
+    viewport.centerLat,
+    viewport.zoom,
+    OUTPUT_W,
+    OUTPUT_H,
+    mapboxToken,
+  );
   const brefPromises: Promise<Buffer | null>[] = sites.map((s) =>
     fetchNcepBref(s.code, bbox, OUTPUT_W, OUTPUT_H),
   );
