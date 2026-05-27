@@ -731,7 +731,17 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showSubs, setShowSubs] = useState(urlInitial.showSubs ?? true);
   const subsCount = subsGeo.features?.length ?? 0;
 
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(urlInitial.inspectorCollapsed ?? false);
+  // Default the inspector closed on phones — the 304px panel would otherwise
+  // cover most of the viewport on first paint and bury the map. Desktop users
+  // (and operators who explicitly opened the inspector before) still see it
+  // expanded thanks to the URL flag check.
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(() => {
+    if (urlInitial.inspectorCollapsed !== undefined) return urlInitial.inspectorCollapsed;
+    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)').matches) {
+      return true;
+    }
+    return false;
+  });
   const [uiHidden, setUiHidden] = useState(urlInitial.uiHidden ?? false);
   const [showSitePills, setShowSitePills] = useState(urlInitial.showSitePills ?? true);
   const [showLightning, setShowLightning] = useState(urlInitial.showLightning ?? false);
@@ -1134,6 +1144,16 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const handleMapLoad = useCallback(() => {
     const map = mapRef.current?.getMap();
     if (!map) return;
+    // Pinch-to-zoom without two-finger rotate — Mapbox's combined handler
+    // enables both by default; disableRotation() keeps zoom alive but stops
+    // accidental compass spin during a casual pinch on a phone.
+    try {
+      const tzr = (map as unknown as { touchZoomRotate?: { disableRotation?: () => void } })
+        .touchZoomRotate;
+      tzr?.disableRotation?.();
+    } catch {
+      // Older mapbox-gl-js bundles may not expose touchZoomRotate; harmless.
+    }
     // Detect Standard-imports styles. When detected, we anchor via Mapbox
     // slots ('middle' for radar, 'top' for overlays) instead of `beforeId`,
     // and skip the dark-v11-shaped label boost (Standard's layer IDs are
@@ -2696,7 +2716,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           dragPan={drawMode === 'none' && !annotations.isActive}
           scrollZoom={drawMode === 'none' && !annotations.isActive}
           dragRotate={false}
-          touchZoomRotate={false}
+          // touchZoomRotate enables BOTH pinch-zoom and two-finger rotate.
+          // We want pinch-zoom on mobile but not rotate, so enable here and
+          // imperatively call touchZoomRotate.disableRotation() in
+          // handleMapLoad. Disable when drawing so two-finger gestures
+          // don't accidentally zoom while the operator is sketching audience.
+          touchZoomRotate={drawMode === 'none' && !annotations.isActive}
+          touchPitch={false}
           boxZoom={false}
           doubleClickZoom={!annotations.isActive}
           onClick={handleMapClick}
@@ -3553,9 +3579,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         )}
         </div>
 
-        {/* Products rail (left) */}
+        {/* Products rail (left). Narrower + tighter padding on phones so the
+            draw toolbar to its right has room to breathe on a 375px viewport. */}
         {!uiHidden && (
-          <div className="products-rail absolute top-4 left-4 w-[68px] bg-wx-card border border-wx-line rounded-xl p-1.5 flex flex-col gap-0.5 z-20">
+          <div className="products-rail absolute top-3 left-3 md:top-4 md:left-4 w-[52px] md:w-[68px] bg-wx-card border border-wx-line rounded-xl p-1 md:p-1.5 flex flex-col gap-0.5 z-20">
             {(Object.keys(PRODUCTS) as ProductKey[]).map((k) => {
               const p = PRODUCTS[k];
               const Icon = p.icon;
@@ -3568,7 +3595,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   onClick={() => !disabled && selectProduct(k)}
                   disabled={disabled}
                   title={disabled ? (selectedSite ? 'Not available in single-site mode' : 'Pick a radar site to use this product') : p.label}
-                  className={`relative flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg text-[10px] font-semibold tracking-wide transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'text-wx-mute hover:text-wx-fg'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+                  className={`relative flex flex-col items-center justify-center gap-0.5 py-2.5 md:py-2 rounded-lg text-[10px] font-semibold tracking-wide transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'text-wx-mute hover:text-wx-fg'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                 >
                   {active && tilesLoading && (
                     <span
@@ -3576,25 +3603,41 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       title="Fetching tiles…"
                     />
                   )}
-                  <Icon size={20} className={active ? 'text-wx-accent' : ''} />
-                  <span>{p.short}</span>
+                  <Icon size={18} className={`md:hidden ${active ? 'text-wx-accent' : ''}`} />
+                  <Icon size={20} className={`hidden md:block ${active ? 'text-wx-accent' : ''}`} />
+                  <span className="text-[9px] md:text-[10px]">{p.short}</span>
                 </button>
               );
             })}
           </div>
         )}
 
-        {/* Draw toolbar */}
+        {/* Draw toolbar. Icon-only on mobile so the row fits beside the
+            narrowed products rail; full labels return at md+. */}
         {!uiHidden && (
-          <div className="absolute top-4 left-[100px] flex gap-2 items-center z-20">
-            <button onClick={startPolygonDraw} className={`px-3 py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'polygon' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}>
-              <Target size={14} /> Polygon
+          <div className="absolute top-3 left-[72px] md:top-4 md:left-[100px] flex gap-1.5 md:gap-2 items-center z-20">
+            <button
+              onClick={startPolygonDraw}
+              className={`px-2.5 md:px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'polygon' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
+              aria-label="Draw polygon"
+              title="Draw polygon"
+            >
+              <Target size={16} className="md:hidden" />
+              <Target size={14} className="hidden md:inline" />
+              <span className="hidden md:inline">Polygon</span>
             </button>
-            <button onClick={startSnapMode} className={`px-3 py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'snap' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}>
-              <MousePointer2 size={14} /> Adopt alert
+            <button
+              onClick={startSnapMode}
+              className={`px-2.5 md:px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'snap' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
+              aria-label="Adopt alert"
+              title="Adopt alert"
+            >
+              <MousePointer2 size={16} className="md:hidden" />
+              <MousePointer2 size={14} className="hidden md:inline" />
+              <span className="hidden md:inline">Adopt alert</span>
             </button>
             {drawMode === 'polygon' && (
-              <button onClick={completePolygon} disabled={polygonPoints.length < 3} className="px-3 py-2 bg-wx-card border border-wx-line rounded-lg text-sm disabled:opacity-50">Complete ({polygonPoints.length})</button>
+              <button onClick={completePolygon} disabled={polygonPoints.length < 3} className="px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm disabled:opacity-50">Complete ({polygonPoints.length})</button>
             )}
             {drawMode === 'polygon' && polygonPoints.length >= 3 && previewCount != null && (
               <span className="px-2 py-1 rounded bg-wx-ink border border-wx-line text-[11px] font-mono text-wx-fg" title="Subscribers inside the in-progress polygon (live)">
@@ -3639,8 +3682,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
         {!uiHidden && showNws && displayWarnings.length > 0 && (
           <div
-            className="wx-scroll absolute top-[68px] left-[100px] z-20 flex items-center gap-2 overflow-x-auto whitespace-nowrap pr-2"
-            style={{ maxWidth: 'calc(100% - 100px - 340px)' }}
+            className="wx-scroll absolute top-[64px] left-[72px] right-3 md:top-[68px] md:left-[100px] md:right-[340px] z-20 flex items-center gap-2 overflow-x-auto whitespace-nowrap pr-2"
           >
             {displayWarnings.slice(0, 12).map((w) => (
               <button
@@ -3674,26 +3716,54 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
-        {/* Inspector — collapsed rail */}
+        {/* Inspector — collapsed.
+            Desktop: thin vertical rail flush right (legacy behaviour).
+            Mobile: a tap-friendly pill in the bottom-right corner labelled
+            "Layers" so the affordance is obvious; the rail's icon-only style
+            is too cryptic at finger-tip sizes. */}
         {!uiHidden && !selection && inspectorCollapsed && (
-          <button
-            type="button"
-            onClick={() => setInspectorCollapsed(false)}
-            className="absolute top-4 right-4 w-9 h-[120px] bg-wx-card border border-wx-line rounded-xl z-20 flex flex-col items-center justify-between py-2 hover:border-wx-accent group"
-            aria-label="Expand inspector"
-            title="Expand inspector"
-          >
-            <ChevronLeft size={14} className="text-wx-mute group-hover:text-wx-fg" />
-            <div
-              className={`flex-1 w-2 my-1 rounded-sm ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(180deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(180deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(180deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'satellite' ? 'bg-[linear-gradient(180deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]' : 'bg-[linear-gradient(180deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`}
-            />
-            <span className="font-mono text-[9px] text-wx-mute">{PRODUCTS[effectiveProduct].short}</span>
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={() => setInspectorCollapsed(false)}
+              className="hidden md:flex absolute top-4 right-4 w-9 h-[120px] bg-wx-card border border-wx-line rounded-xl z-20 flex-col items-center justify-between py-2 hover:border-wx-accent group"
+              aria-label="Expand inspector"
+              title="Expand inspector"
+            >
+              <ChevronLeft size={14} className="text-wx-mute group-hover:text-wx-fg" />
+              <div
+                className={`flex-1 w-2 my-1 rounded-sm ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(180deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(180deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(180deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'satellite' ? 'bg-[linear-gradient(180deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]' : 'bg-[linear-gradient(180deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`}
+              />
+              <span className="font-mono text-[9px] text-wx-mute">{PRODUCTS[effectiveProduct].short}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInspectorCollapsed(false)}
+              className="md:hidden absolute bottom-3 right-3 z-20 inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-wx-card/95 border border-wx-line text-xs font-semibold text-wx-fg shadow-lg backdrop-blur-sm"
+              aria-label="Open layers panel"
+            >
+              <ChevronLeft size={14} className="text-wx-mute" />
+              Layers · {PRODUCTS[effectiveProduct].short}
+            </button>
+          </>
         )}
 
-        {/* Inspector — expanded */}
+        {/* Inspector — expanded.
+            Desktop: 304px right rail.
+            Mobile: full-width bottom sheet pinned to viewport bottom, capped
+            at 75vh with internal scroll so the operator can still see the
+            map context above. Backdrop dim makes it read as a modal layer
+            so the tap-to-close X is obvious. */}
         {!uiHidden && !selection && !inspectorCollapsed && (
-          <div className="absolute top-4 right-4 w-[304px] max-h-[calc(100%-220px)] overflow-y-auto p-4 pt-7 bg-wx-card border border-wx-line rounded-xl flex flex-col gap-[18px] z-20 wx-scroll">
+          <>
+            <button
+              type="button"
+              onClick={() => setInspectorCollapsed(true)}
+              className="md:hidden absolute inset-0 z-10 bg-black/40 backdrop-blur-[1px]"
+              aria-label="Close layers panel"
+              tabIndex={-1}
+            />
+            <div className="absolute top-auto bottom-0 left-0 right-0 max-h-[75vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 flex flex-col gap-[18px] z-20 wx-scroll md:top-4 md:bottom-auto md:left-auto md:right-4 md:w-[304px] md:max-h-[calc(100%-220px)] md:rounded-xl md:border">
             <button
               type="button"
               onClick={() => setInspectorCollapsed(true)}
@@ -4634,6 +4704,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               </div>
             </div>
           </div>
+          </>
         )}
 
         {selection && (
