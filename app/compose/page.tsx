@@ -46,7 +46,7 @@ const HAZARD_KINDS = new Set(['tornado', 'severe', 'flood', 'winter', 'heat', 'w
 export default async function ComposePage({
   searchParams,
 }: {
-  searchParams: { geo?: string; hazard?: string; body?: string };
+  searchParams: { geo?: string; hazard?: string; body?: string; nws_id?: string };
 }) {
   const supa = supabaseServer();
 
@@ -80,6 +80,13 @@ export default async function ComposePage({
       ? searchParams.body.slice(0, 1000)
       : null;
 
+  // Length-cap defends against URL stuffing; NWS feature ids are well under
+  // 200 chars in practice (urn:oid:2.49.0.1.840.0.<hash>).
+  const initialNwsId =
+    typeof searchParams.nws_id === 'string' && searchParams.nws_id.trim().length > 0
+      ? searchParams.nws_id.slice(0, 256)
+      : null;
+
   return (
     <DashShell title="New alert" width="narrow">
       <ComposeForm
@@ -90,6 +97,7 @@ export default async function ComposePage({
         initialGeometry={initialGeometry}
         initialHazard={initialHazard}
         initialBody={initialBody}
+        initialNwsId={initialNwsId}
       />
     </DashShell>
   );

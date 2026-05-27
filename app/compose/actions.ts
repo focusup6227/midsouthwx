@@ -40,6 +40,10 @@ const SendInput = z.object({
   source: z.enum(['manual', 'checkin']),
   template_vars: TemplateVars,
   media: MediaInput,
+  // NWS feature id (e.g. "urn:oid:2.49.0.1.840.0.<hash>") when /compose was
+  // launched from a warning polygon on /radar. Used to link the outbound
+  // message to nws_alerts.id so /m/[id] can render full NWS context.
+  nws_id: z.string().min(1).max(256).optional(),
 });
 
 export type AudienceSpecT = z.infer<typeof AudienceSpec>;
@@ -82,6 +86,32 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
     expiresAt: vars?.expires_at,
   });
 
+  // Look up the source NWS alert when /compose was launched from a warning
+  // polygon. We need its uuid (to stamp messages.nws_alert_id) and its raw
+  // geometry (as a snapshot fallback when the operator picked a non-geometry
+  // audience like "all subscribers" or a group). Failure is non-fatal — the
+  // message still sends without the NWS link.
+  let nwsAlertId: string | null = null;
+  let nwsGeometry: unknown = null;
+  let nwsEvent: string | null = null;
+  if (parsed.nws_id) {
+    const { data: alert } = await admin
+      .from('nws_alerts')
+      .select('id, event, raw')
+      .eq('nws_id', parsed.nws_id)
+      .maybeSingle();
+    if (alert) {
+      nwsAlertId = alert.id;
+      nwsEvent = alert.event ?? null;
+      const rawGeom = (alert.raw as { geometry?: unknown } | null)?.geometry as
+        | { type?: string }
+        | undefined;
+      if (rawGeom?.type === 'Polygon' || rawGeom?.type === 'MultiPolygon') {
+        nwsGeometry = rawGeom;
+      }
+    }
+  }
+
   const { data: msg, error: insertErr } = await admin
     .from('messages')
     .insert({
@@ -95,6 +125,7 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
       created_by: userId,
       media_url: parsed.media?.url ?? null,
       media_type: parsed.media?.type ?? null,
+      nws_alert_id: nwsAlertId,
     })
     .select('id')
     .single();
@@ -117,15 +148,18 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
       .eq('id', msg.id);
   }
 
-  // Auto-attach a polygon snapshot for radar-drawn (geometry) alerts when
-  // the operator didn't already upload their own media. Synchronous so the
-  // media_url is set before enqueue → the worker reads it at claim time.
-  // Renderer failure is swallowed (helper returns null) — alert still sends
-  // as text-only.
-  if (!parsed.media && parsed.audience_spec.geometry) {
+  // Auto-attach a polygon snapshot for any alert that has a usable polygon —
+  // either the operator drew/picked one on /radar (audience_spec.geometry),
+  // or they're adopting an NWS warning and we kept the alert's polygon
+  // around as a fallback. Synchronous so media_url is set before enqueue;
+  // the worker reads it via claim_outbound_batch at send time. Renderer
+  // failure is swallowed (helper returns null) — alert still sends as
+  // text-only.
+  const snapshotGeometry = parsed.audience_spec.geometry ?? nwsGeometry;
+  if (!parsed.media && snapshotGeometry) {
     const { renderComposeSnapshot } = await import('@/lib/snapshot/compose-snapshot');
-    const snapshotUrl = await renderComposeSnapshot(msg.id, parsed.audience_spec.geometry, {
-      event: parsed.template_vars?.event,
+    const snapshotUrl = await renderComposeSnapshot(msg.id, snapshotGeometry, {
+      event: parsed.template_vars?.event ?? nwsEvent ?? undefined,
     });
     if (snapshotUrl) {
       await admin

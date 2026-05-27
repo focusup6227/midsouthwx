@@ -36,6 +36,7 @@ export default function ComposeForm({
   initialGeometry,
   initialHazard,
   initialBody,
+  initialNwsId,
 }: {
   templates: Template[];
   groups: Named[];
@@ -44,6 +45,10 @@ export default function ComposeForm({
   initialGeometry?: any;
   initialHazard?: string | null;
   initialBody?: string | null;
+  // NWS feature id (e.g. urn:oid:...) when /compose was launched from a
+  // warning polygon on /radar. Persisted on the message so /m/[id] can show
+  // the full NWS context and fall back to the alert's polygon for the map.
+  initialNwsId?: string | null;
 }) {
   const [templateId, setTemplateId] = useState<string>('');
   const [body, setBody] = useState(initialBody ?? '');
@@ -197,6 +202,7 @@ export default function ComposeForm({
           source: checkinMode ? 'checkin' : 'manual',
           template_vars: showTemplateVars ? templateVars : undefined,
           media,
+          nws_id: initialNwsId ?? undefined,
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

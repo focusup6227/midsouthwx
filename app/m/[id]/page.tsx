@@ -1,7 +1,30 @@
 import { notFound } from 'next/navigation';
 import { supabaseServer } from '@/lib/supabase/server';
-import { fmtTs, relTime } from '@/lib/nws/display';
+import { fmtTs, relTime, nwsApiUrl } from '@/lib/nws/display';
 import AlertMap from '@/app/alert/[nws_id]/AlertMap';
+
+// Same severity palette as /alert/[nws_id] so adopted-alert pages match the
+// dispatcher-routed alert page when both are linked to the same NWS event.
+const SEVERITY_FILL: Record<string, string> = {
+  Extreme: '#ef4444',
+  Severe: '#f97316',
+  Moderate: '#eab308',
+  Minor: '#3b82f6',
+  Unknown: '#94a3b8',
+};
+
+type NwsRawGeometry =
+  | { type: 'Polygon'; coordinates: number[][][] }
+  | { type: 'MultiPolygon'; coordinates: number[][][][] };
+
+function extractNwsGeometry(raw: unknown): NwsRawGeometry | null {
+  const g = (raw as { geometry?: unknown } | null)?.geometry as
+    | { type?: string }
+    | undefined;
+  if (!g) return null;
+  if (g.type === 'Polygon' || g.type === 'MultiPolygon') return g as NwsRawGeometry;
+  return null;
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -95,15 +118,41 @@ export default async function PublicMessagePage({
   const supa = supabaseServer();
   const { data: msg } = await supa
     .from('messages')
-    .select('id, body_md, body_rendered, audience_spec, media_url, media_type, source, created_at, sent_at')
+    .select(
+      'id, body_md, body_rendered, audience_spec, media_url, media_type, source, created_at, sent_at, nws_alert_id',
+    )
     .eq('id', params.id)
     .maybeSingle();
 
   if (!msg) notFound();
 
-  const geom = normalize((msg.audience_spec as { geometry?: unknown } | null)?.geometry);
+  // When the operator adopted an NWS warning from /radar, the source alert
+  // is linked via nws_alert_id and we render its full CAP context here so
+  // the public page reads like /alert/[nws_id] does for dispatcher-routed
+  // messages — same severity coloring, headline, area, timing, instruction,
+  // and a polygon fallback for the map when the audience isn't geometry.
+  const nwsAlertRes = msg.nws_alert_id
+    ? await supa
+        .from('nws_alerts')
+        .select(
+          'nws_id, event, severity, urgency, certainty, headline, description, instruction, area_desc, effective, expires_at, raw',
+        )
+        .eq('id', msg.nws_alert_id)
+        .maybeSingle()
+    : null;
+  const nwsAlert = nwsAlertRes?.data ?? null;
+
+  const audienceGeom = normalize((msg.audience_spec as { geometry?: unknown } | null)?.geometry);
+  const nwsGeom = nwsAlert ? extractNwsGeometry(nwsAlert.raw) : null;
+  const mapGeom = audienceGeom ?? nwsGeom;
+  const fill = nwsAlert
+    ? SEVERITY_FILL[nwsAlert.severity ?? 'Unknown'] ?? SEVERITY_FILL.Unknown
+    : '#ef4444';
+
   const sentAt = msg.sent_at ?? msg.created_at;
   const body = msg.body_rendered ?? msg.body_md;
+  const isActive =
+    !nwsAlert?.expires_at || new Date(nwsAlert.expires_at).getTime() > Date.now();
 
   return (
     <main className="min-h-dvh bg-wx-bg text-wx-fg">
@@ -115,7 +164,7 @@ export default async function PublicMessagePage({
           <p className="text-[11px] text-wx-mute">{fmtTs(sentAt)}</p>
         </header>
 
-        {geom ? <AlertMap geometry={geom} fill="#ef4444" /> : null}
+        {mapGeom ? <AlertMap geometry={mapGeom} fill={fill} /> : null}
 
         <section className="card p-4">
           <pre className="whitespace-pre-wrap font-sans text-sm text-wx-fg/95">
@@ -130,6 +179,115 @@ export default async function PublicMessagePage({
             alt="Alert area map"
             className="w-full rounded-lg border border-wx-line"
           />
+        ) : null}
+
+        {nwsAlert ? (
+          <>
+            <header className="space-y-2 pt-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className="inline-block w-3 h-3 rounded-full"
+                  style={{ backgroundColor: fill }}
+                  aria-hidden
+                />
+                <h1 className="text-xl font-bold leading-tight">{nwsAlert.event}</h1>
+              </div>
+              <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-wide">
+                {nwsAlert.severity ? (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-black"
+                    style={{ backgroundColor: fill }}
+                  >
+                    {nwsAlert.severity}
+                  </span>
+                ) : null}
+                {nwsAlert.urgency ? (
+                  <span className="px-1.5 py-0.5 rounded bg-wx-line text-wx-mute">
+                    {nwsAlert.urgency} urgency
+                  </span>
+                ) : null}
+                {nwsAlert.certainty ? (
+                  <span className="px-1.5 py-0.5 rounded bg-wx-line text-wx-mute">
+                    {nwsAlert.certainty} certainty
+                  </span>
+                ) : null}
+                {!isActive ? (
+                  <span className="px-1.5 py-0.5 rounded bg-wx-line text-wx-mute">
+                    expired
+                  </span>
+                ) : null}
+              </div>
+            </header>
+
+            {nwsAlert.headline ? (
+              <p
+                className="text-sm text-wx-fg/90 border-l-2 pl-3"
+                style={{ borderColor: fill }}
+              >
+                {nwsAlert.headline}
+              </p>
+            ) : null}
+
+            {nwsAlert.area_desc ? (
+              <section className="card p-4 space-y-1">
+                <h2 className="text-xs uppercase tracking-wide text-wx-mute">Area</h2>
+                <p className="text-sm">{nwsAlert.area_desc}</p>
+              </section>
+            ) : null}
+
+            <section className="card p-4 space-y-2">
+              <h2 className="text-xs uppercase tracking-wide text-wx-mute">Timing</h2>
+              <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-wx-mute text-xs">Effective</dt>
+                  <dd>{fmtTs(nwsAlert.effective)}</dd>
+                </div>
+                <div>
+                  <dt className="text-wx-mute text-xs">Expires</dt>
+                  <dd>
+                    {fmtTs(nwsAlert.expires_at)}
+                    {nwsAlert.expires_at
+                      ? ` · ${relTime(nwsAlert.expires_at, { future: true })}`
+                      : ''}
+                  </dd>
+                </div>
+              </dl>
+            </section>
+
+            {nwsAlert.instruction ? (
+              <section className="card p-4 space-y-2">
+                <h2 className="text-xs uppercase tracking-wide text-wx-mute">
+                  What to do
+                </h2>
+                <pre className="whitespace-pre-wrap font-sans text-sm text-wx-fg/95">
+                  {nwsAlert.instruction}
+                </pre>
+              </section>
+            ) : null}
+
+            {nwsAlert.description ? (
+              <section className="card p-4 space-y-2">
+                <h2 className="text-xs uppercase tracking-wide text-wx-mute">
+                  Details
+                </h2>
+                <pre className="whitespace-pre-wrap font-sans text-sm text-wx-fg/90">
+                  {nwsAlert.description}
+                </pre>
+              </section>
+            ) : null}
+
+            <p className="text-xs text-wx-mute">
+              Source:{' '}
+              <a
+                href={nwsApiUrl(nwsAlert.nws_id)}
+                target="_blank"
+                rel="noreferrer"
+                className="text-wx-accent"
+              >
+                National Weather Service
+              </a>
+            </p>
+          </>
         ) : null}
 
         <footer className="pt-2 text-xs text-wx-mute">

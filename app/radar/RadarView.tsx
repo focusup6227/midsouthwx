@@ -2195,6 +2195,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (w.hazard && w.hazard !== 'other') {
       params.set('hazard', w.hazard);
     }
+    // Carry the source NWS id through so the compose action can link the
+    // outbound message back to the alert row — that link lets /m/[id] show
+    // full NWS context and reach for the alert's polygon when the operator
+    // swaps the audience away from the radar selection.
+    if (w.nws_id) params.set('nws_id', w.nws_id);
     const body = warningBodySeed(w);
     if (body) params.set('body', body);
     return `/compose?${params.toString()}`;
@@ -2210,6 +2215,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     const params = new URLSearchParams();
     params.set('geo', JSON.stringify(spec));
     if (w.hazard && w.hazard !== 'other') params.set('hazard', w.hazard);
+    if (w.nws_id) params.set('nws_id', w.nws_id);
     const body = warningBodySeed(w);
     if (body) params.set('body', body);
     return `/compose?${params.toString()}`;
