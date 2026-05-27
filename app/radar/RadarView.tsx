@@ -3111,6 +3111,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 visibility: trackLayerVis,
                 'text-field': '▲',
                 'text-size': 16,
+                // Default DIN Pro doesn't carry U+25B2; fall through to Arial
+                // Unicode MS so we don't render a tofu box at the arrowhead.
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
                 'text-rotate': ['get', 'motion_deg'],
                 'text-rotation-alignment': 'map',
                 'text-keep-upright': false,
@@ -3228,6 +3231,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 visibility: showStormReports ? 'visible' : 'none',
                 'text-field': '▲',
                 'text-size': ['interpolate', ['linear'], ['zoom'], 4, 12, 7, 16, 10, 22],
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
                 'text-allow-overlap': true,
                 'text-ignore-placement': true,
                 'text-anchor': 'center',
@@ -3255,6 +3259,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 visibility: showMping ? 'visible' : 'none',
                 'text-field': '◆',
                 'text-size': ['interpolate', ['linear'], ['zoom'], 4, 11, 7, 15, 10, 19],
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
                 'text-allow-overlap': true,
                 'text-ignore-placement': true,
                 'text-anchor': 'center',
@@ -3316,6 +3321,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 visibility: showMetar ? 'visible' : 'none',
                 'text-field': '↓',
                 'text-size': ['interpolate', ['linear'], ['zoom'], 4, 12, 7, 16, 10, 22],
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
                 'text-rotate': ['to-number', ['get', 'wdir']],
                 'text-rotation-alignment': 'map',
                 'text-allow-overlap': true,
