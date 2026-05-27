@@ -784,6 +784,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [audienceBreakdown, setAudienceBreakdown] = useState<AudienceBreakdown>({ total: 0, tn: 0, ms: 0, ar: 0, other: 0 });
 
   const [showSubs, setShowSubs] = useState(urlInitial.showSubs ?? true);
+  // Coverage heatmap — Mapbox heatmap layer on the same subs-source so dim
+  // regions = potential blind spots during an event. Default off so it
+  // doesn't compete with the pin layer for visual attention; the operator
+  // turns it on during recruitment planning or briefing time.
+  const [showCoverage, setShowCoverage] = useState(urlInitial.showCoverage ?? false);
   const subsCount = subsGeo.features?.length ?? 0;
 
   // Default the inspector closed on phones — the 304px panel would otherwise
@@ -880,6 +885,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     showSpc,
     showLsr,
     showStormReports,
+    showCoverage,
     showZones,
     showSubs,
     showStormTracks,
@@ -3378,6 +3384,29 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           <Source id="subs-source" type="geojson" data={subsGeo}>
             <Layer {...subsHaloLayer} />
             <Layer {...subsPinLayer} />
+            {/* Coverage density. Heatmap reads as a soft glow over populated
+                areas; the "dark" zones at typical AOR zooms are the gap.
+                Falls off above zoom 11 so individual pins take over. */}
+            <Layer
+              id="subs-coverage-heatmap"
+              {...overlayAnchor}
+              type="heatmap"
+              layout={{ visibility: showCoverage ? 'visible' : 'none' }}
+              paint={{
+                'heatmap-weight': 1,
+                'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 4, 0.6, 9, 1.2, 12, 1.8],
+                'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 4, 18, 7, 32, 10, 50, 13, 80],
+                'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 4, 0.55, 11, 0.55, 13, 0],
+                'heatmap-color': [
+                  'interpolate', ['linear'], ['heatmap-density'],
+                  0,   'rgba(0,0,0,0)',
+                  0.15, 'rgba(59,130,246,0.25)',
+                  0.4,  'rgba(56,189,248,0.45)',
+                  0.7,  'rgba(34,197,94,0.55)',
+                  1.0,  'rgba(250,204,21,0.65)',
+                ],
+              }}
+            />
           </Source>
 
           {/* GOES-19 GLM lightning flashes — small yellow bolts that fade
@@ -4346,11 +4375,25 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showSubs ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
-              <p className="text-[10px] text-wx-mute mb-3">
+              <p className="text-[10px] text-wx-mute mb-2">
                 {subsCount === 0
                   ? 'No active subscribers with a known location yet.'
                   : showSubs ? 'Cyan dots are active subscribers. Click a pin to open their profile.' : 'Pins hidden.'}
               </p>
+
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-[10px] text-wx-mute">
+                  Coverage heatmap{subsCount > 0 ? ` · dim = gap` : ''}
+                </div>
+                <button
+                  onClick={() => setShowCoverage((v) => !v)}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showCoverage ? 'bg-emerald-400' : 'bg-wx-line'}`}
+                  aria-pressed={showCoverage}
+                  title={showCoverage ? 'Hide coverage heatmap' : 'Show coverage heatmap'}
+                >
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showCoverage ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
 
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">

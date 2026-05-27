@@ -1,7 +1,8 @@
 import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
-import DashShell from '@/components/DashShell';
+import DashShell, { isFieldMode } from '@/components/DashShell';
 import ReportActions from './ReportActions';
+import { fetchSpotterStats, summarizeReliability } from './spotter-stats';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,13 +37,16 @@ export default async function ReportsTriagePage({
   searchParams,
 }: { searchParams?: SearchParams }) {
   const supa = supabaseServer();
+  const field = await isFieldMode();
+  // Field mode forces "needs triage" as the default + tightens the card
+  // grid to one big column for thumb reach on a phone during an active event.
   const statusFilter = searchParams?.status ?? 'open';
   const hours = Math.max(1, Math.min(168, parseInt(searchParams?.hours ?? '24', 10) || 24));
   const since = new Date(Date.now() - hours * 3600_000).toISOString();
 
   let query = supa
     .from('telegram_storm_reports')
-    .select('id, hazard, description, photo_url, lat, lon, place_name, status, reported_at, verified_at, dismissed_at, promoted_at, promoted_message_id, subscriber:subscribers(display_name, telegram_username)')
+    .select('id, hazard, description, photo_url, lat, lon, place_name, status, reported_at, verified_at, dismissed_at, promoted_at, promoted_message_id, last_forwarded_at, forward_count, subscriber_id, subscriber:subscribers(display_name, telegram_username)')
     .gte('reported_at', since)
     .order('reported_at', { ascending: false })
     .limit(200);
@@ -52,6 +56,9 @@ export default async function ReportsTriagePage({
     query = query.eq('status', statusFilter);
   }
   const { data: rows } = await query;
+
+  const subscriberIds = Array.from(new Set((rows ?? []).map((r) => r.subscriber_id).filter(Boolean) as string[]));
+  const spotterStats = await fetchSpotterStats(subscriberIds);
 
   const totals = await supa
     .from('telegram_storm_reports')
@@ -118,7 +125,7 @@ export default async function ReportsTriagePage({
       {!rows?.length ? (
         <p className="text-wx-mute text-sm">No reports in this window.</p>
       ) : (
-        <ul className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+        <ul className={field ? 'grid grid-cols-1 gap-3' : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3'}>
           {rows.map((r) => {
             const sub = Array.isArray(r.subscriber) ? r.subscriber[0] : r.subscriber;
             const reporter = sub?.telegram_username
@@ -173,15 +180,38 @@ export default async function ReportsTriagePage({
                   </p>
                 ) : null}
 
-                <div className="text-[10px] font-mono text-wx-mute flex justify-between mt-auto pt-1">
-                  <span>{reporter}</span>
-                  <span>{when} · {ageLabel}</span>
+                <div className="text-[10px] font-mono text-wx-mute flex justify-between items-center mt-auto pt-1 gap-2">
+                  <span className="truncate flex items-center gap-1.5 min-w-0">
+                    <span className="truncate">{reporter}</span>
+                    {(() => {
+                      const rel = summarizeReliability(r.subscriber_id ? spotterStats.get(r.subscriber_id) : undefined);
+                      if (!rel) return null;
+                      return (
+                        <span
+                          className={`shrink-0 inline-flex items-center rounded px-1 py-px text-[9px] bg-wx-ink/80 ${rel.tint}`}
+                          title={`Spotter has ${rel.confirmed} confirmed of ${rel.total} reports`}
+                        >
+                          ⭐ {rel.confirmed}/{rel.total}
+                        </span>
+                      );
+                    })()}
+                    {r.last_forwarded_at ? (
+                      <span
+                        className="shrink-0 inline-flex items-center rounded px-1 py-px text-[9px] bg-wx-ink/80 text-sky-300"
+                        title={`Forwarded ${r.forward_count ?? 1}× to nearby subscribers`}
+                      >
+                        📷 forwarded
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0">{when} · {ageLabel}</span>
                 </div>
 
                 <ReportActions
                   id={r.id}
                   status={r.status}
                   promotedMessageId={r.promoted_message_id}
+                  hasPhoto={Boolean(r.photo_url)}
                 />
               </li>
             );

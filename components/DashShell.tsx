@@ -50,6 +50,7 @@ export default async function DashShell({
     { href: '/schedule', label: 'Schedule' },
     { href: '/nws', label: 'NWS' },
     { href: '/radar', label: 'Radar' },
+    { href: '/briefing', label: 'Briefing' },
     { href: '/forecast', label: 'Forecast' },
     { href: '/map', label: 'Map' },
   ];
@@ -60,6 +61,7 @@ export default async function DashShell({
     { href: '/regions', label: 'Regions' },
     { href: '/alerts', label: 'Alerts' },
     { href: '/reports', label: 'Reports' },
+    { href: '/analytics/warnings', label: 'Verification' },
     { href: '/checkins', label: 'Check-ins' },
     { href: '/log', label: 'Log' },
     { href: '/health', label: 'Health' },
