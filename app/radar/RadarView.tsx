@@ -2684,7 +2684,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   }, [showLightning, mapReady]);
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] md:h-[calc(100vh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
+    <div className="h-[calc(100dvh-3.5rem)] md:h-[calc(100dvh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
       <div className="flex-1 relative overflow-hidden">
         <div className={`absolute inset-0 ${splitProduct ? 'flex flex-row' : ''}`}>
         <div className={splitProduct ? 'relative h-full flex-1 min-w-0' : 'relative h-full w-full'}>
@@ -4708,7 +4708,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         )}
 
         {selection && (
-          <div className="absolute bottom-4 left-4 w-[320px] p-5 bg-wx-card border border-wx-line rounded-xl z-30">
+          <div className="absolute bottom-2 left-2 right-2 md:bottom-4 md:left-4 md:right-auto md:w-[320px] p-4 md:p-5 bg-wx-card border border-wx-line rounded-xl z-30">
             <div className="flex items-start justify-between">
               <div>
                 <div className="text-[11px] uppercase tracking-[0.06em] text-wx-mute font-semibold">Audience in area</div>
@@ -4741,11 +4741,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
-        {/* Hide-all-UI toggle (always visible so we can get out of hidden mode). */}
+        {/* Hide-all-UI toggle (always visible so we can get out of hidden mode).
+            Desktop sits bottom-right; mobile moves to top-right so it doesn't
+            clash with the Layers pill / timeline at the bottom edge. */}
         <button
           type="button"
           onClick={() => setUiHidden((v) => !v)}
-          className="absolute bottom-4 right-4 z-30 w-9 h-9 inline-flex items-center justify-center rounded-lg bg-wx-card border border-wx-line text-wx-mute hover:text-wx-fg hover:border-wx-accent"
+          className="absolute top-3 right-3 md:top-auto md:bottom-4 md:right-4 z-30 w-9 h-9 inline-flex items-center justify-center rounded-lg bg-wx-card border border-wx-line text-wx-mute hover:text-wx-fg hover:border-wx-accent"
           aria-label={uiHidden ? 'Show UI (H)' : 'Hide UI (H)'}
           title={uiHidden ? 'Show UI (H)' : 'Hide UI (H)'}
           aria-pressed={uiHidden}
@@ -4795,8 +4797,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             .filter((x): x is { idx: number; label: string } => x != null);
 
           return (
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-[min(880px,calc(100%-380px))] min-w-[520px] z-30">
-              <div className="bg-wx-card border border-wx-line rounded-xl px-4 py-3.5 flex items-center gap-3.5">
+            <div className="absolute bottom-2 md:bottom-4 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[min(880px,calc(100%-380px))] md:min-w-[520px] z-30">
+              <div className="bg-wx-card border border-wx-line rounded-xl px-3 md:px-4 py-2.5 md:py-3.5 flex items-center gap-2 md:gap-3.5">
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => { setPlaying(false); setFrame((f) => Math.max(0, f - 1)); }}
@@ -4955,7 +4957,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         )}
 
         {hoverPixel && (
-          <div className="absolute bottom-4 right-4 font-mono text-[11px] bg-wx-card border border-wx-line rounded-md px-2.5 py-1.5 z-20">
+          // Hover-only readout. Hidden on touch devices because a tap fires
+          // mousemove → the chip flashes briefly then never clears since
+          // there's no mouseleave on a finger lift.
+          <div className="hidden md:block absolute bottom-4 right-4 font-mono text-[11px] bg-wx-card border border-wx-line rounded-md px-2.5 py-1.5 z-20 [@media(hover:none)]:hidden">
             <span className="text-wx-mute">lat</span> {hoverPixel.lat.toFixed(3)} <span className="text-wx-mute">lon</span> {hoverPixel.lng.toFixed(3)} <span className="text-wx-mute">· </span>{sampleLabel}
           </div>
         )}
@@ -4964,7 +4969,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             readout so the operator can dismiss without losing the cursor
             position. */}
         {selectedLsr && (
-          <div className="absolute bottom-14 right-4 w-[280px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
+          <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[280px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
@@ -5015,7 +5020,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             ? Math.max(0, Math.round((Date.now() - new Date(sm.obtime).getTime()) / 60_000))
             : null;
           return (
-            <div className="absolute bottom-14 right-4 w-[280px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
+            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[280px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
@@ -5059,7 +5064,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             ? Math.max(0, Math.round((Date.now() - new Date(m.obsTime).getTime()) / 60_000))
             : null;
           return (
-            <div className="absolute bottom-14 right-4 w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
+            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
@@ -5159,7 +5164,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               : `Weak rotation under observation (${Math.round(sc.shear_kt)} kt, ${ageStr}) on ${sc.site} radar at ${sc.track_id}. Stay weather-aware and have a shelter plan ready in case it strengthens.`;
           const composeHref = `/compose?geo=${encodeURIComponent(JSON.stringify(composeGeo))}&hazard=tornado&body=${encodeURIComponent(body)}`;
           return (
-            <div className="absolute bottom-14 right-4 w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
+            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
@@ -5250,7 +5255,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
         {hoverSub && (
           <div
-            className="absolute z-50 bg-wx-card border border-wx-line rounded-lg px-2.5 py-2 text-[11px] pointer-events-none shadow-lg max-w-[240px]"
+            className="hidden md:block absolute z-50 bg-wx-card border border-wx-line rounded-lg px-2.5 py-2 text-[11px] pointer-events-none shadow-lg max-w-[240px] [@media(hover:none)]:hidden"
             style={{ left: hoverPos.x + 12, top: hoverPos.y - 20 }}
           >
             <div className="font-semibold text-wx-fg">{hoverSub.name || 'Subscriber'}</div>
