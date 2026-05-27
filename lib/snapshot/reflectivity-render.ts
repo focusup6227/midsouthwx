@@ -184,9 +184,13 @@ function bboxToMercatorString(bbox: Bbox): string {
 
 // Earth circumference in meters at the equator (Web Mercator). Used to map
 // between zoom level and meters-per-pixel for the Mapbox Static center+zoom
-// API. Mapbox uses 512-px tiles by default for its newer styles.
+// API. The `zoom` query parameter on Static Images follows the OSM/standard
+// 256-px tile convention (zoom 0 = world in one 256x256 tile) — even though
+// Mapbox's vector tiles are physically 512x512 internally. Using 512 here
+// would make zoom one level too low and the rendered basemap would cover
+// 2x the linear area we ask NCEP for, leaving the radar inside a wider basemap.
 const EARTH_CIRCUMFERENCE_M = 40075016.686;
-const MAPBOX_TILE_SIZE = 512;
+const MAPBOX_TILE_SIZE = 256;
 
 /** Plan the static-image viewport: from a polygon bbox, pick the center +
  *  zoom + final lon/lat bbox so a Mapbox center+zoom request and an NCEP WMS
