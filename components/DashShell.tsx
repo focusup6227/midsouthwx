@@ -6,6 +6,7 @@ import FieldModeToggle from './FieldModeToggle';
 import HealthIndicator from './HealthIndicator';
 import NotificationPermissionButton from './NotificationPermissionButton';
 import SevereAlertAudio from './SevereAlertAudio';
+import StormReportAudio from './StormReportAudio';
 import MobileNavOverlay from './MobileNavOverlay';
 
 type Props = {
@@ -68,6 +69,7 @@ export default async function DashShell({
   return (
     <>
       <SevereAlertAudio />
+      <StormReportAudio />
       {mobileCompact ? (
         <MobileNavOverlay primary={primary} secondary={secondary} field={field} />
       ) : null}

@@ -43,10 +43,14 @@ import {
   useMetar,
   useMping,
   useStormReports,
+  useStormReportClusters,
   WARNINGS_KEY,
+  STORM_REPORTS_KEY,
+  STORM_REPORT_CLUSTERS_KEY,
 } from './_hooks/useRadarData';
 import { useSWRConfig } from 'swr';
 import AfdPanel from './_components/AfdPanel';
+import StormReportPopupActions from './_components/StormReportPopupActions';
 import { parseRadarUrl, useRadarUrlSync } from './_hooks/useRadarUrlState';
 import { MODEL_OVERLAYS, DISABLED_MODELS, type ModelOverlayKey } from '@/lib/radar/models';
 
@@ -610,6 +614,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const lsrGeo = (lsrSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   const stormReportsSwr = useStormReports();
   const stormReportsGeo = (stormReportsSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
+  const stormReportClustersSwr = useStormReportClusters();
+  const stormReportClustersGeo = (stormReportClustersSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   const spcSwr = useSpc(initialSpcDays);
   const mrmsSwr = useMrmsLatest();
   const mrmsUrlPath = mrmsSwr.data?.urlPath ?? null;
@@ -683,6 +689,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showLsr, setShowLsr] = useState(urlInitial.showLsr ?? true);
   // Telegram-submitted subscriber storm reports. Default on; toggle in inspector.
   const [showStormReports, setShowStormReports] = useState(urlInitial.showStormReports ?? true);
+  // Cluster ring pulse phase (0 ↔ 1) — drives circle-opacity on the cluster
+  // layer so the operator sees a slow heartbeat at active cluster centroids.
+  // 2 s period, paused when no clusters are active to avoid wasted renders.
+  const [clusterPulse, setClusterPulse] = useState(0);
   const [selectedStormReport, setSelectedStormReport] = useState<{
     id: string;
     hazard: string;
@@ -692,6 +702,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     reporter: string | null;
     place_name: string | null;
     status: string | null;
+    lat: number;
+    lon: number;
   } | null>(null);
   // NWS forecast + fire zone outlines from /public/maps/nws-zones.geojson
   // (run `npm run gen:zones` to rebuild). Off by default — useful for
@@ -2185,7 +2197,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (showStormReports && map.getLayer('storm-report-pin')) {
       const hits = map.queryRenderedFeatures(e.point, { layers: ['storm-report-pin'] });
       if (hits.length > 0) {
-        const props = hits[0].properties as any;
+        const f = hits[0];
+        const props = f.properties as any;
+        const geom = f.geometry as GeoJSON.Point | undefined;
+        const [lon, lat] = geom?.coordinates ?? [0, 0];
         setSelectedStormReport({
           id: String(props?.id ?? ''),
           hazard: String(props?.hazard ?? 'other'),
@@ -2195,6 +2210,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           reporter: (props?.reporter as string | null) ?? null,
           place_name: (props?.place_name as string | null) ?? null,
           status: (props?.status as string | null) ?? null,
+          lat: Number(lat),
+          lon: Number(lon),
         });
         return;
       }
@@ -2718,6 +2735,21 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     };
   }, [stormReportsGeo, scrubTimeMs]);
 
+  const activeClusterCount = stormReportClustersGeo.features?.length ?? 0;
+  useEffect(() => {
+    if (activeClusterCount === 0) {
+      setClusterPulse(0);
+      return;
+    }
+    const start = performance.now();
+    const id = window.setInterval(() => {
+      const t = (performance.now() - start) / 2000; // 2s period
+      // Sine 0..1 — smooth in/out so the ring breathes rather than blinks.
+      setClusterPulse(0.5 + 0.5 * Math.sin(t * Math.PI * 2));
+    }, 80);
+    return () => window.clearInterval(id);
+  }, [activeClusterCount]);
+
   // Convert quantized `v` (0-255) to natural units for the hover readout.
   const sampleLabel = useMemo(() => {
     if (!hoverPixel || hoverPixel.sample == null) return '—';
@@ -3138,6 +3170,28 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 'circle-color': LSR_FILL_EXPR,
                 'circle-stroke-color': '#0b1220',
                 'circle-stroke-width': 1.5,
+              }}
+            />
+          </Source>
+
+          {/* Live event mode: pulsing ring at each active cluster centroid
+              (≥2 same-hazard reports within 5 km / 10 min, fired in the last
+              30 min). Sits below the storm-report pins so the operator can
+              still click individual reports inside the ring. */}
+          <Source id="storm-report-cluster-source" type="geojson" data={stormReportClustersGeo as any}>
+            <Layer
+              id="storm-report-cluster-ring"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showStormReports ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 22, 7, 38, 10, 60, 14, 96],
+                'circle-color': STORM_REPORT_FILL_EXPR,
+                'circle-opacity': 0.04 + 0.20 * clusterPulse,
+                'circle-stroke-color': STORM_REPORT_FILL_EXPR,
+                'circle-stroke-width': 1.5,
+                'circle-stroke-opacity': 0.55 + 0.35 * clusterPulse,
+                'circle-blur': 0.15,
               }}
             />
           </Source>
@@ -5230,16 +5284,14 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   &quot;{sr.description}&quot;
                 </p>
               ) : null}
-              <div className="flex gap-2 pt-1">
-                <a
-                  href="/reports"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[10px] text-wx-accent hover:underline"
-                >
-                  Open in triage →
-                </a>
-              </div>
+              <StormReportPopupActions
+                report={sr}
+                onActed={() => {
+                  setSelectedStormReport(null);
+                  swrMutate(STORM_REPORTS_KEY);
+                  swrMutate(STORM_REPORT_CLUSTERS_KEY);
+                }}
+              />
             </div>
           );
         })()}
