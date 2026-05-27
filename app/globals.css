@@ -71,3 +71,12 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
 .site-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: theme(colors.wx.card); border: 1px solid theme(colors.wx.line); color: theme(colors.wx.fg); border-radius: 8px; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: border-color 0.15s ease; }
 .site-chip:hover { border-color: theme(colors.wx.accent); }
 .site-chip.active { background: theme(colors.wx.accent); color: #111; border-color: theme(colors.wx.accent); }
+
+/* Dark theme for the warning-click popup on /radar. Default Mapbox popup is
+   white-on-white which clashes with the dashboard's wx-bg dark theme and
+   makes the radar-overlay backdrop unreadable around the tip. */
+.wx-warning-popup .mapboxgl-popup-content { background: theme(colors.wx.card); color: theme(colors.wx.fg); border: 1px solid theme(colors.wx.line); border-radius: 8px; padding: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); }
+.wx-warning-popup.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip { border-top-color: theme(colors.wx.card); }
+.wx-warning-popup.mapboxgl-popup-anchor-top .mapboxgl-popup-tip { border-bottom-color: theme(colors.wx.card); }
+.wx-warning-popup.mapboxgl-popup-anchor-left .mapboxgl-popup-tip { border-right-color: theme(colors.wx.card); }
+.wx-warning-popup.mapboxgl-popup-anchor-right .mapboxgl-popup-tip { border-left-color: theme(colors.wx.card); }

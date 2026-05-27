@@ -125,23 +125,10 @@ export default function AlertMap({
         cooperativeGestures
         customAttribution='<a href="https://librewxr.net" target="_blank" rel="noopener noreferrer">© LibreWxR</a> (CC BY 4.0)'
       >
-        {radarTileUrl ? (
-          <Source
-            id="alert-radar"
-            type="raster"
-            tiles={[radarTileUrl]}
-            tileSize={LIBREWXR_TILE_SIZE}
-            maxzoom={LIBREWXR_MAX_ZOOM}
-          >
-            {/* Radar sits beneath the polygon so the warning outline stays
-                readable on top of busy reflectivity. */}
-            <Layer
-              id="alert-radar-layer"
-              type="raster"
-              paint={{ 'raster-opacity': 0.78 }}
-            />
-          </Source>
-        ) : null}
+        {/* Polygon source/layers mount synchronously on first render. The
+            radar layer below mounts AFTER the LibreWxR index fetch resolves,
+            so without an explicit beforeId Mapbox stacks it on top of the
+            polygon and hides the warning outline. */}
         <Source
           id="alert-polygon"
           type="geojson"
@@ -158,6 +145,22 @@ export default function AlertMap({
             paint={{ 'line-color': fill, 'line-width': 2.5 }}
           />
         </Source>
+        {radarTileUrl ? (
+          <Source
+            id="alert-radar"
+            type="raster"
+            tiles={[radarTileUrl]}
+            tileSize={LIBREWXR_TILE_SIZE}
+            maxzoom={LIBREWXR_MAX_ZOOM}
+          >
+            <Layer
+              id="alert-radar-layer"
+              type="raster"
+              paint={{ 'raster-opacity': 0.78 }}
+              beforeId="alert-polygon-fill"
+            />
+          </Source>
+        ) : null}
       </Map>
     </div>
   );

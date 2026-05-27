@@ -6,7 +6,7 @@
 import '@/lib/mapbox/patch-remove-source';
 
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import Map, { Source, Layer, type MapMouseEvent, type MapRef } from 'react-map-gl';
+import Map, { Source, Layer, Popup, type MapMouseEvent, type MapRef } from 'react-map-gl';
 import mapboxgl from 'mapbox-gl';
 import {
   AnnotationLayer,
@@ -28,7 +28,7 @@ import {
   distanceKm,
   type RadarSite,
 } from '@/lib/radar/sites';
-import { alertTint, categoryBadge, type NwsRadarAlert } from '@/lib/nws/radar';
+import { alertTint, categoryBadge, shortNwsLocation, type NwsRadarAlert } from '@/lib/nws/radar';
 import { STORM_TRACK_LINE_COLOR } from '@/lib/nws/storm-tracks';
 import {
   useWarnings,
@@ -711,6 +711,17 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showSpc, setShowSpc] = useState(urlInitial.showSpc ?? false);
   const [spcDay, setSpcDay] = useState<1 | 2 | 3>(1);
   const [selectedWarning, setSelectedWarning] = useState<NwsWarning | null>(null);
+  // Map popup anchored at the polygon click location. `candidates` holds every
+  // warning whose polygon was under the click, deduped by id, so overlapping
+  // warnings render a chooser instead of silently picking the topmost one.
+  // When `candidates.length === 1` we render the single-warning detail card
+  // directly; otherwise the operator picks one from the list.
+  const [warningPopup, setWarningPopup] = useState<{
+    lng: number;
+    lat: number;
+    candidates: NwsWarning[];
+    chosenId: string | null;
+  } | null>(null);
   const [hoverPixel, setHoverPixel] = useState<{ lng: number; lat: number; sample: number | null } | null>(null);
   const [hoverSub, setHoverSub] = useState<any | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -2110,12 +2121,33 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     }
     if (!map.getLayer('warning-fill')) return;
     const hits = map.queryRenderedFeatures(e.point, { layers: ['warning-fill'] });
-    if (hits.length > 0) {
-      const w = warnings.find((x) => x.id === (hits[0].properties as any)?.id);
-      if (w) {
-        setSelectedWarning(w);
-        focusWarning(w);
-      }
+    if (hits.length === 0) return;
+
+    // Multiple overlapping polygons (common: a Tornado Warning nested inside
+    // an SVR Watch, or two adjoining county-level alerts) → open a popup
+    // listing each one so the operator picks which to act on rather than
+    // silently getting the topmost-rendered feature.
+    const seen = new Set<string>();
+    const candidates: NwsWarning[] = [];
+    for (const f of hits) {
+      const id = (f.properties as { id?: string } | null)?.id;
+      if (!id || seen.has(id)) continue;
+      const w = warnings.find((x) => x.id === id);
+      if (!w) continue;
+      seen.add(id);
+      candidates.push(w);
+    }
+    if (candidates.length === 0) return;
+
+    setWarningPopup({
+      lng: e.lngLat.lng,
+      lat: e.lngLat.lat,
+      candidates,
+      chosenId: candidates.length === 1 ? candidates[0].id : null,
+    });
+    if (candidates.length === 1) {
+      setSelectedWarning(candidates[0]);
+      focusWarning(candidates[0]);
     }
   };
 
@@ -3273,6 +3305,151 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           )}
 
           <AnnotationLayer geojson={annotations.geojson} />
+
+          {warningPopup ? (
+            <Popup
+              longitude={warningPopup.lng}
+              latitude={warningPopup.lat}
+              anchor="bottom"
+              offset={12}
+              closeButton={false}
+              closeOnClick={false}
+              onClose={() => setWarningPopup(null)}
+              maxWidth="280px"
+              className="wx-warning-popup"
+            >
+              {(() => {
+                const chosen = warningPopup.chosenId
+                  ? warningPopup.candidates.find((c) => c.id === warningPopup.chosenId) ?? null
+                  : null;
+                // Multi-candidate chooser: render one row per overlapping
+                // polygon so the operator picks which warning to act on.
+                if (!chosen) {
+                  return (
+                    <div className="w-[260px] space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[11px] font-semibold text-wx-fg">
+                          {warningPopup.candidates.length} warnings here
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setWarningPopup(null)}
+                          className="text-wx-mute hover:text-wx-fg"
+                          aria-label="Close popup"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                      <ul className="space-y-1.5">
+                        {warningPopup.candidates.map((w) => {
+                          const t = alertTint(w.category, w.hazard);
+                          return (
+                            <li key={w.id}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setWarningPopup({ ...warningPopup, chosenId: w.id });
+                                  setSelectedWarning(w);
+                                  focusWarning(w);
+                                }}
+                                className={`w-full text-left p-2 rounded-md bg-wx-ink border ${t.border} ${t.bg} hover:bg-wx-card transition`}
+                              >
+                                <div className={`text-[11px] font-semibold ${t.text}`}>{w.event}</div>
+                                <div className="text-[10px] text-wx-mute mt-0.5 line-clamp-1">
+                                  {shortNwsLocation(w.area_desc) ?? w.area_desc ?? '—'}
+                                </div>
+                                <div className="text-[10px] text-wx-mute mt-0.5">
+                                  {categoryBadge(w.category)} · {w.severity ?? '—'}
+                                </div>
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  );
+                }
+                // Single-warning detail: mirrors the side-panel card so the
+                // popup and inspector stay in sync after a selection.
+                const t = alertTint(chosen.category, chosen.hazard);
+                const trackUrl = chosen.forecast_track && chosen.in_path_count != null
+                  ? composeUrlForWarningTrack(chosen)
+                  : null;
+                return (
+                  <div className={`w-[260px] p-1 space-y-1.5`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className={`text-[11px] font-semibold ${t.text}`}>{chosen.event}</div>
+                        {chosen.ai_summary ? (
+                          <p className="text-[10.5px] text-wx-fg/90 mt-0.5 line-clamp-3">
+                            {chosen.ai_summary}
+                          </p>
+                        ) : chosen.headline ? (
+                          <p className="text-[10.5px] text-wx-fg/85 mt-0.5 line-clamp-3">
+                            {chosen.headline}
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setWarningPopup(null)}
+                        className="text-wx-mute hover:text-wx-fg shrink-0"
+                        aria-label="Close popup"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-wx-mute">
+                      {categoryBadge(chosen.category)} · {chosen.severity ?? '—'} · until{' '}
+                      {chosen.expires_at
+                        ? new Date(chosen.expires_at).toLocaleString([], {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })
+                        : '—'}
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1">
+                      <a href={`/nws/${chosen.id}`} className="text-[11px] text-wx-accent font-medium">
+                        Full NWS detail →
+                      </a>
+                      <a
+                        href={composeUrlForWarning(chosen)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-wx-accent text-black rounded-md text-[11px] font-semibold hover:bg-amber-300"
+                        title="Send to subscribers in this polygon"
+                      >
+                        <Send size={11} /> Send to polygon
+                      </a>
+                    </div>
+                    {trackUrl ? (
+                      <a
+                        href={trackUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 border border-amber-400/50 text-amber-300 hover:bg-amber-400/10 rounded-md text-[11px] font-semibold w-full"
+                        title={`Send to ${chosen.in_path_count} subscribers in the storm's projected ${chosen.in_path_corridor_km ?? 8}km corridor`}
+                      >
+                        <Send size={11} />
+                        Send to path · {chosen.in_path_count} in {chosen.in_path_corridor_km ?? 8}km
+                      </a>
+                    ) : null}
+                    {warningPopup.candidates.length > 1 ? (
+                      <button
+                        type="button"
+                        onClick={() => setWarningPopup({ ...warningPopup, chosenId: null })}
+                        className="w-full text-[10px] text-wx-mute hover:text-wx-fg pt-0.5"
+                      >
+                        ← back to {warningPopup.candidates.length} warnings here
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })()}
+            </Popup>
+          ) : null}
         </Map>
         </div>
         {splitProduct && (
