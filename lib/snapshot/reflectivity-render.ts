@@ -201,10 +201,12 @@ async function buildRadarMosaic(
   if (ready.length === 0) return null;
 
   const project = makeProjector(bbox, w, h);
-  // Place each tile. Resize via sharp first so composite gets the right
-  // footprint; the placement is integer pixel because sharp's `left`/`top`
-  // are pixel-aligned.
-  const overlays: sharp.OverlayOptions[] = await Promise.all(
+  // Place each tile. LibreWxR tiles align to a global slippy grid that almost
+  // never matches the polygon bbox edges, so most tiles extend past the
+  // canvas on one or more sides. Sharp's composite refuses any overlay that
+  // doesn't fit entirely inside the base, so we crop each tile to just the
+  // visible slice before placing.
+  const overlays: (sharp.OverlayOptions | null)[] = await Promise.all(
     ready.map(async (t) => {
       const tileWestLon = tileXToLon(t.x, z);
       const tileEastLon = tileXToLon(t.x + 1, z);
@@ -212,20 +214,45 @@ async function buildRadarMosaic(
       const tileSouthLat = tileYToLat(t.y + 1, z);
       const [xL, yT] = project(tileWestLon, tileNorthLat);
       const [xR, yB] = project(tileEastLon, tileSouthLat);
-      const tileW = Math.max(1, Math.round(xR - xL));
-      const tileH = Math.max(1, Math.round(yB - yT));
+      const fullW = Math.max(1, Math.round(xR - xL));
+      const fullH = Math.max(1, Math.round(yB - yT));
       const left = Math.round(xL);
       const top = Math.round(yT);
-      const resized = await sharp(t.buf).resize(tileW, tileH, { fit: 'fill' }).png().toBuffer();
-      return { input: resized, left, top };
+
+      // Visible region within the canvas, clamped to [0, w/h].
+      const canvasLeft = Math.max(0, left);
+      const canvasTop = Math.max(0, top);
+      const canvasRight = Math.min(w, left + fullW);
+      const canvasBottom = Math.min(h, top + fullH);
+      const visibleW = canvasRight - canvasLeft;
+      const visibleH = canvasBottom - canvasTop;
+      if (visibleW <= 0 || visibleH <= 0) return null;
+
+      // Corresponding region inside the resized tile.
+      const cropLeft = canvasLeft - left;
+      const cropTop = canvasTop - top;
+
+      let pipeline = sharp(t.buf).resize(fullW, fullH, { fit: 'fill' });
+      if (cropLeft !== 0 || cropTop !== 0 || visibleW !== fullW || visibleH !== fullH) {
+        pipeline = pipeline.extract({
+          left: cropLeft,
+          top: cropTop,
+          width: visibleW,
+          height: visibleH,
+        });
+      }
+      const cropped = await pipeline.png().toBuffer();
+      return { input: cropped, left: canvasLeft, top: canvasTop };
     }),
   );
+  const placed = overlays.filter((o): o is sharp.OverlayOptions => o !== null);
+  if (placed.length === 0) return null;
 
-  // Empty transparent canvas, then layer the resized tiles.
+  // Empty transparent canvas, then layer the cropped tiles.
   return sharp({
     create: { width: w, height: h, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
   })
-    .composite(overlays)
+    .composite(placed)
     .png()
     .toBuffer();
 }
