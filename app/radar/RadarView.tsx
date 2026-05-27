@@ -1376,6 +1376,12 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     effectiveProduct === 'correlation'
     || (hiRes && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity'))
   );
+  // CC always uses the PNG path. A super-res CC sweep produces 250–500 k
+  // polygons → 8–15 MB gzipped GeoJSON, which can take 30–60 s to download
+  // on cell and parse on the phone (manifests as "stuck loading"). PNG renders
+  // the same gates as a single ~300 KB raster, no pointer ρhv readout but
+  // the operator cares about pattern (debris ball, hail signature) anyway.
+  const useL2Png = pngFallback || effectiveProduct === 'correlation';
 
   const selectProduct = useCallback((k: ProductKey) => {
     const meta = PRODUCTS[k];
@@ -1527,7 +1533,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     setLevel2Attempt(0);
 
     const RETRY_DELAYS = [4000, 8000, 12000];
-    const format = pngFallback ? 'png' : 'geojson';
+    const format = useL2Png ? 'png' : 'geojson';
     // Track every pending retry timeout so a fast site/product switch cancels
     // them instead of letting them fire and queue stale fetches at the
     // renderer.
@@ -1663,7 +1669,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       pendingTimeouts.clear();
       abort.abort();
     };
-  }, [useLevel2, selectedSite, level2Product, resolvedSweepIndex, isComposite, pngFallback]);
+  }, [useLevel2, selectedSite, level2Product, resolvedSweepIndex, isComposite, useL2Png]);
 
   const radarSourceId = 'radar-source';
   const radarLayerId = 'radar-layer';
@@ -1769,12 +1775,12 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   }, [splitProduct, selectedSite, tileCacheKey]);
 
   const level2GeoJSONSource = useMemo(() => {
-    if (!useLevel2 || pngFallback || !level2GeoJSON) return null;
+    if (!useLevel2 || useL2Png || !level2GeoJSON) return null;
     return { type: 'geojson' as const, data: level2GeoJSON };
-  }, [useLevel2, pngFallback, level2GeoJSON]);
+  }, [useLevel2, useL2Png, level2GeoJSON]);
 
   const level2ImageSource = useMemo(() => {
-    if (!useLevel2 || !pngFallback || !level2Overlay?.image_url) return null;
+    if (!useLevel2 || !useL2Png || !level2Overlay?.image_url) return null;
     const { north, south, east, west } = level2Overlay.bounds;
     return {
       type: 'image' as const,
@@ -1783,7 +1789,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         [west, north], [east, north], [east, south], [west, south],
       ] as [number, number][],
     };
-  }, [useLevel2, pngFallback, level2Overlay]);
+  }, [useLevel2, useL2Png, level2Overlay]);
 
   // Live + Level II opacity are kept up-to-date imperatively (see the
   // useEffect just below this block), so these layer configs intentionally
@@ -1886,8 +1892,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       // first-paint while Hi-Res is en route.
       const level2Painting =
         useLevel2 &&
-        ((!pngFallback && !!level2GeoJSON) ||
-          (pngFallback && !!level2Overlay?.image_url));
+        ((!useL2Png && !!level2GeoJSON) ||
+          (useL2Png && !!level2Overlay?.image_url));
       const hideNcep = useLibreWxR || level2Painting;
       map.setPaintProperty(radarLayerId, 'raster-opacity', hideNcep ? 0 : opacity / 100);
     }
@@ -1932,7 +1938,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         buildFillOpacityExpr(level2Product, opacity / 100, level2Overlay.vmin, level2Overlay.vmax),
       );
     }
-  }, [opacity, level2Overlay, level2GeoJSON, pngFallback, level2Product, useLibreWxR, useLevel2, level2Error, lwxrAllFrames, frame, mapReady]);
+  }, [opacity, level2Overlay, level2GeoJSON, useL2Png, level2Product, useLibreWxR, useLevel2, level2Error, lwxrAllFrames, frame, mapReady]);
 
   // Imperative line-width update when the operator selects a warning. The
   // layer's `paint` prop stays referentially stable (no react-map-gl diff);
@@ -1965,7 +1971,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     const map = mapRef.current?.getMap();
     const { lng, lat } = e.lngLat;
     let sample: number | null = null;
-    if (map && useLevel2 && !pngFallback && level2Overlay && map.getLayer('level2-fill')) {
+    if (map && useLevel2 && !useL2Png && level2Overlay && map.getLayer('level2-fill')) {
       const hits = map.queryRenderedFeatures(e.point, { layers: ['level2-fill'] });
       if (hits.length > 0) {
         const q = (hits[0].properties as any)?.v;
@@ -1988,7 +1994,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     } else {
       setHoverSub(null);
     }
-  }, [useLevel2, pngFallback, level2Overlay, showSubs]);
+  }, [useLevel2, useL2Png, level2Overlay, showSubs]);
 
   // F7: derived selectors for the currently-rendered SPC day.
   const activeSpc = useMemo(
@@ -3818,7 +3824,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                             return s ? formatElev(s.elevation_deg) : '—';
                           })();
                       if (effectiveProduct === 'correlation') return `Level II · ρhv · ${tiltLabel}`;
-                      return `Level II · ${tiltLabel}${pngFallback ? ' · PNG' : ''}`;
+                      return `Level II · ${tiltLabel}${useL2Png ? ' · PNG' : ''}`;
                     }
                     return selectedSite ? 'Single-site' : 'CONUS · QCD';
                   })()}

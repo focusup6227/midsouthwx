@@ -55,12 +55,23 @@ _CMAPS = {
         (0.70, "#fb7185"),
         (1.00, "#b91c1c"),
     ]),
+    # Mirror the dashboard's kk.pal correlation-coefficient ramp (see
+    # CC_STOPS in app/radar/RadarView.tsx). Stops are in [0, 1] colormap
+    # space; the values 0–1.05 map there via Normalize(vmin=0, vmax=1.05),
+    # so each ρhv value v is at position v / 1.05.
     "cc": LinearSegmentedColormap.from_list("cc", [
-        (0.00, "#1f2937"),
-        (0.40, "#4b5563"),
-        (0.65, "#6b7280"),
-        (0.85, "#fbbf24"),
-        (1.00, "#ef4444"),
+        (0.00 / 1.05, "#FFFFFF"),
+        (0.45 / 1.05, "#000000"),
+        (0.60 / 1.05, "#0A0ABE"),
+        (0.75 / 1.05, "#7878FF"),
+        (0.80 / 1.05, "#5FF564"),
+        (0.85 / 1.05, "#87D70A"),
+        (0.90 / 1.05, "#FFFF00"),
+        (0.95 / 1.05, "#FF8C00"),
+        (0.97 / 1.05, "#E10300"),
+        (0.99 / 1.05, "#8B1E4D"),
+        (1.00 / 1.05, "#FFB4D7"),
+        (1.00,        "#A43696"),
     ]),
 }
 
