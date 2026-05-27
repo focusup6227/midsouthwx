@@ -102,7 +102,7 @@ Deno.serve(withHealthLog('nws-poll', async (req) => {
     return json({ ok: false, error: String(e) }, 500);
   }
 
-  const spcFeatures = await fetchSpcMesoscaleDiscussions();
+  const spcFeatures = await fetchSpcMesoscaleDiscussions(supa);
   features.push(...spcFeatures);
 
   const activeNwsIds: string[] = [];

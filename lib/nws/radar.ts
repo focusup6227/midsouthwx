@@ -144,22 +144,40 @@ export function categoryBadge(category: NwsAlertCategory): string {
 // Tailwind class fragments used by the radar detail-card border + header so
 // the panel reads as the same color the polygon paints on the map. Hazard
 // trumps category for warnings (a tornado warning is red, not amber).
-type Tint = { border: string; text: string; bg: string };
+type Tint = { border: string; text: string; bg: string; chip: string };
 
 const TINTS: Record<string, Tint> = {
-  'warning:tornado': { border: 'border-red-500/60',     text: 'text-red-300',     bg: 'bg-red-500/10' },
-  'warning:severe':  { border: 'border-orange-500/60',  text: 'text-orange-300',  bg: 'bg-orange-500/10' },
-  'warning:flood':   { border: 'border-emerald-500/60', text: 'text-emerald-300', bg: 'bg-emerald-500/10' },
-  'warning:winter':  { border: 'border-sky-500/60',     text: 'text-sky-300',     bg: 'bg-sky-500/10' },
-  'warning:*':       { border: 'border-amber-500/60',   text: 'text-amber-300',   bg: 'bg-amber-500/10' },
-  'watch:*':         { border: 'border-yellow-500/50',  text: 'text-yellow-200',  bg: 'bg-yellow-500/10' },
-  'advisory:*':      { border: 'border-violet-500/50',  text: 'text-violet-200',  bg: 'bg-violet-500/10' },
-  'discussion:*':    { border: 'border-fuchsia-500/60', text: 'text-fuchsia-200', bg: 'bg-fuchsia-500/10' },
-  'statement:*':     { border: 'border-slate-500/50',   text: 'text-slate-300',   bg: 'bg-slate-500/10' },
-  'other:*':         { border: 'border-slate-500/50',   text: 'text-slate-300',   bg: 'bg-slate-500/10' },
+  'warning:tornado': { border: 'border-red-500/60',     text: 'text-red-300',     bg: 'bg-red-500/10',     chip: 'bg-red-500/20 text-red-300' },
+  'warning:severe':  { border: 'border-orange-500/60',  text: 'text-orange-300',  bg: 'bg-orange-500/10',  chip: 'bg-orange-500/20 text-orange-300' },
+  'warning:flood':   { border: 'border-emerald-500/60', text: 'text-emerald-300', bg: 'bg-emerald-500/10', chip: 'bg-emerald-500/20 text-emerald-300' },
+  'warning:winter':  { border: 'border-sky-500/60',     text: 'text-sky-300',     bg: 'bg-sky-500/10',     chip: 'bg-sky-500/20 text-sky-300' },
+  'warning:*':       { border: 'border-amber-500/60',   text: 'text-amber-300',   bg: 'bg-amber-500/10',   chip: 'bg-amber-500/20 text-amber-300' },
+  'watch:*':         { border: 'border-yellow-500/50',  text: 'text-yellow-200',  bg: 'bg-yellow-500/10',  chip: 'bg-yellow-500/20 text-yellow-200' },
+  'advisory:*':      { border: 'border-violet-500/50',  text: 'text-violet-200',  bg: 'bg-violet-500/10',  chip: 'bg-violet-500/20 text-violet-200' },
+  'discussion:*':    { border: 'border-fuchsia-500/60', text: 'text-fuchsia-200', bg: 'bg-fuchsia-500/10', chip: 'bg-fuchsia-500/20 text-fuchsia-200' },
+  'statement:*':     { border: 'border-slate-500/50',   text: 'text-slate-300',   bg: 'bg-slate-500/10',   chip: 'bg-slate-500/20 text-slate-300' },
+  'other:*':         { border: 'border-slate-500/50',   text: 'text-slate-300',   bg: 'bg-slate-500/10',   chip: 'bg-slate-500/20 text-slate-300' },
 };
 
-export function alertTint(category: NwsAlertCategory, hazard: string | null | undefined): Tint {
+// Mesoscale Discussions are all category=discussion, but their severity varies
+// from "Concerning Severe Potential" (Moderate) up to "Concerning Tornado Watch
+// — 95% probability" (Extreme). Tint by severity so an operator can scan the
+// rail and immediately spot a tornado-watch MD without opening it.
+const DISCUSSION_SEVERITY_TINTS: Record<string, Tint> = {
+  Extreme:  { border: 'border-red-500/60',     text: 'text-red-300',     bg: 'bg-red-500/10',     chip: 'bg-red-500/20 text-red-300' },
+  Severe:   { border: 'border-orange-500/60',  text: 'text-orange-300',  bg: 'bg-orange-500/10',  chip: 'bg-orange-500/20 text-orange-300' },
+  Moderate: { border: 'border-fuchsia-500/60', text: 'text-fuchsia-200', bg: 'bg-fuchsia-500/10', chip: 'bg-fuchsia-500/20 text-fuchsia-200' },
+  Minor:    { border: 'border-sky-500/60',     text: 'text-sky-300',     bg: 'bg-sky-500/10',     chip: 'bg-sky-500/20 text-sky-300' },
+};
+
+export function alertTint(
+  category: NwsAlertCategory,
+  hazard: string | null | undefined,
+  severity?: string | null,
+): Tint {
+  if (category === 'discussion' && severity && DISCUSSION_SEVERITY_TINTS[severity]) {
+    return DISCUSSION_SEVERITY_TINTS[severity];
+  }
   const h = hazard ?? '*';
   return TINTS[`${category}:${h}`] ?? TINTS[`${category}:*`] ?? TINTS['other:*'];
 }

@@ -483,6 +483,15 @@ const WARNING_FILL_EXPR: any = [
   'rgba(250,204,21,0.10)',
   ['==', ['get', 'category'], 'advisory'],
   'rgba(167,139,250,0.16)',
+  // Mesoscale Discussions tinted by severity so a tornado-watch MD (Extreme)
+  // jumps out against a generic severe-potential MD (Moderate, the fuchsia
+  // default).
+  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'severity'], 'Extreme']],
+  'rgba(239,68,68,0.22)',
+  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'severity'], 'Severe']],
+  'rgba(249,115,22,0.20)',
+  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'severity'], 'Minor']],
+  'rgba(56,189,248,0.16)',
   ['==', ['get', 'category'], 'discussion'],
   'rgba(217,70,239,0.20)',
   // Statements (incl. Special Weather Statements for hail) at higher opacity
@@ -510,6 +519,12 @@ const WARNING_LINE_EXPR: any = [
   '#eab308',
   ['==', ['get', 'category'], 'advisory'],
   '#a78bfa',
+  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'severity'], 'Extreme']],
+  '#ef4444',
+  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'severity'], 'Severe']],
+  '#f97316',
+  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'severity'], 'Minor']],
+  '#38bdf8',
   ['==', ['get', 'category'], 'discussion'],
   '#d946ef',
   ['==', ['get', 'category'], 'statement'],
@@ -3424,7 +3439,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       </div>
                       <ul className="space-y-1.5">
                         {warningPopup.candidates.map((w) => {
-                          const t = alertTint(w.category, w.hazard);
+                          const t = alertTint(w.category, w.hazard, w.severity);
                           return (
                             <li key={w.id}>
                               <button
@@ -3453,7 +3468,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 }
                 // Single-warning detail: mirrors the side-panel card so the
                 // popup and inspector stay in sync after a selection.
-                const t = alertTint(chosen.category, chosen.hazard);
+                const t = alertTint(chosen.category, chosen.hazard, chosen.severity);
                 const trackUrl = chosen.forecast_track && chosen.in_path_count != null
                   ? composeUrlForWarningTrack(chosen)
                   : null;
@@ -3704,9 +3719,15 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                           ? 'border-yellow-500/50 text-yellow-200'
                           : w.category === 'advisory'
                             ? 'border-violet-500/50 text-violet-200'
-                            : w.category === 'discussion'
-                              ? 'border-fuchsia-500/50 text-fuchsia-200'
-                              : 'border-slate-500/50 text-slate-300'
+                            : w.category === 'discussion' && w.severity === 'Extreme'
+                              ? 'border-red-500/50 text-red-300'
+                              : w.category === 'discussion' && w.severity === 'Severe'
+                                ? 'border-orange-500/50 text-orange-300'
+                                : w.category === 'discussion' && w.severity === 'Minor'
+                                  ? 'border-sky-500/50 text-sky-300'
+                                  : w.category === 'discussion'
+                                    ? 'border-fuchsia-500/50 text-fuchsia-200'
+                                    : 'border-slate-500/50 text-slate-300'
                 }`}
               >
                 <span className="text-[9px] font-bold opacity-80">{categoryBadge(w.category)}</span>
@@ -4424,7 +4445,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
             <div>
               {selectedWarning && (() => {
-                const tint = alertTint(selectedWarning.category, selectedWarning.hazard);
+                const tint = alertTint(selectedWarning.category, selectedWarning.hazard, selectedWarning.severity);
                 return (
                 <div className={`mb-3 p-3 rounded-lg bg-wx-ink border ${tint.border} ${tint.bg} space-y-1.5`}>
                   <div className="flex items-start justify-between gap-2">
@@ -4521,9 +4542,15 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                                   ? 'bg-yellow-500/20 text-yellow-200'
                                   : w.category === 'advisory'
                                     ? 'bg-violet-500/20 text-violet-200'
-                                    : w.category === 'discussion'
-                                      ? 'bg-fuchsia-500/20 text-fuchsia-200'
-                                      : 'bg-slate-500/20 text-slate-300'
+                                    : w.category === 'discussion' && w.severity === 'Extreme'
+                                      ? 'bg-red-500/20 text-red-300'
+                                      : w.category === 'discussion' && w.severity === 'Severe'
+                                        ? 'bg-orange-500/20 text-orange-300'
+                                        : w.category === 'discussion' && w.severity === 'Minor'
+                                          ? 'bg-sky-500/20 text-sky-300'
+                                          : w.category === 'discussion'
+                                            ? 'bg-fuchsia-500/20 text-fuchsia-200'
+                                            : 'bg-slate-500/20 text-slate-300'
                         }`}
                       >
                         {categoryBadge(w.category)}
