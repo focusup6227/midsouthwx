@@ -1187,6 +1187,61 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     }
   }, [boostBasemapLegibility, kickMapPos, settleMapViewport]);
 
+  // Imperative anchor enforcement. The Layer JSX may mount BEFORE handleMapLoad
+  // sets radarBeforeId, in which case react-map-gl appends the radar layer to
+  // the top of the stack and never moves it when the prop updates. Walk every
+  // known radar/overlay layer id after each styledata event and reposition it
+  // to either (a) the resolved beforeId, or (b) the first non-raster/background
+  // layer we can find when the original anchor logic came up empty.
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !mapReady) return;
+    // Standard styles handle position via slots — moveLayer doesn't apply.
+    if (isStandardStyle) return;
+
+    const repositionRadar = () => {
+      const layers = map.getStyle()?.layers ?? [];
+      // Find the first symbol (label) layer — that's the most reliable anchor
+      // across custom styles: every Mapbox style has labels, and we want radar
+      // under them. Beat that with the user-resolved road anchor when present.
+      const firstSymbol = layers.find((l: { id: string; type?: string }) => l.type === 'symbol');
+      const anchorId = radarBeforeId ?? firstSymbol?.id ?? null;
+      if (!anchorId) return;
+
+      // Every layer ID a radar source might register under: live tile layer,
+      // LibreWxR per-frame layers, Level II fill/image layers, MRMS, lightning
+      // raster, satellite. Move each one that exists below the anchor.
+      const radarLayerPrefixes = [
+        'live-radar',
+        'lwxr-layer-',
+        'level2-fill',
+        'level2-image',
+        'mrms-fill',
+        'lightning-fill',
+      ];
+      for (const layer of layers) {
+        const id = (layer as { id: string }).id;
+        const isRadarLayer = radarLayerPrefixes.some((p) => id === p || id.startsWith(p));
+        if (!isRadarLayer) continue;
+        if (id === anchorId) continue;
+        try {
+          map.moveLayer(id, anchorId);
+        } catch {
+          // Anchor layer may have been removed between styledata fires; skip.
+        }
+      }
+    };
+
+    // First pass on mount (after handleMapLoad has populated radarBeforeId).
+    repositionRadar();
+    // Re-pass after every style change: new sources/layers appearing, style
+    // swaps, paint property updates that internally re-add layers.
+    map.on('styledata', repositionRadar);
+    return () => {
+      map.off('styledata', repositionRadar);
+    };
+  }, [mapReady, radarBeforeId, isStandardStyle]);
+
   useEffect(() => {
     const id = setInterval(() => setTileCacheKey(Math.floor(Date.now() / 300_000)), 300_000);
     return () => clearInterval(id);
