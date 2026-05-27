@@ -50,7 +50,7 @@ as $$
       select
         a.id, a.hazard, a.lat, a.lon, a.point, a.cluster_paged_at,
         (
-          select min(b.id)
+          select min(b.id::text)::uuid
           from paged b
           where b.hazard = a.hazard
             and st_dwithin(a.point, b.point, 5000)
