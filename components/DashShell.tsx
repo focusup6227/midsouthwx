@@ -58,6 +58,7 @@ export default async function DashShell({
     { href: '/groups', label: 'Groups' },
     { href: '/regions', label: 'Regions' },
     { href: '/alerts', label: 'Alerts' },
+    { href: '/reports', label: 'Reports' },
     { href: '/checkins', label: 'Check-ins' },
     { href: '/log', label: 'Log' },
     { href: '/health', label: 'Health' },
