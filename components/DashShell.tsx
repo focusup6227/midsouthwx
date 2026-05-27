@@ -6,6 +6,7 @@ import FieldModeToggle from './FieldModeToggle';
 import HealthIndicator from './HealthIndicator';
 import NotificationPermissionButton from './NotificationPermissionButton';
 import SevereAlertAudio from './SevereAlertAudio';
+import MobileNavOverlay from './MobileNavOverlay';
 
 type Props = {
   title?: string;
@@ -13,6 +14,9 @@ type Props = {
   backHref?: string;
   width?: 'narrow' | 'normal' | 'wide' | 'full';
   bare?: boolean;
+  /** Collapse the entire sticky header into a floating hamburger on mobile.
+   *  Used by full-bleed pages (radar) so the map gets the full viewport. */
+  mobileCompact?: boolean;
   children: ReactNode;
 };
 
@@ -33,6 +37,7 @@ export default async function DashShell({
   backHref,
   width = 'normal',
   bare = false,
+  mobileCompact = false,
   children,
 }: Props) {
   const field = await isFieldMode();
@@ -62,7 +67,14 @@ export default async function DashShell({
   return (
     <>
       <SevereAlertAudio />
-      <header className="sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur">
+      {mobileCompact ? (
+        <MobileNavOverlay primary={primary} secondary={secondary} field={field} />
+      ) : null}
+      <header
+        className={`sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur ${
+          mobileCompact ? 'hidden md:block' : ''
+        }`}
+      >
         <nav className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5">
           <Link href="/dashboard" className="flex items-center gap-2 font-semibold whitespace-nowrap">
             <Image src="/icons/icon-192.png" alt="" width={28} height={28} className="rounded-full" />

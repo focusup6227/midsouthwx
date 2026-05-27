@@ -2699,7 +2699,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   }, [showLightning, mapReady]);
 
   return (
-    <div className="h-[calc(100dvh-3.5rem)] md:h-[calc(100dvh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
+    <div className="h-[100dvh] md:h-[calc(100dvh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
       <div className="flex-1 relative overflow-hidden">
         <div className={`absolute inset-0 ${splitProduct ? 'flex flex-row' : ''}`}>
         <div className={splitProduct ? 'relative h-full flex-1 min-w-0' : 'relative h-full w-full'}>

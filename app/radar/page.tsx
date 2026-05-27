@@ -161,7 +161,7 @@ export default async function RadarPage() {
   const { subs, spc, warnings } = await fetchInitialRadarData();
   const envWarnings = preflightEnvWarnings();
   return (
-    <DashShell width="full" bare>
+    <DashShell width="full" bare mobileCompact>
       <RadarRoute
         initialSubsGeo={subs}
         initialSpcDays={spc}
