@@ -2223,7 +2223,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     } else {
       params.set('geo', JSON.stringify({ type: 'polygon', coordinates: selection.coordinates }));
     }
-    window.location.href = `/compose?${params.toString()}`;
+    window.open(`/compose?${params.toString()}`, '_blank', 'noopener,noreferrer');
   };
 
   // Hand off the polygon selection to /forecast/new for the operator to
@@ -4155,6 +4155,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                     </a>
                     <a
                       href={composeUrlForWarning(selectedWarning)}
+                      target="_blank"
+                      rel="noreferrer"
                       className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-wx-accent text-black rounded-md text-[11px] font-semibold hover:bg-amber-300"
                       title="Send to subscribers in this polygon"
                     >
@@ -4168,6 +4170,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       return (
                         <a
                           href={trackUrl}
+                          target="_blank"
+                          rel="noreferrer"
                           className="mt-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 border border-amber-400/50 text-amber-300 hover:bg-amber-400/10 rounded-md text-[11px] font-semibold w-full"
                           title={`Send to ${selectedWarning.in_path_count} subscribers in the storm's projected ${selectedWarning.in_path_corridor_km ?? 8}km corridor`}
                         >
@@ -4237,6 +4241,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                     {w.category === 'warning' && (
                       <a
                         href={composeUrlForWarning(w)}
+                        target="_blank"
+                        rel="noreferrer"
                         className="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-wx-mute hover:text-wx-accent hover:bg-wx-accent/10"
                         title="Send to subscribers in this polygon"
                         aria-label={`Send to subscribers in ${w.event} polygon`}
