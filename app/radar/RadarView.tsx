@@ -42,6 +42,7 @@ import {
   useCouplets,
   useMetar,
   useMping,
+  useStormReports,
   WARNINGS_KEY,
 } from './_hooks/useRadarData';
 import { useSWRConfig } from 'swr';
@@ -450,6 +451,19 @@ const LSR_FILL_EXPR: any = [
   '#94a3b8',
 ];
 
+// Subscriber storm reports use a slightly different hazard taxonomy
+// (funnel/hail/other are distinct, mirroring the Telegram picker labels).
+const STORM_REPORT_FILL_EXPR: any = [
+  'match',
+  ['get', 'hazard'],
+  'tornado', '#ef4444',
+  'funnel',  '#fb7185',
+  'hail',    '#f97316',
+  'wind',    '#a855f7',
+  'flood',   '#10b981',
+  '#94a3b8',
+];
+
 // All LibreWxR frame layers mount opacity 0. The "current" frame is bumped
 // up imperatively in the playback effect; reusing this single paint object
 // across all 30+ frames means react-map-gl doesn't diff a new paint every
@@ -594,6 +608,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const warningsLoading = warningsSwr.isValidating;
   const lsrSwr = useLsr();
   const lsrGeo = (lsrSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
+  const stormReportsSwr = useStormReports();
+  const stormReportsGeo = (stormReportsSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   const spcSwr = useSpc(initialSpcDays);
   const mrmsSwr = useMrmsLatest();
   const mrmsUrlPath = mrmsSwr.data?.urlPath ?? null;
@@ -665,6 +681,16 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // gentler cadence (every 2 min) — LSRs filter in slowly as spotters call
   // them in, no need to refresh as aggressively as the warnings polygons.
   const [showLsr, setShowLsr] = useState(urlInitial.showLsr ?? true);
+  // Telegram-submitted subscriber storm reports. Default on; toggle in inspector.
+  const [showStormReports, setShowStormReports] = useState(urlInitial.showStormReports ?? true);
+  const [selectedStormReport, setSelectedStormReport] = useState<{
+    id: string;
+    hazard: string;
+    description: string | null;
+    photo_url: string | null;
+    reported_at: string | null;
+    reporter: string | null;
+  } | null>(null);
   // NWS forecast + fire zone outlines from /public/maps/nws-zones.geojson
   // (run `npm run gen:zones` to rebuild). Off by default — useful for
   // "which zone is this alert in" reference but visually busy when always
@@ -839,6 +865,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     showNws,
     showSpc,
     showLsr,
+    showStormReports,
     showZones,
     showSubs,
     showStormTracks,
@@ -2152,6 +2179,22 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         return;
       }
     }
+    // Subscriber storm reports — same priority as LSRs (small targets).
+    if (showStormReports && map.getLayer('storm-report-pin')) {
+      const hits = map.queryRenderedFeatures(e.point, { layers: ['storm-report-pin'] });
+      if (hits.length > 0) {
+        const props = hits[0].properties as any;
+        setSelectedStormReport({
+          id: String(props?.id ?? ''),
+          hazard: String(props?.hazard ?? 'other'),
+          description: (props?.description as string | null) ?? null,
+          photo_url: (props?.photo_url as string | null) ?? null,
+          reported_at: (props?.reported_at as string | null) ?? null,
+          reporter: (props?.reporter as string | null) ?? null,
+        });
+        return;
+      }
+    }
     // F13: mPING report click. Higher priority than METAR but lower
     // than LSRs since mPING is community-sourced.
     if (showMping && map.getLayer('mping-pin')) {
@@ -2658,6 +2701,18 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       }),
     };
   }, [lsrGeo, scrubTimeMs]);
+  const displayStormReportsGeo = useMemo<GeoJSON.FeatureCollection>(() => {
+    if (scrubTimeMs == null) return stormReportsGeo;
+    const t = scrubTimeMs;
+    return {
+      type: 'FeatureCollection',
+      features: (stormReportsGeo.features ?? []).filter((f) => {
+        const p = f.properties as { reported_at?: string | null } | null;
+        const rep = p?.reported_at ? new Date(p.reported_at).getTime() : Infinity;
+        return rep <= t;
+      }),
+    };
+  }, [stormReportsGeo, scrubTimeMs]);
 
   // Convert quantized `v` (0-255) to natural units for the hover readout.
   const sampleLabel = useMemo(() => {
@@ -3079,6 +3134,45 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 'circle-color': LSR_FILL_EXPR,
                 'circle-stroke-color': '#0b1220',
                 'circle-stroke-width': 1.5,
+              }}
+            />
+          </Source>
+
+          {/* Subscriber-submitted storm reports (Telegram /report flow).
+              Triangle glyph so the operator can pick subscriber pins out of
+              a cluster of NWS LSRs at a glance. Same hazard palette so the
+              colors stay consistent across all "what's happening on the
+              ground" overlays. */}
+          <Source id="storm-report-source" type="geojson" data={displayStormReportsGeo as any}>
+            <Layer
+              id="storm-report-halo"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showStormReports ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 8, 7, 12, 10, 16, 14, 22],
+                'circle-color': STORM_REPORT_FILL_EXPR,
+                'circle-opacity': 0.18,
+                'circle-blur': 0.5,
+              }}
+            />
+            <Layer
+              id="storm-report-pin"
+              {...overlayAnchor}
+              type="symbol"
+              layout={{
+                visibility: showStormReports ? 'visible' : 'none',
+                'text-field': '▲',
+                'text-size': ['interpolate', ['linear'], ['zoom'], 4, 12, 7, 16, 10, 22],
+                'text-allow-overlap': true,
+                'text-ignore-placement': true,
+                'text-anchor': 'center',
+              }}
+              paint={{
+                'text-color': STORM_REPORT_FILL_EXPR,
+                'text-halo-color': '#0b1220',
+                'text-halo-width': 2,
+                'text-opacity': 0.98,
               }}
             />
           </Source>
@@ -4254,6 +4348,19 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               </div>
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] text-wx-mute">
+                  Subscriber reports · {displayStormReportsGeo.features?.length ?? 0} (last 24h)
+                </span>
+                <button
+                  onClick={() => setShowStormReports((v) => !v)}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showStormReports ? 'bg-red-400' : 'bg-wx-line'}`}
+                  aria-pressed={showStormReports}
+                  title={showStormReports ? 'Hide subscriber storm reports' : 'Show subscriber storm reports'}
+                >
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showStormReports ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] text-wx-mute">
                   Lightning (GLM) · {lightningGeo.features.length} flash{lightningGeo.features.length === 1 ? '' : 'es'}
                 </span>
                 <button
@@ -5048,6 +5155,68 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             ) : null}
           </div>
         )}
+
+        {selectedStormReport && (() => {
+          const sr = selectedStormReport;
+          const hazardLabelMap: Record<string, string> = {
+            tornado: 'Tornado',
+            funnel: 'Funnel cloud',
+            wind: 'Damaging wind',
+            hail: 'Hail',
+            flood: 'Flooding',
+            other: 'Severe weather',
+          };
+          const ageMin = sr.reported_at
+            ? Math.max(0, Math.round((Date.now() - new Date(sr.reported_at).getTime()) / 60_000))
+            : null;
+          return (
+            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
+                    Subscriber report{sr.reporter ? ` · ${sr.reporter}` : ''}
+                  </div>
+                  <div className="text-[12px] font-semibold text-wx-fg mt-0.5">
+                    {hazardLabelMap[sr.hazard] ?? sr.hazard}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedStormReport(null)}
+                  className="text-wx-mute hover:text-wx-fg shrink-0"
+                  aria-label="Clear selection"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              {ageMin != null ? (
+                <div className="text-[10px] font-mono text-wx-mute">
+                  {ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin / 60)} h ago`}
+                </div>
+              ) : null}
+              {sr.photo_url ? (
+                <a
+                  href={sr.photo_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block rounded-md overflow-hidden border border-wx-line"
+                >
+                  <img
+                    src={sr.photo_url}
+                    alt="Subscriber storm report"
+                    className="w-full max-h-48 object-cover"
+                    loading="lazy"
+                  />
+                </a>
+              ) : null}
+              {sr.description ? (
+                <p className="text-[10.5px] text-wx-fg/85 italic line-clamp-4">
+                  &quot;{sr.description}&quot;
+                </p>
+              ) : null}
+            </div>
+          );
+        })()}
 
         {/* F13: selected mPING report card. Compact — just description +
             age + a "lower confidence than LSR" reminder. The operator
