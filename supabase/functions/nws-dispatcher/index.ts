@@ -3,7 +3,8 @@
 import { serviceClient, json, withHealthLog } from './supabase.ts';
 import { notifyExternalEndpointsForMessage } from './external-notify.ts';
 import { notifyOperatorNwsPending, notifyOperatorTornado } from './operator-notify.ts';
-import { attachAlertSnapshot } from './snapshot.ts';
+// (attachAlertSnapshot import removed — we no longer pre-render a polygon
+// snapshot for outbound alerts. {{url}} → /alert/<nws_id> handles the map.)
 
 const BATCH = 15;
 const LOCK_TTL_SEC = 120;
@@ -357,16 +358,10 @@ Deno.serve(withHealthLog('nws-dispatcher', async (req) => {
           .single();
         if (insErr || !reviewMsg) throw new Error(insErr?.message ?? 'insert failed');
 
-        // Render snapshot before the operator push so the approval prompt
-        // and the eventually-sent message both reference the same media URL.
-        // Synchronous: dispatcher already has 120 s on a single alert and the
-        // operator notification's value drops fast if the snapshot lags.
-        await attachAlertSnapshot(supa, {
-          messageId: reviewMsg.id,
-          alertId: alert.id,
-          event: alert.event,
-          raw: alert.raw,
-        });
+        // (No attachAlertSnapshot.) Body already contains {{url}} → the
+        // public /alert/<nws_id> page, which renders the live LibreWxR
+        // radar + polygon overlay client-side. We send text + link instead
+        // of trying to pre-render a static photo.
 
         if (tgToken) {
           notifyOperatorNwsPending(supa, tgToken, {
@@ -403,15 +398,9 @@ Deno.serve(withHealthLog('nws-dispatcher', async (req) => {
 
       if (insErr || !msg) throw new Error(insErr?.message ?? 'insert failed');
 
-      // Stamp media_url BEFORE enqueue — the worker reads it via
-      // claim_outbound_batch at send time, so it must be set on the message
-      // row before queue rows exist.
-      await attachAlertSnapshot(supa, {
-        messageId: msg.id,
-        alertId: alert.id,
-        event: alert.event,
-        raw: alert.raw,
-      });
+      // (No attachAlertSnapshot.) Same reason as the review-mode branch:
+      // {{url}} → /alert/<nws_id> already renders live radar; we don't
+      // pre-bake a photo.
 
       const { error: enqErr } = await supa.rpc('enqueue_message_system', {
         p_message_id: msg.id,

@@ -87,29 +87,17 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
   });
 
   // Look up the source NWS alert when /compose was launched from a warning
-  // polygon. We need its uuid (to stamp messages.nws_alert_id) and its raw
-  // geometry (as a snapshot fallback when the operator picked a non-geometry
-  // audience like "all subscribers" or a group). Failure is non-fatal — the
-  // message still sends without the NWS link.
+  // polygon. We just need its uuid to stamp messages.nws_alert_id so the
+  // /m/[id] public page can pull the alert's CAP context (event, headline,
+  // area, timing, polygon for the map). Failure is non-fatal.
   let nwsAlertId: string | null = null;
-  let nwsGeometry: unknown = null;
-  let nwsEvent: string | null = null;
   if (parsed.nws_id) {
     const { data: alert } = await admin
       .from('nws_alerts')
-      .select('id, event, raw')
+      .select('id')
       .eq('nws_id', parsed.nws_id)
       .maybeSingle();
-    if (alert) {
-      nwsAlertId = alert.id;
-      nwsEvent = alert.event ?? null;
-      const rawGeom = (alert.raw as { geometry?: unknown } | null)?.geometry as
-        | { type?: string }
-        | undefined;
-      if (rawGeom?.type === 'Polygon' || rawGeom?.type === 'MultiPolygon') {
-        nwsGeometry = rawGeom;
-      }
-    }
+    if (alert) nwsAlertId = alert.id;
   }
 
   const { data: msg, error: insertErr } = await admin
@@ -148,26 +136,10 @@ export async function sendNow(input: z.infer<typeof SendInput>): Promise<{ id: s
       .eq('id', msg.id);
   }
 
-  // Auto-attach a polygon snapshot for any alert that has a usable polygon —
-  // either the operator drew/picked one on /radar (audience_spec.geometry),
-  // or they're adopting an NWS warning and we kept the alert's polygon
-  // around as a fallback. Synchronous so media_url is set before enqueue;
-  // the worker reads it via claim_outbound_batch at send time. Renderer
-  // failure is swallowed (helper returns null) — alert still sends as
-  // text-only.
-  const snapshotGeometry = parsed.audience_spec.geometry ?? nwsGeometry;
-  if (!parsed.media && snapshotGeometry) {
-    const { renderComposeSnapshot } = await import('@/lib/snapshot/compose-snapshot');
-    const snapshotUrl = await renderComposeSnapshot(msg.id, snapshotGeometry, {
-      event: parsed.template_vars?.event ?? nwsEvent ?? undefined,
-    });
-    if (snapshotUrl) {
-      await admin
-        .from('messages')
-        .update({ media_url: snapshotUrl, media_type: 'photo' })
-        .eq('id', msg.id);
-    }
-  }
+  // (No auto-attached polygon snapshot.) Alignment between the Vercel sharp
+  // composite and the basemap turned into a long iteration loop; we send
+  // text + the {{url}} → /m/[id] public link instead, which renders the live
+  // Mapbox + LibreWxR layer stack the operator already trusts.
 
   const { data: count, error: enqErr } = await admin.rpc('enqueue_message_system', {
     p_message_id: msg.id,
