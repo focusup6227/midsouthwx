@@ -3697,7 +3697,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
         {!uiHidden && showNws && displayWarnings.length > 0 && (
           <div
-            className="wx-scroll absolute top-[64px] left-[72px] right-3 md:top-[68px] md:left-[100px] md:right-[340px] z-20 flex items-center gap-2 overflow-x-auto whitespace-nowrap pr-2"
+            className="wx-scroll absolute top-[64px] left-[72px] right-3 md:top-[68px] md:left-[100px] md:right-[340px] z-20 flex flex-wrap md:flex-nowrap items-center gap-1.5 md:gap-2 md:overflow-x-auto md:whitespace-nowrap max-h-[88px] md:max-h-none overflow-y-auto pr-2"
           >
             {displayWarnings.slice(0, 12).map((w) => (
               <button
@@ -3706,7 +3706,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   setSelectedWarning(w);
                   focusWarning(w);
                 }}
-                className={`inline-flex shrink-0 items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-wx-card/95 backdrop-blur-sm text-sm font-medium ${
+                className={`inline-flex shrink-0 max-w-full items-center gap-1 md:gap-1.5 px-2 py-1 md:px-3 md:py-1.5 rounded-lg border bg-wx-card/95 backdrop-blur-sm text-xs md:text-sm font-medium ${
                   selectedWarning?.id === w.id ? 'border-wx-accent bg-wx-accent/10' : ''
                 } ${
                   w.category === 'warning' && w.hazard === 'tornado'
@@ -3731,7 +3731,12 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 }`}
               >
                 <span className="text-[9px] font-bold opacity-80">{categoryBadge(w.category)}</span>
-                {w.label}
+                {/* Mobile shows just the event name so two-or-three chips fit per
+                    row instead of one chip overflowing — the area_desc + count
+                    suffix (e.g. "· Colbert +5") still appears in the inspector
+                    card once a chip is tapped. */}
+                <span className="md:hidden truncate">{w.event}</span>
+                <span className="hidden md:inline">{w.label}</span>
               </button>
             ))}
           </div>
