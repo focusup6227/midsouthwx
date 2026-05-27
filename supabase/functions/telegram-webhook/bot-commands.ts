@@ -14,11 +14,49 @@ export const SUBSCRIBER_BOT_COMMANDS = [
   { command: 'prefs', description: 'Alert types and quiet hours' },
   { command: 'where', description: 'Set a temporary location' },
   { command: 'home', description: 'Revert to your home address' },
+  { command: 'report', description: 'Report severe weather with a photo' },
   { command: 'help', description: 'Show menu and commands' },
   { command: 'unsubscribe', description: 'Stop receiving alerts' },
   { command: 'resume', description: 'Re-enable alerts after /unsubscribe' },
   { command: 'start', description: 'Finish sign-up with your link' },
 ] as const;
+
+/** Hazard picker shown after /report. Keep labels emoji-prefixed so the
+ *  subscriber can tap fast even on a small screen. Callback data is read by
+ *  the webhook's `report:<hazard>` handler. */
+export function reportHazardKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🌪 Tornado', callback_data: 'report:tornado' },
+        { text: '🌀 Funnel cloud', callback_data: 'report:funnel' },
+      ],
+      [
+        { text: '💨 Damaging wind', callback_data: 'report:wind' },
+        { text: '🧊 Hail', callback_data: 'report:hail' },
+      ],
+      [
+        { text: '🌊 Flooding', callback_data: 'report:flood' },
+        { text: '⚠️ Other', callback_data: 'report:other' },
+      ],
+      [
+        { text: '✖️ Cancel', callback_data: 'report:cancel' },
+      ],
+    ],
+  };
+}
+
+const HAZARD_LABELS: Record<string, string> = {
+  tornado: 'Tornado',
+  funnel: 'Funnel cloud',
+  wind: 'Damaging wind',
+  hail: 'Hail',
+  flood: 'Flooding',
+  other: 'Severe weather',
+};
+export function hazardLabel(h: string): string {
+  return HAZARD_LABELS[h] ?? 'Severe weather';
+}
 
 export function commandsHelpText(): string {
   return (
@@ -28,9 +66,10 @@ export function commandsHelpText(): string {
     '📍 Location — set a temporary address or revert to home\n' +
     '⚙️ Alerts — toggle warnings/watches/advisories + quiet hours\n' +
     '💬 Help — this message\n' +
-    '📡 Share live location — attach your current pin in Telegram\n\n' +
+    '📡 Share live location — attach your current pin in Telegram\n' +
+    '📣 /report — send a storm report with a photo\n\n' +
     'Power-user shortcuts (slash commands still work):\n' +
-    '• /status, /prefs, /where <address>, /home\n' +
+    '• /status, /prefs, /where <address>, /home, /report\n' +
     '• /unsubscribe or STOP — opt out\n' +
     '• /start <link> — finish sign-up from the website link\n\n' +
     'Reply to any alert in Telegram to message the operator. They will see ' +

@@ -11,6 +11,7 @@
 import { serviceClient, json } from './supabase.ts';
 import {
   commandsHelpText,
+  hazardLabel,
   helpInlineKeyboard,
   isCommandsMenuText,
   isHelpMenuText,
@@ -19,12 +20,14 @@ import {
   isStatusMenuText,
   locationInlineKeyboard,
   parseCmdCallback,
+  reportHazardKeyboard,
   subscriberReplyKeyboard,
   SUBSCRIBER_BOT_COMMANDS,
 } from './bot-commands.ts';
 import { clearAwaiting, getAwaiting, setAwaiting } from './state.ts';
 import {
   tgAnswerCallbackQuery,
+  tgFetchFile,
   tgSendMessage,
   tgSetChatMenuButtonCommands,
   tgSetMyCommands,
@@ -515,6 +518,144 @@ async function showPrefsForChat(
   );
 }
 
+const VALID_REPORT_HAZARDS = new Set(['tornado', 'funnel', 'wind', 'hail', 'flood', 'other']);
+const REPORT_RATE_LIMIT_SEC = 60;
+
+type ReportMeta = {
+  hazard?: string;
+  lat?: number;
+  lon?: number;
+};
+
+/** Pick the largest entry from Telegram's photo size array. */
+function largestPhoto(photo: unknown): { file_id: string } | null {
+  if (!Array.isArray(photo) || photo.length === 0) return null;
+  const last = photo[photo.length - 1];
+  if (typeof last?.file_id !== 'string') return null;
+  return { file_id: last.file_id };
+}
+
+/** Finalize an in-progress report — uploads any attached photo, inserts the
+ *  row, notifies the operator, clears subscriber state. */
+async function submitStormReport(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+  subscriberId: string,
+  meta: ReportMeta,
+  opts: {
+    fileId?: string | null;
+    description?: string | null;
+    reporterLabel: string;
+  },
+): Promise<void> {
+  const hazard = meta.hazard;
+  const lat = meta.lat;
+  const lon = meta.lon;
+  if (!hazard || lat == null || lon == null) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'Sorry — I lost track of your report. Send /report to start over.',
+    });
+    await clearAwaiting(supa, subscriberId);
+    return;
+  }
+
+  // Per-subscriber rate limit. Cheap row read — `subscriber_idx` covers it.
+  const since = new Date(Date.now() - REPORT_RATE_LIMIT_SEC * 1000).toISOString();
+  const { data: recent } = await supa
+    .from('telegram_storm_reports')
+    .select('id')
+    .eq('subscriber_id', subscriberId)
+    .gte('reported_at', since)
+    .limit(1)
+    .maybeSingle();
+  if (recent) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'You just submitted a report — please wait a minute before sending another.',
+    });
+    await clearAwaiting(supa, subscriberId);
+    return;
+  }
+
+  let photoUrl: string | null = null;
+  if (opts.fileId) {
+    try {
+      const file = await tgFetchFile(token, opts.fileId);
+      const ext = file.mime === 'image/png' ? 'png' : file.mime === 'image/webp' ? 'webp' : 'jpg';
+      const path = `${subscriberId}/${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supa.storage
+        .from('storm-report-photos')
+        .upload(path, file.bytes, { contentType: file.mime, upsert: false, cacheControl: '86400' });
+      if (upErr) {
+        console.error('storm-report photo upload failed', upErr);
+      } else {
+        const { data: pub } = supa.storage.from('storm-report-photos').getPublicUrl(path);
+        photoUrl = pub?.publicUrl ?? null;
+      }
+    } catch (e) {
+      console.error('tgFetchFile failed', e);
+    }
+  }
+
+  const { data: inserted, error: insErr } = await supa
+    .from('telegram_storm_reports')
+    .insert({
+      subscriber_id: subscriberId,
+      hazard,
+      description: opts.description ?? null,
+      photo_url: photoUrl,
+      photo_file_id: opts.fileId ?? null,
+      lat,
+      lon,
+      point: `SRID=4326;POINT(${lon} ${lat})`,
+    })
+    .select('id')
+    .single();
+
+  if (insErr) {
+    console.error('storm-report insert failed', insErr);
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'Could not save your report — please try again in a moment.',
+    });
+    await clearAwaiting(supa, subscriberId);
+    return;
+  }
+
+  await clearAwaiting(supa, subscriberId);
+
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text:
+      `✅ Storm report submitted (${hazardLabel(hazard)}).\n` +
+      `Plotted at ${lat.toFixed(3)}, ${lon.toFixed(3)}.\n\n` +
+      'Stay safe — if you are in danger, call 911.',
+  });
+
+  // Self-Telegram the operator with the report summary + photo if available.
+  const opChatId = await operatorChatId(supa);
+  if (opChatId) {
+    const summary =
+      `📣 Storm report from ${opts.reporterLabel}\n` +
+      `Hazard: ${hazardLabel(hazard)}\n` +
+      `Location: ${lat.toFixed(4)}, ${lon.toFixed(4)}` +
+      (opts.description ? `\nNote: ${opts.description.slice(0, 400)}` : '') +
+      `\nReport id: ${inserted.id}`;
+    if (photoUrl) {
+      // sendPhoto with caption — Telegram fetches the public URL itself.
+      await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: opChatId, photo: photoUrl, caption: summary }),
+      }).catch((e) => console.error('operator sendPhoto failed', e));
+    } else {
+      await tgSendMessage(token, { chat_id: opChatId, text: summary });
+    }
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ ok: false }, 405);
 
@@ -831,6 +972,78 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
 
+      // ── report:* — storm-report flow (subscriber-side) ─────────────────
+      if (data.startsWith('report:')) {
+        const action = data.slice('report:'.length);
+        const { data: sub } = await supa
+          .from('subscribers')
+          .select('id')
+          .eq('telegram_chat_id', chatId)
+          .eq('status', 'active')
+          .maybeSingle();
+        if (!sub) {
+          await tgAnswerCallbackQuery(token, cqId, 'Sign up first.');
+          return json({ ok: true });
+        }
+        if (action === 'cancel') {
+          await clearAwaiting(supa, sub.id);
+          await tgAnswerCallbackQuery(token, cqId, 'Cancelled.');
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text: 'Report cancelled. Send /report again whenever you need to.',
+          });
+          return json({ ok: true });
+        }
+        if (action === 'skip_media') {
+          // Submit a description-only report (or hazard-only).
+          const state = await getAwaiting(supa, sub.id);
+          const meta = (state?.meta ?? {}) as ReportMeta;
+          await tgAnswerCallbackQuery(token, cqId);
+          // Resolve a friendly reporter label for the operator notification.
+          const { data: subRow } = await supa
+            .from('subscribers')
+            .select('display_name, telegram_username')
+            .eq('id', sub.id)
+            .maybeSingle();
+          const reporterLabel =
+            (subRow?.telegram_username ? `@${subRow.telegram_username}` : null) ??
+            subRow?.display_name ?? 'subscriber';
+          await submitStormReport(supa, token, chatId, sub.id, meta, {
+            fileId: null,
+            description: (meta as Record<string, unknown>).description as string ?? null,
+            reporterLabel,
+          });
+          return json({ ok: true });
+        }
+        if (!VALID_REPORT_HAZARDS.has(action)) {
+          await tgAnswerCallbackQuery(token, cqId);
+          return json({ ok: true });
+        }
+        // Hazard selected — stash it and ask for a fresh location share.
+        await setAwaiting(
+          supa,
+          sub.id,
+          'report_location',
+          { hazard: action },
+        );
+        await tgAnswerCallbackQuery(token, cqId, `${hazardLabel(action)} selected.`);
+        await tgSendMessage(token, {
+          chat_id: chatId,
+          text:
+            '📍 Now share your current location so the report plots accurately.\n\n' +
+            'Tap the button below — Telegram will attach your GPS pin. ' +
+            'This location is only used for this report; your home pin is not changed.',
+          reply_markup: {
+            keyboard: [
+              [{ text: '📍 Share location for this report', request_location: true }],
+            ],
+            resize_keyboard: true,
+            one_time_keyboard: true,
+          },
+        });
+        return json({ ok: true });
+      }
+
       // Find the subscriber
       const { data: sub } = await supa
         .from('subscribers')
@@ -1033,6 +1246,34 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
+    // /report — kick off the storm-report flow.
+    if (text === '/report' || text?.startsWith('/report ') || text?.startsWith('/report@')) {
+      const { data: sub } = await supa
+        .from('subscribers')
+        .select('id')
+        .eq('telegram_chat_id', chatId)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (!sub) {
+        await tgSendMessage(token, {
+          chat_id: chatId,
+          text: 'You need to finish sign-up first. Use the link from the website.',
+        });
+        return json({ ok: true });
+      }
+      await clearAwaiting(supa, sub.id);
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text:
+          '📣 What are you reporting?\n\n' +
+          'Tap a hazard below. After that I will ask you to share your location ' +
+          'and (optionally) attach a photo. Reports plot on the operator map ' +
+          'with your name and a thumbnail.',
+        reply_markup: reportHazardKeyboard(),
+      });
+      return json({ ok: true });
+    }
+
     // /home — clear current-address override (back at home)
     if (text === '/prefs' || text?.startsWith('/prefs ')) {
       await showPrefsForChat(supa, token, chatId);
@@ -1104,10 +1345,45 @@ Deno.serve(async (req) => {
     //     existing /where TTL cron sweeps the subscriber back to home when
     //     Telegram stops emitting edits. Subsequent edited_message updates
     //     (handled at the top of this serve()) refresh the same row in place.
+    // If the subscriber is mid-/report flow, capture the point onto the
+    // report meta instead of moving their home pin.
     if (msg.location) {
       const { latitude, longitude, live_period } = msg.location as {
         latitude: number; longitude: number; live_period?: number;
       };
+
+      const { data: subForReport } = await supa
+        .from('subscribers')
+        .select('id')
+        .eq('telegram_chat_id', chatId)
+        .maybeSingle();
+      if (subForReport) {
+        const reportState = await getAwaiting(supa, subForReport.id);
+        if (reportState?.awaiting === 'report_location') {
+          const meta = (reportState.meta ?? {}) as ReportMeta;
+          await setAwaiting(supa, subForReport.id, 'report_media', {
+            ...meta,
+            lat: latitude,
+            lon: longitude,
+          });
+          await tgSendMessage(token, {
+            chat_id: chatId,
+            text:
+              `Location captured (${latitude.toFixed(3)}, ${longitude.toFixed(3)}).\n\n` +
+              '📷 Now send a photo of what you are reporting (you can add a ' +
+              'caption with details), or just send a text description.\n\n' +
+              'Tap below if you want to submit without a photo.',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '⏭ Submit without photo', callback_data: 'report:skip_media' }],
+                [{ text: '✖️ Cancel', callback_data: 'report:cancel' }],
+              ],
+            },
+          });
+          return json({ ok: true });
+        }
+      }
+
       const isLive = typeof live_period === 'number' && live_period > 0;
       const update: Record<string, unknown> = {
         location: `SRID=4326;POINT(${longitude} ${latitude})`,
@@ -1141,7 +1417,7 @@ Deno.serve(async (req) => {
     // Free-text inbound → reply in inbox
     const { data: sub } = await supa
       .from('subscribers')
-      .select('id')
+      .select('id, display_name, telegram_username')
       .eq('telegram_chat_id', chatId)
       .maybeSingle();
 
@@ -1154,13 +1430,30 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
+    // Storm-report flow: when we're awaiting media, a photo (or a plain text
+    // description) finalizes the report. Photos win — Telegram delivers the
+    // caption as `msg.caption`.
+    const photo = largestPhoto(msg.photo);
+    const reportState = await getAwaiting(supa, sub.id);
+    if (reportState?.awaiting === 'report_media' && (photo || text)) {
+      const meta = (reportState.meta ?? {}) as ReportMeta;
+      const reporterLabel = sub.telegram_username
+        ? `@${sub.telegram_username}`
+        : sub.display_name ?? 'subscriber';
+      await submitStormReport(supa, token, chatId, sub.id, meta, {
+        fileId: photo?.file_id ?? null,
+        description: (msg.caption as string | undefined) ?? text ?? null,
+        reporterLabel,
+      });
+      return json({ ok: true });
+    }
+
     // State-aware: if the bot was awaiting a specific kind of input from
     // this subscriber (e.g. "reply with your current address" after they
     // tapped the Location → Update temporary address button), consume the
     // text as that input instead of treating it as a chat reply.
     if (text) {
-      const state = await getAwaiting(supa, sub.id);
-      if (state?.awaiting === 'address') {
+      if (reportState?.awaiting === 'address') {
         const ok = await processWhereInput(supa, token, chatId, text);
         if (ok) await clearAwaiting(supa, sub.id);
         return json({ ok: true });

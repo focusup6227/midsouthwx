@@ -30,6 +30,7 @@ export type RadarUrlState = {
   meshWindow: 30 | 60 | 120;    // F10: MESH accumulation window in minutes
   showMetar: boolean;           // F12: METAR surface obs overlay
   showMping: boolean;           // F13: mPING crowdsource reports overlay
+  showStormReports: boolean;    // Telegram subscriber-submitted storm reports
 };
 
 const KEY_MAP = {
@@ -56,6 +57,7 @@ const KEY_MAP = {
   meshWindow:         'mwin',
   showMetar:          'mtr',
   showMping:          'mpg',
+  showStormReports:   'sr',
 } as const satisfies Record<keyof RadarUrlState, string>;
 
 const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'rotation', 'satellite']);
@@ -80,6 +82,7 @@ export function parseRadarUrl(search: string): Partial<RadarUrlState> {
   const flags: (keyof RadarUrlState)[] = [
     'showNws', 'showSpc', 'showLsr', 'showZones', 'showSubs', 'showStormTracks', 'showArrows', 'showCap',
     'inspectorCollapsed', 'uiHidden', 'showSitePills', 'showLightning', 'showCouplets', 'showMesh', 'showMetar', 'showMping',
+    'showStormReports',
   ];
   for (const k of flags) {
     const v = sp.get(KEY_MAP[k]);
@@ -140,6 +143,8 @@ export function useRadarUrlSync(state: RadarUrlState) {
     setOrDelete(KEY_MAP.meshWindow, state.meshWindow === 30 ? null : String(state.meshWindow));
     setOrDelete(KEY_MAP.showMetar, state.showMetar ? '1' : null);
     setOrDelete(KEY_MAP.showMping, state.showMping ? '1' : null);
+    // Subscriber storm reports default-on; encode only when off.
+    setOrDelete(KEY_MAP.showStormReports, state.showStormReports ? null : '0');
 
     const qs = sp.toString();
     const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
@@ -168,5 +173,6 @@ export function useRadarUrlSync(state: RadarUrlState) {
     state.meshWindow,
     state.showMetar,
     state.showMping,
+    state.showStormReports,
   ]);
 }

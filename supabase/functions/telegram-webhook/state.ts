@@ -13,7 +13,9 @@ export type AwaitingKind =
   | 'address_ttl'     // /where ... for N hours: subscriber is replying with hours
   | 'quiet_start'     // editable quiet hours
   | 'quiet_end'
-  | 'quiet_tz';
+  | 'quiet_tz'
+  | 'report_location' // /report → hazard chosen, awaiting location share
+  | 'report_media';   // /report → location captured, awaiting photo and/or text
 
 const DEFAULT_TTL_MS = 10 * 60 * 1000; // 10 minutes
 

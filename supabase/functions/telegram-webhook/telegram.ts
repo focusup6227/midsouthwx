@@ -83,6 +83,35 @@ export async function tgSendMessage(token: string, input: SendMessageInput) {
   return body.result as { message_id: number; chat: { id: number } };
 }
 
+/** Fetch the storage path for a Telegram file_id, then download the bytes.
+ *  Telegram's getFile returns a relative file_path that expires after ~1h;
+ *  the actual content lives at https://api.telegram.org/file/bot<token>/<path>.
+ *  Returns the raw bytes + the resolved MIME (best-effort from the response
+ *  header — Telegram doesn't echo back the original Content-Type from upload).
+ */
+export async function tgFetchFile(
+  token: string,
+  fileId: string,
+): Promise<{ bytes: Uint8Array; mime: string; filePath: string }> {
+  const metaRes = await fetch(`${TG_BASE}/bot${token}/getFile`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ file_id: fileId }),
+  });
+  const meta = await metaRes.json().catch(() => ({}));
+  if (!metaRes.ok || !meta.ok || !meta.result?.file_path) {
+    throw new Error(`getFile failed: ${JSON.stringify(meta)}`);
+  }
+  const filePath: string = meta.result.file_path;
+  const dlRes = await fetch(`${TG_BASE}/file/bot${token}/${filePath}`);
+  if (!dlRes.ok) {
+    throw new Error(`download failed: ${dlRes.status} ${dlRes.statusText}`);
+  }
+  const mime = dlRes.headers.get('content-type') ?? 'image/jpeg';
+  const bytes = new Uint8Array(await dlRes.arrayBuffer());
+  return { bytes, mime, filePath };
+}
+
 export async function tgAnswerCallbackQuery(
   token: string,
   callbackQueryId: string,
