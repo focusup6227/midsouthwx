@@ -87,8 +87,8 @@ const LIBREWXR_COLOR_SCHEMES: { id: number; name: string }[] = [
   { id: 5, name: 'The Weather Channel' },
   { id: 6, name: 'Meteored' },
   { id: 7, name: 'NEXRAD Level III' },
-  { id: 8, name: 'NWS Reflectivity' },
-  { id: 9, name: 'Dark Sky' },
+  { id: 8, name: 'Dark Sky' },
+  { id: 9, name: 'NWS Reflectivity' },
 ];
 
 // Live GOES-East ABI tile sources from two upstream providers:
@@ -160,10 +160,11 @@ const THREDDS_WMS_URL = (urlPath: string, layer: string, cacheKey: number) =>
   `&_t=${cacheKey}`;
 
 // LibreWxR Weather Maps API (drop-in for RainViewer v2). Returns 2h of past
-// frames + nowcast. Color scheme 8 = NWS Reflectivity (matches radar.weather.gov
-// palette). Options "1_1" = smoothed + snow-aware. 512px tiles double the spatial
-// resolution at the same z (max zoom 7), so the imagery stays readable down to
-// the city block at z~11.
+// frames + nowcast. Color scheme 8 = Dark Sky palette; 9 = NWS Reflectivity
+// (matches radar.weather.gov). Operator picks via the dropdown — see
+// LIBREWXR_COLOR_SCHEMES above. Options "1_1" = smoothed + snow-aware. 512px
+// tiles double the spatial resolution at the same z (max zoom 7), so imagery
+// stays readable down to the city block at z~11.
 const LIBREWXR_INDEX_URL = 'https://api.librewxr.net/public/weather-maps.json';
 const LIBREWXR_COLOR = 8;
 const LIBREWXR_OPTS = '1_1';
