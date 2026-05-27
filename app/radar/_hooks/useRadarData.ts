@@ -76,6 +76,17 @@ export function useStormReports() {
   });
 }
 
+export type StormReportClustersResponse = { geojson: GeoJSON.FeatureCollection; minutes: number };
+const EMPTY_STORM_REPORT_CLUSTERS: StormReportClustersResponse = { geojson: EMPTY_FC, minutes: 30 };
+export const STORM_REPORT_CLUSTERS_KEY = '/api/radar/storm-report-clusters';
+export function useStormReportClusters() {
+  return useSWR<StormReportClustersResponse>(STORM_REPORT_CLUSTERS_KEY, jsonFetcher, {
+    ...BASE_OPTS,
+    refreshInterval: 60_000,
+    fallbackData: EMPTY_STORM_REPORT_CLUSTERS,
+  });
+}
+
 export type SpcDay = {
   day_number: number;
   geojson: GeoJSON.FeatureCollection;
