@@ -169,6 +169,12 @@ function lonLatToMercator(lon: number, lat: number): [number, number] {
   return [x, y];
 }
 
+function mercatorToLonLat(x: number, y: number): [number, number] {
+  const lon = (x / 20037508.34) * 180;
+  const lat = (Math.atan(Math.sinh((y / 20037508.34) * Math.PI)) * 180) / Math.PI;
+  return [lon, lat];
+}
+
 function bboxToMercatorString(bbox: Bbox): string {
   const [w, s, e, n] = bbox;
   const [xW, yS] = lonLatToMercator(w, s);
@@ -176,14 +182,52 @@ function bboxToMercatorString(bbox: Bbox): string {
   return `${xW},${yS},${xE},${yN}`;
 }
 
+/** Expand a lon/lat bbox so its Mercator aspect ratio matches w/h. Mapbox
+ *  Static API auto-extends a bbox to fill the image's aspect ratio, but NCEP
+ *  WMS doesn't — without this, the basemap covers a wider area than the
+ *  radar overlay and the radar shows as a rectangle inside the basemap. */
+function fitBboxToAspect(bbox: Bbox, w: number, h: number): Bbox {
+  const [west, south, east, north] = bbox;
+  const [xW, yS] = lonLatToMercator(west, south);
+  const [xE, yN] = lonLatToMercator(east, north);
+  const mercW = xE - xW;
+  const mercH = yN - yS;
+  const targetAspect = w / h;
+  const currentAspect = mercW / mercH;
+  let newXW = xW;
+  let newXE = xE;
+  let newYS = yS;
+  let newYN = yN;
+  if (currentAspect < targetAspect) {
+    const newMercW = mercH * targetAspect;
+    const cx = (xW + xE) / 2;
+    newXW = cx - newMercW / 2;
+    newXE = cx + newMercW / 2;
+  } else {
+    const newMercH = mercW / targetAspect;
+    const cy = (yS + yN) / 2;
+    newYS = cy - newMercH / 2;
+    newYN = cy + newMercH / 2;
+  }
+  const [newWest, newSouth] = mercatorToLonLat(newXW, newYS);
+  const [newEast, newNorth] = mercatorToLonLat(newXE, newYN);
+  return [newWest, newSouth, newEast, newNorth];
+}
+
 type SitePick = { code: string; km: number };
-function pickNearestSite(centroid: [number, number]): SitePick | null {
-  let best: SitePick | null = null;
+
+/** All NEXRAD sites within `maxKm` of the bbox centroid, nearest first. Used
+ *  to stitch overlapping BREF discs so the polygon isn't clipped at one
+ *  site's ~230 km range. Returns up to `limit` sites — typical CONUS
+ *  polygons land 3-5 sites in range. */
+function sitesInRange(centroid: [number, number], maxKm: number, limit = 5): SitePick[] {
+  const scored: SitePick[] = [];
   for (const s of NEXRAD_SITES) {
     const km = distanceKm(centroid, s.center);
-    if (!best || km < best.km) best = { code: s.code, km };
+    if (km <= maxKm) scored.push({ code: s.code, km });
   }
-  return best;
+  scored.sort((a, b) => a.km - b.km);
+  return scored.slice(0, limit);
 }
 
 function bboxCentroid(bbox: Bbox): [number, number] {
@@ -343,7 +387,10 @@ export async function renderReflectivitySnapshot(args: {
   const mapboxToken = process.env.MAPBOX_STATIC_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
   if (!mapboxToken) return null;
 
-  const bbox = polygonBbox(args.geometry);
+  const rawBbox = polygonBbox(args.geometry);
+  // Mapbox Static API expands the bbox to fill the image's aspect ratio; NCEP
+  // WMS does not. Pre-expand once so both upstreams cover the same map area.
+  const bbox = fitBboxToAspect(rawBbox, OUTPUT_W, OUTPUT_H);
   // 5-minute wall-clock bucket in the cache key so long-lived alerts pick up
   // fresh radar scans instead of serving the first render for 30+ minutes.
   const bucketMs = 5 * 60 * 1000;
@@ -371,36 +418,40 @@ export async function renderReflectivitySnapshot(args: {
     }
   }
 
-  // Try the nearest WSR-88D site's base reflectivity first — that's what
-  // /radar shows in BREF mode (single-site, 0.5° tilt super-res). If the
-  // polygon is too far from any covered site, or the NCEP request fails,
-  // fall back to LibreWxR's CONUS composite so we still ship a radar image.
-  const site = pickNearestSite(bboxCentroid(bbox));
-  const useBref = site && site.km <= BREF_SITE_MAX_KM;
+  // Fetch BREF from every WSR-88D site within range of the polygon in
+  // parallel — single-site coverage caps at ~230 km, so polygons sitting
+  // between two sites need both stitched together to avoid hard cutoffs.
+  // Same product `/radar` shows in BREF mode, just composited across sites.
+  const sites = sitesInRange(bboxCentroid(bbox), BREF_SITE_MAX_KM);
 
   const basemapPromise = fetchMapboxBasemap(bbox, OUTPUT_W, OUTPUT_H, mapboxToken);
-  const brefPromise: Promise<Buffer | null> = useBref
-    ? fetchNcepBref(site.code, bbox, OUTPUT_W, OUTPUT_H)
-    : Promise.resolve(null);
-  const [basemap, brefRaw] = await Promise.all([basemapPromise, brefPromise]);
+  const brefPromises: Promise<Buffer | null>[] = sites.map((s) =>
+    fetchNcepBref(s.code, bbox, OUTPUT_W, OUTPUT_H),
+  );
+  const [basemap, ...brefResults] = await Promise.all([basemapPromise, ...brefPromises]);
   if (!basemap) return null;
 
   const overlays: sharp.OverlayOptions[] = [];
 
-  let radarLayer: Buffer | null = null;
-  if (brefRaw) {
-    radarLayer = await applyOpacity(brefRaw, RADAR_OPACITY);
+  // Composite every successful BREF disc in nearest-first order. Each NCEP
+  // PNG is transparent outside its site's range, so closer sites paint on
+  // top of farther ones (where they overlap) at full strength; faraway
+  // sites fill in the corners the nearest site can't reach.
+  const successfulBrefs = brefResults.filter((b): b is Buffer => b !== null);
+  if (successfulBrefs.length > 0) {
+    for (const b of successfulBrefs) {
+      const dimmed = await applyOpacity(b, RADAR_OPACITY);
+      overlays.push({ input: dimmed });
+    }
   } else {
-    // BREF unavailable (site out of range or NCEP timeout) → fall back to
-    // the CONUS composite. Same flow we shipped originally; preserves a
-    // useful image for faraway polygons or when NCEP is having a bad day.
+    // No covered sites or NCEP entirely failed → fall back to LibreWxR
+    // CONUS composite so the alert still ships a radar image.
     const lwxr = await fetchLwxrIndex();
     if (lwxr) {
       const mosaic = await buildRadarMosaic(bbox, OUTPUT_W, OUTPUT_H, lwxr);
-      if (mosaic) radarLayer = await applyOpacity(mosaic, RADAR_OPACITY);
+      if (mosaic) overlays.push({ input: await applyOpacity(mosaic, RADAR_OPACITY) });
     }
   }
-  if (radarLayer) overlays.push({ input: radarLayer });
 
   // Polygon outline always on top.
   overlays.push({ input: polygonSvgOverlay(args.geometry, args.event, OUTPUT_W, OUTPUT_H, bbox) });
