@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import {
   dismissReport,
+  forwardReportToNearby,
   promoteReport,
   verifyReport,
 } from '@/app/reports/actions';
@@ -36,8 +37,9 @@ export default function StormReportPopupActions({
   onActed: () => void;
 }) {
   const [pending, startTransition] = useTransition();
-  const [mode, setMode] = useState<'idle' | 'promote'>('idle');
+  const [mode, setMode] = useState<'idle' | 'promote' | 'forward'>('idle');
   const [radius, setRadius] = useState(25);
+  const [forwardRadius, setForwardRadius] = useState(5);
   const [body, setBody] = useState(() =>
     defaultPromotionBody({
       hazard: report.hazard,
@@ -51,11 +53,84 @@ export default function StormReportPopupActions({
 
   if (report.status === 'promoted') {
     return (
-      <div className="text-[10px] text-wx-mute flex justify-between items-center pt-1">
-        <span>Already promoted</span>
-        <Link href="/reports" className="text-wx-accent hover:underline">
-          Triage →
-        </Link>
+      <div className="pt-1 space-y-1">
+        <div className="text-[10px] text-wx-mute flex justify-between items-center">
+          <span>Already promoted</span>
+          <Link href="/reports" className="text-wx-accent hover:underline">
+            Triage →
+          </Link>
+        </div>
+        {report.photo_url ? (
+          <button
+            type="button"
+            className="btn-ghost text-[10px] text-sky-300 w-full"
+            disabled={pending}
+            onClick={() => setMode(mode === 'forward' ? 'idle' : 'forward')}
+          >
+            {mode === 'forward' ? '✕ Close' : '📷 Forward photo to nearby'}
+          </button>
+        ) : null}
+        {mode === 'forward' ? renderForward() : null}
+        {error ? <div className="text-[10px] text-wx-danger">{error}</div> : null}
+      </div>
+    );
+  }
+
+  function renderForward() {
+    return (
+      <div className="bg-wx-ink/60 rounded-md p-2 space-y-1.5 mt-1">
+        <div className="text-[10px] text-wx-mute">Send photo to subscribers within:</div>
+        <div className="flex gap-1">
+          {[3, 5, 10].map((km) => (
+            <button
+              key={km}
+              type="button"
+              onClick={() => setForwardRadius(km)}
+              className={
+                'px-2 py-0.5 rounded-full text-[10px] border ' +
+                (forwardRadius === km
+                  ? 'bg-sky-400/15 border-sky-400 text-sky-300'
+                  : 'border-wx-line text-wx-mute hover:text-wx-fg')
+              }
+            >
+              {km} km
+            </button>
+          ))}
+          <button
+            type="button"
+            disabled={pending}
+            className="btn-ghost text-[11px] ml-auto text-sky-300"
+            onClick={() => {
+              setError(null);
+              startTransition(async () => {
+                try {
+                  await forwardReportToNearby({ id: report.id, radius_km: forwardRadius });
+                  onActed();
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : 'failed');
+                }
+              });
+            }}
+          >
+            {pending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (mode === 'forward') {
+    return (
+      <div className="pt-1 space-y-1">
+        {renderForward()}
+        <button
+          type="button"
+          className="btn-ghost text-[10px] w-full"
+          onClick={() => setMode('idle')}
+        >
+          Cancel
+        </button>
+        {error ? <div className="text-[10px] text-wx-danger">{error}</div> : null}
       </div>
     );
   }
@@ -120,7 +195,8 @@ export default function StormReportPopupActions({
   }
 
   return (
-    <div className="flex gap-1.5 pt-1">
+    <div className="space-y-1 pt-1">
+    <div className="flex gap-1.5">
       {report.status !== 'verified' ? (
         <button
           type="button"
@@ -147,6 +223,18 @@ export default function StormReportPopupActions({
       >
         {pending ? '…' : 'Dismiss'}
       </button>
+    </div>
+    {report.photo_url ? (
+      <button
+        type="button"
+        className="btn-ghost text-[10px] w-full text-sky-300"
+        disabled={pending}
+        onClick={() => setMode('forward')}
+      >
+        📷 Forward photo to nearby
+      </button>
+    ) : null}
+    {error ? <div className="text-[10px] text-wx-danger">{error}</div> : null}
     </div>
   );
 }
