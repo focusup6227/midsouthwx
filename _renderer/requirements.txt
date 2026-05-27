@@ -1,0 +1,10 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+pydantic==2.10.4
+httpx==0.28.1
+arm-pyart==1.19.5
+numpy==1.26.4
+matplotlib==3.9.3
+orjson==3.10.12
+boto3==1.35.86
+netCDF4==1.7.2

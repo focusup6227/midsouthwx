@@ -1,31 +1,27 @@
-# GLM lightning endpoint — drop-in for the sibling midsouthwx-radar-renderer
-# repo (Fly.io). NOT loaded by this Next.js app; the leading underscore in
-# _renderer/ keeps Next from picking it up as a route.
-#
-# What this serves:
-#   GET /glm/recent?bbox=west,south,east,north&since=<epoch_ms>
-#     -> { type: "FeatureCollection",
-#          features: [{ geometry: Point, properties: { id, t, e } }, ...],
-#          as_of_ms: <int> }
-#
-# `t` is the flash time in epoch milliseconds. `e` is flash_energy (joules,
-# loosely — GLM reports a relative energy proxy). `id` is the GLM flash_id
-# scoped to the source file; the Next.js client dedupes on it.
-#
-# Data source: NOAA Open Data on AWS — bucket `noaa-goes19`, prefix
-# `GLM-L2-LCFA/YYYY/DOY/HH/`. Files drop every ~20 s, ~50–200 KB each. Public,
-# no auth. GOES-19 has been the operational GOES-East since 2025-04-04.
-#
-# How to integrate in the renderer app:
-#   from glm import router as glm_router
-#   app.include_router(glm_router, dependencies=[Depends(verify_bearer)])
-# (Wire your existing Bearer-token dependency so this matches /render auth.)
-#
-# Dependencies (the renderer almost certainly already has these via Py-ART):
-#   pip install netCDF4 boto3 fastapi
+"""GLM lightning endpoint — GOES-19 Geostationary Lightning Mapper flashes.
+
+Sibling to /render. Reads GLM-L2-LCFA NetCDFs from the public noaa-goes19 S3
+bucket and returns recent flashes as GeoJSON for the dashboard's /radar map
+to render as fading lightning-bolt symbols.
+
+Contract:
+  GET /glm/recent?bbox=west,south,east,north&since=<epoch_ms>
+    headers: Authorization: Bearer ${RENDERER_TOKEN}
+    -> { type: "FeatureCollection",
+         features: [{ geometry: Point, properties: { id, t, e } }, ...],
+         as_of_ms: <int> }
+
+`t` is flash time in epoch milliseconds. `e` is flash_energy (GLM's relative
+energy proxy). `id` is the GLM flash_id (scoped to one source file).
+
+Data source: NOAA Open Data on AWS — bucket `noaa-goes19`, prefix
+`GLM-L2-LCFA/YYYY/DOY/HH/`. Files drop every ~20 s, ~50–200 KB each. Public,
+no creds. GOES-19 has been the operational GOES-East since 2025-04-04.
+"""
 
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -34,9 +30,11 @@ import boto3
 import netCDF4  # type: ignore
 from botocore import UNSIGNED
 from botocore.client import Config
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 
 router = APIRouter()
+
+RENDERER_TOKEN = os.environ.get("RENDERER_TOKEN", "")
 
 _BUCKET = "noaa-goes19"
 _S3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
@@ -57,8 +55,6 @@ def _hour_prefix(dt: datetime) -> str:
 def _list_recent_keys(since_dt: datetime, now_dt: datetime) -> list[str]:
     keys: list[str] = []
     hour = now_dt.replace(minute=0, second=0, microsecond=0)
-    # Walk back at most ~3 hour-prefixes; GLM keys are sorted ASCII-ascending
-    # within a prefix, which is also time-ascending.
     floor = now_dt - timedelta(seconds=_MAX_LOOKBACK_SECONDS)
     while True:
         resp = _S3.list_objects_v2(Bucket=_BUCKET, Prefix=_hour_prefix(hour))
@@ -75,8 +71,7 @@ def _parse_glm(
     bbox: tuple[float, float, float, float] | None,
     since_ms: int,
 ) -> list[dict[str, Any]]:
-    # netCDF4 ≥ 1.5 reads HDF5 from memory; saves writing a temp file per
-    # request. If your platform fails on `memory=`, swap to a NamedTemporaryFile.
+    # netCDF4 ≥ 1.5 reads HDF5 from memory; saves a temp file per request.
     ds = netCDF4.Dataset("inmem", mode="r", memory=blob)
     try:
         product_time_s = float(ds.variables["product_time"][:].item())
@@ -120,7 +115,12 @@ def _parse_glm(
 def glm_recent(
     bbox: str | None = Query(None, description="west,south,east,north (WGS84 degrees)"),
     since: int | None = Query(None, description="Epoch ms; oldest flash to include"),
+    authorization: str = Header(default=""),
 ) -> dict[str, Any]:
+    # Match /render's in-route auth check; no Depends/verify_bearer in main.py.
+    if not RENDERER_TOKEN or authorization != f"Bearer {RENDERER_TOKEN}":
+        raise HTTPException(status_code=401, detail="unauthorized")
+
     now_ms = int(time.time() * 1000)
     if since is None:
         since_ms = now_ms - _DEFAULT_LOOKBACK_SECONDS * 1000
@@ -144,8 +144,8 @@ def glm_recent(
         bbox_tuple = (w, s, e, n)
 
     keys = _list_recent_keys(since_dt, now_dt)
-    # Cap to the most recent ~12 files (~4 min of cadence). Anything older than
-    # `since_ms` is filtered inside _parse_glm too — this is just a fetch bound.
+    # Cap to most recent ~12 files (~4 min). Anything older than since_ms is
+    # filtered inside _parse_glm too — this is just a fetch bound.
     keys = keys[-12:]
 
     features: list[dict[str, Any]] = []

@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.local
+.env.*.local
+.DS_Store
+README.md
+.fly
+fly.toml

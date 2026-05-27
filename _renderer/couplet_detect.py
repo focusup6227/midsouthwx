@@ -77,17 +77,17 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
-import boto3
 import numpy as np
 import pyart  # type: ignore
-from botocore import UNSIGNED
-from botocore.client import Config
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
+
+from radar_io import download_volume, find_latest_volume
 
 log = logging.getLogger("couplet_detect")
 
@@ -142,9 +142,21 @@ CLUSTER_RADIUS_KM = 1.5
 # mislead the operator.
 MAX_VOLUME_AGE_SECONDS = 600  # 10 min
 
-# AWS NEXRAD bucket — public, no signature required.
-_BUCKET = "noaa-nexrad-level2"
-_S3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+# NEXRAD discovery + download is delegated to radar_io (THREDDS catalog).
+# NOAA's noaa-nexrad-level2 bucket allows GetObject but NOT ListBucket for
+# anonymous requests, so we cannot enumerate the latest volume via S3
+# without signed credentials. The /render endpoint uses the same THREDDS
+# resolver and has been stable in prod.
+
+# Concurrency cap for Py-ART parse + dealias. Each scan loads a ~5 MB Level
+# II volume into Python objects and runs region-based dealiasing — peak
+# RSS is ~600-900 MB per concurrent scan. The dashboard's couplet-poll
+# edge function fans out 8 parallel requests (one per Mid-South site); on
+# the 4 GB Fly machine, 3 × 900 MB ≈ 2.7 GB peak fits comfortably.
+# 2 worked but pushed back-of-queue sites over the 60 s per-site timeout
+# whenever the machine cold-started; 3 finishes 8 sites in ~50 s warm,
+# ~60 s cold, well under the timeout.
+_COUPLET_SEMAPHORE = threading.Semaphore(3)
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -185,51 +197,10 @@ class CoupletScanResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _day_prefix(site: str, dt: datetime) -> str:
-    """Bucket prefix for one site-day in UTC."""
-    return f"{dt.year:04d}/{dt.month:02d}/{dt.day:02d}/{site}/"
-
-
-def _latest_volume_key(site: str, now_dt: datetime) -> str | None:
-    """List today's keys for the site and return the lexically-latest one.
-
-    Lexical sort == time sort because the filename format embeds
-    `YYYYMMDD_HHMMSS`. If today has no objects yet (early UTC), fall back
-    to yesterday so the rollover at 00:00 UTC doesn't blank out detection.
-    """
-    # MDM files are sentinel "metadata-only" objects we don't want; volumes
-    # have the `_V06` suffix.
-    def _filter_volumes(keys: list[str]) -> list[str]:
-        return [k for k in keys if k.endswith("_V06") or k.endswith("_V08")]
-
-    for offset_days in (0, 1):
-        day = now_dt - timedelta(days=offset_days)
-        resp = _S3.list_objects_v2(Bucket=_BUCKET, Prefix=_day_prefix(site, day))
-        keys = sorted([o["Key"] for o in resp.get("Contents", [])])
-        keys = _filter_volumes(keys)
-        if keys:
-            return keys[-1]
-    return None
-
-
-def _volume_time_from_filename(key: str) -> datetime | None:
-    """Parse the timestamp embedded in a Level II filename.
-
-    Format example: 2026/05/24/KNQA/KNQA20260524_143215_V06
-    """
-    fname = key.rsplit("/", 1)[-1]
-    if len(fname) < 19:
-        return None
-    try:
-        ts = fname[4:19]  # YYYYMMDD_HHMMSS
-        return datetime.strptime(ts, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def _fetch_volume(key: str) -> bytes:
-    obj = _S3.get_object(Bucket=_BUCKET, Key=key)
-    return obj["Body"].read()
+# NEXRAD discovery + fetch is now handled by radar_io.find_latest_volume and
+# radar_io.download_volume — both go through UCAR's THREDDS catalog. The
+# previous S3 ListBucket path returned AccessDenied against the public NOAA
+# bucket and has been removed.
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -433,13 +404,13 @@ def couplets_scan(
 
     started = time.time()
     now_dt = datetime.now(timezone.utc)
-    key = _latest_volume_key(site, now_dt)
-    if not key:
-        raise HTTPException(status_code=502, detail=f"no recent Level II for {site}")
 
-    vol_time = _volume_time_from_filename(key)
-    if vol_time is None:
-        raise HTTPException(status_code=502, detail=f"unparseable filename {key}")
+    try:
+        url_path, vol_time = find_latest_volume(site)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"no recent Level II for {site}: {exc}"
+        ) from exc
 
     age = (now_dt - vol_time).total_seconds()
     if age > MAX_VOLUME_AGE_SECONDS:
@@ -448,39 +419,53 @@ def couplets_scan(
             detail=f"latest {site} volume is {int(age)}s old (>{MAX_VOLUME_AGE_SECONDS}s threshold)",
         )
 
-    # Read NEXRAD direct from the bytes. Py-ART accepts a file-like object;
-    # using BytesIO avoids writing a temp file per scan.
-    import io
+    volume_filename = url_path.rsplit("/", 1)[-1]
 
-    blob = _fetch_volume(key)
+    # Download is network-bound and small (~5 MB tmpfile), safe to do outside
+    # the memory semaphore. Parse + detect is the heavy step and stays inside.
     try:
-        radar = pyart.io.read_nexrad_archive(io.BytesIO(blob))
+        local_path = download_volume(url_path)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
-            status_code=502, detail=f"pyart could not read {key}: {exc}"
+            status_code=502, detail=f"could not download {volume_filename}: {exc}"
         ) from exc
 
-    try:
-        sweep_idx = _pick_low_elevation_sweep(radar)
-        elev_deg = float(radar.fixed_angle["data"][sweep_idx])
-        radar_lat = float(radar.latitude["data"][0])
-        radar_lon = float(radar.longitude["data"][0])
+    with _COUPLET_SEMAPHORE:
+        try:
+            try:
+                radar = pyart.io.read_nexrad_archive(local_path)
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"pyart could not read {volume_filename}: {exc}",
+                ) from exc
+        finally:
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
 
-        detections, raw_count = _scan_for_couplets(
-            radar,
-            sweep_idx,
-            req.min_shear_kt,
-            req.min_range_km,
-            req.max_range_km,
-        )
-    finally:
-        # Py-ART Radar holds large arrays; help GC out promptly on Fly's
-        # smaller machines where back-to-back scans can stack memory.
-        del radar
+        try:
+            sweep_idx = _pick_low_elevation_sweep(radar)
+            elev_deg = float(radar.fixed_angle["data"][sweep_idx])
+            radar_lat = float(radar.latitude["data"][0])
+            radar_lon = float(radar.longitude["data"][0])
+
+            detections, raw_count = _scan_for_couplets(
+                radar,
+                sweep_idx,
+                req.min_shear_kt,
+                req.min_range_km,
+                req.max_range_km,
+            )
+        finally:
+            # Py-ART Radar holds large arrays; help GC out promptly on Fly's
+            # smaller machines where back-to-back scans can stack memory.
+            del radar
 
     return CoupletScanResponse(
         site=site,
-        volume_filename=key.rsplit("/", 1)[-1],
+        volume_filename=volume_filename,
         volume_time_utc=vol_time.isoformat().replace("+00:00", "Z"),
         scan_age_seconds=int(age),
         elevation_deg=elev_deg,

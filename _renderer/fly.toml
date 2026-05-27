@@ -1,0 +1,52 @@
+# Fly.io config for midsouthwx-radar-renderer.
+# Replace `app` below with your actual app name on first `fly launch`.
+
+app = "midsouthwx-radar"
+primary_region = "iad"  # NEXRAD S3 lives in us-east-1; iad keeps S3 GETs cheap.
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  LOG_LEVEL = "INFO"
+  RENDERER_STORAGE_BUCKET = "radar-tiles"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Keep one machine always warm. couplet-poll fans out 8 concurrent
+  # /couplets/scan requests every minute; with scale-to-zero the Fly proxy
+  # couldn't wake the machine fast enough and most requests returned PR01
+  # (no healthy instance). Always-on adds ~$2-5/mo but eliminates the cold
+  # start storm and lets Py-ART/HDF5 stay hot between requests.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  # The dashboard's proxy waits up to 120 s on cold start, so a slower
+  # health-check grace + longer idle timeout is fine.
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    # The dashboard fans out ~4 concurrent renders per site swap (one per
+    # product × sweep combo). Hard limit at 16 gives Fly plenty of headroom
+    # to queue inflight requests instead of returning PR01 to the proxy.
+    # The in-process render semaphore still caps actual CPU/memory parallelism.
+    soft_limit = 4
+    hard_limit = 16
+
+  # A real render is 10–30 s of CPU + a few MB of S3 fetch. With 8 GB RAM and
+  # 2 shared CPUs we can comfortably handle 4–6 concurrent renders.
+  [[http_service.checks]]
+    grace_period = "60s"  # Py-ART/numpy first import is slow.
+    interval = "30s"
+    method = "get"
+    path = "/healthz"
+    protocol = "http"
+    timeout = "10s"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  # 4 GB: a super-res velocity render holds ~600 MB of polygon dicts plus the
+  # serialized JSON string (~400 MB before gzip). 2 GB OOM'd under concurrency.
+  memory = "4gb"
