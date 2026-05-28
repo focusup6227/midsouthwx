@@ -58,8 +58,8 @@ as $$
     select
       (select hazards from f)                                               as forecast_hazards,
       (select coalesce(array_agg(distinct hazard), '{}') from observed_hazards) as observed_hazards,
-      (select coalesce(array_agg(distinct hazard) filter (where hazard = any((select hazards from f))), '{}') from observed_hazards) as matched_hazards,
-      (select coalesce(array_agg(distinct hazard) filter (where not (hazard = any((select hazards from f)))), '{}') from observed_hazards) as missed_hazards,
+      (select coalesce(array_agg(distinct hazard) filter (where hazard in (select unnest(hazards) from f)), '{}') from observed_hazards) as matched_hazards,
+      (select coalesce(array_agg(distinct hazard) filter (where hazard not in (select unnest(hazards) from f)), '{}') from observed_hazards) as missed_hazards,
       (
         select coalesce(array_agg(h), '{}')
         from unnest((select hazards from f)) as h
