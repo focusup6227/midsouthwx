@@ -1649,7 +1649,14 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         if (cancelled) return;
 
         if (data.error) {
-          if (attempt < RETRY_DELAYS.length) {
+          // Only retry transient causes. renderer_not_configured (env vars
+          // missing) and renderer_unreachable (Fly down / DNS) won't fix
+          // themselves on the 4-8-12s schedule, and retrying them piles up
+          // open connections and starves /api/radar/warnings et al with
+          // ERR_INSUFFICIENT_RESOURCES.
+          const transient =
+            data.error === 'renderer_waking' || data.error === 'renderer_timeout';
+          if (transient && attempt < RETRY_DELAYS.length) {
             setLevel2Error('renderer_waking');
             setLevel2Attempt(attempt + 1);
             schedule(() => load(attempt + 1), RETRY_DELAYS[attempt]);

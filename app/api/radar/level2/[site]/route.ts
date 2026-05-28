@@ -78,9 +78,12 @@ export async function GET(
         format,
         sweep_index: sweepIndex,
       }),
-      // Cold starts on Fly + render can take 30–90 s on first hit.
-      // Use a generous timeout so we don't 502 the user during wake-up.
-      signal: AbortSignal.timeout(120_000),
+      // Wake-up tolerance: 30 s is enough for a warm Fly machine to render
+      // and ~3× a typical cold-start "hello" — we used to give 120 s here,
+      // but that meant a downed renderer held 6+ browser connection slots
+      // open for 2 minutes apiece, starving other /api/radar/* fetches with
+      // ERR_INSUFFICIENT_RESOURCES.
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!upstream.ok) {
