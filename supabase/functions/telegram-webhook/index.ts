@@ -17,6 +17,7 @@ import {
   isHelpMenuText,
   isLocationMenuText,
   isPrefsMenuText,
+  isReportMenuText,
   isStatusMenuText,
   locationInlineKeyboard,
   parseCmdCallback,
@@ -700,6 +701,38 @@ async function submitStormReport(
   }
 }
 
+/** Send the hazard picker and reset any prior /report state. Used by both
+ *  the `/report` slash command and the persistent "📣 Report" reply-keyboard
+ *  button so the entry points stay in sync. */
+async function startReportFlow(
+  supa: ReturnType<typeof serviceClient>,
+  token: string,
+  chatId: number,
+): Promise<void> {
+  const { data: sub } = await supa
+    .from('subscribers')
+    .select('id')
+    .eq('telegram_chat_id', chatId)
+    .eq('status', 'active')
+    .maybeSingle();
+  if (!sub) {
+    await tgSendMessage(token, {
+      chat_id: chatId,
+      text: 'You need to finish sign-up first. Use the link from the website.',
+    });
+    return;
+  }
+  await clearAwaiting(supa, sub.id);
+  await tgSendMessage(token, {
+    chat_id: chatId,
+    text:
+      '📣 What are you reporting?\n\n' +
+      'Tap a hazard below. After that I will ask you to share your location, ' +
+      'then you can attach a photo, type a description, or both.',
+    reply_markup: reportHazardKeyboard(),
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ ok: false }, 405);
 
@@ -1221,7 +1254,10 @@ Deno.serve(async (req) => {
         text:
           'You are signed up for Mid-South WX alerts. 🌩\n\n' +
           'The buttons under the message box are your menu:\n' +
-          '🌩 Status · 📍 Location · ⚙️ Alerts · 💬 Help · 📡 Share live location',
+          '📣 Report · 📡 Share live location\n' +
+          '🌩 Status · 📍 Location · ⚙️ Alerts · 💬 Help\n\n' +
+          'Tap 📣 Report any time you see severe weather and want to share ' +
+          'a photo or quick description.',
         reply_markup: subscriberReplyKeyboard(),
       });
       // Onboarding follow-up — gives the operator a guided opt-in to watches
@@ -1291,30 +1327,11 @@ Deno.serve(async (req) => {
     }
 
     // /report — kick off the storm-report flow.
-    if (text === '/report' || text?.startsWith('/report ') || text?.startsWith('/report@')) {
-      const { data: sub } = await supa
-        .from('subscribers')
-        .select('id')
-        .eq('telegram_chat_id', chatId)
-        .eq('status', 'active')
-        .maybeSingle();
-      if (!sub) {
-        await tgSendMessage(token, {
-          chat_id: chatId,
-          text: 'You need to finish sign-up first. Use the link from the website.',
-        });
-        return json({ ok: true });
-      }
-      await clearAwaiting(supa, sub.id);
-      await tgSendMessage(token, {
-        chat_id: chatId,
-        text:
-          '📣 What are you reporting?\n\n' +
-          'Tap a hazard below. After that I will ask you to share your location ' +
-          'and (optionally) attach a photo. Reports plot on the operator map ' +
-          'with your name and a thumbnail.',
-        reply_markup: reportHazardKeyboard(),
-      });
+    if (
+      text === '/report' || text?.startsWith('/report ') || text?.startsWith('/report@') ||
+      isReportMenuText(text)
+    ) {
+      await startReportFlow(supa, token, chatId);
       return json({ ok: true });
     }
 
@@ -1414,12 +1431,14 @@ Deno.serve(async (req) => {
             chat_id: chatId,
             text:
               `Location captured (${latitude.toFixed(3)}, ${longitude.toFixed(3)}).\n\n` +
-              '📷 Now send a photo of what you are reporting (you can add a ' +
-              'caption with details), or just send a text description.\n\n' +
-              'Tap below if you want to submit without a photo.',
+              'Now do any of these — whatever you send becomes part of the report:\n\n' +
+              '✏️  Type a description (just tap the message box and start typing).\n' +
+              '📷  Send a photo (you can add a caption too).\n' +
+              '🎞  Send a photo with a typed description as the caption.\n\n' +
+              'Or tap a button below.',
             reply_markup: {
               inline_keyboard: [
-                [{ text: '⏭ Submit without photo', callback_data: 'report:skip_media' }],
+                [{ text: '📍 Submit (location only)', callback_data: 'report:skip_media' }],
                 [{ text: '✖️ Cancel', callback_data: 'report:cancel' }],
               ],
             },
