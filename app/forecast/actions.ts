@@ -1,8 +1,9 @@
 'use server';
 
-import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin, supabaseServer } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { generateForecastDraft, type ForecastContext, type ForecastDraft } from '@/lib/ai/forecast-draft';
 
@@ -166,4 +167,112 @@ function composeBody(title: string, discussion: string | null): string {
   if (!d) return t;
   if (!t) return d;
   return `${t}\n\n${d}`;
+}
+
+// Direct broadcast — no /compose detour. Builds an audience_spec from the
+// forecast's polygon, inserts a messages row + enqueues, marks the forecast
+// 'issued' and links broadcast_message_id back so the detail page can show
+// the outbound stats.
+export async function broadcastForecast(id: string): Promise<{ message_id: string; count: number }> {
+  const supa = supabaseServer();
+  const admin = supabaseAdmin();
+
+  const { data: userRes } = await supa.auth.getUser();
+  const userId = userRes.user?.id;
+  if (!userId) throw new Error('not authenticated');
+
+  const { data: forecast, error: ferr } = await supa
+    .from('forecasts')
+    .select('id, title, hazards, confidence, discussion, status, public_token, broadcast_message_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (ferr || !forecast) throw new Error(ferr?.message ?? 'forecast not found');
+  if (forecast.broadcast_message_id) {
+    throw new Error('forecast already broadcast — use Resend from /m/<id> to refire');
+  }
+
+  const { data: areaJson, error: aerr } = await supa.rpc('forecast_area_geojson', { p_id: id });
+  if (aerr || !areaJson) throw new Error(aerr?.message ?? 'could not load forecast area');
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '') ?? '';
+  const publicLink = forecast.public_token && siteUrl
+    ? `\n\nFull discussion: ${siteUrl}/f/${forecast.public_token}`
+    : '';
+  const body = (composeBody(forecast.title, forecast.discussion) + publicLink).trim();
+  if (!body) throw new Error('forecast has no body to broadcast');
+
+  const audienceSpec = { geometry: areaJson };
+
+  const { data: msg, error: insertErr } = await admin
+    .from('messages')
+    .insert({
+      body_md: body,
+      body_rendered: body,
+      source: 'manual',
+      status: 'draft',
+      audience_spec: audienceSpec,
+      created_by: userId,
+    })
+    .select('id')
+    .single();
+  if (insertErr || !msg) throw new Error(insertErr?.message ?? 'insert failed');
+
+  const { data: count, error: enqErr } = await admin.rpc('enqueue_message_system', {
+    p_message_id: msg.id,
+  });
+  if (enqErr) {
+    await admin.from('messages').update({ status: 'failed' }).eq('id', msg.id);
+    throw new Error(enqErr.message);
+  }
+
+  const wantsIssued = forecast.status === 'draft' || forecast.status === 'ai_draft';
+  await admin
+    .from('forecasts')
+    .update({
+      status: wantsIssued ? 'issued' : forecast.status,
+      broadcast_message_id: msg.id,
+      broadcast_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  revalidatePath(`/forecast/${id}`);
+  revalidatePath('/forecast');
+  return { message_id: msg.id, count: (count as unknown as number) ?? 0 };
+}
+
+// Mint or revoke the public share token. Issuing one flips visibility to
+// "anyone with the link" — combined with the migration's anon-select policy
+// gating on (public_token IS NOT NULL AND status IN ('issued','closed')),
+// drafts stay private even if a token was created early.
+export async function enableForecastSharing(id: string): Promise<{ token: string }> {
+  const supa = supabaseServer();
+  const { data: existing } = await supa
+    .from('forecasts')
+    .select('public_token')
+    .eq('id', id)
+    .maybeSingle();
+  if (existing?.public_token) {
+    revalidatePath(`/forecast/${id}`);
+    return { token: existing.public_token };
+  }
+  // 16 bytes → 22 url-safe chars. Plenty of entropy; short enough to share.
+  const token = randomBytes(16).toString('base64url');
+  const { error } = await supa
+    .from('forecasts')
+    .update({ public_token: token, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+  revalidatePath(`/forecast/${id}`);
+  return { token };
+}
+
+export async function disableForecastSharing(id: string): Promise<void> {
+  const supa = supabaseServer();
+  const { error } = await supa
+    .from('forecasts')
+    .update({ public_token: null, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) throw new Error(error.message);
+  revalidatePath(`/forecast/${id}`);
 }

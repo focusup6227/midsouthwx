@@ -1,9 +1,9 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Send } from 'lucide-react';
 import DashShell from '@/components/DashShell';
 import { supabaseServer } from '@/lib/supabase/server';
-import { composeFromForecast } from '../actions';
+import ForecastDetailActions from './_components/ForecastDetailActions';
+import ForecastShareCard from './_components/ForecastShareCard';
 import Scorecard from './_components/Scorecard';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +22,9 @@ type ForecastDetail = {
   verification: unknown;
   created_at: string;
   updated_at: string;
+  public_token: string | null;
+  broadcast_message_id: string | null;
+  broadcast_at: string | null;
 };
 
 function fmt(dt: string): string {
@@ -36,15 +39,14 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
   const supa = supabaseServer();
   const { data, error } = await supa
     .from('forecasts')
-    .select('id, title, hazards, confidence, status, valid_from, valid_until, discussion, source_refs, ai_draft, verification, created_at, updated_at')
+    .select('id, title, hazards, confidence, status, valid_from, valid_until, discussion, source_refs, ai_draft, verification, created_at, updated_at, public_token, broadcast_message_id, broadcast_at')
     .eq('id', params.id)
     .single();
   if (error || !data) return notFound();
   const f = data as ForecastDetail;
 
-  // Bind the id into the server action so the submit button can fire it
-  // without a client wrapper. composeFromForecast() redirects on success.
-  const sendAction = composeFromForecast.bind(null, f.id);
+  const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '');
+  const shareUrl = f.public_token && siteUrl ? `${siteUrl}/f/${f.public_token}` : null;
 
   return (
     <DashShell
@@ -52,14 +54,14 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
       width="normal"
       backHref="/forecast"
       actions={
-        <form action={sendAction}>
-          <button
-            type="submit"
-            className="inline-flex items-center gap-2 rounded-lg bg-wx-accent px-3 py-1.5 text-sm font-semibold text-black hover:bg-amber-300"
-          >
-            <Send size={14} /> Send to subscribers
-          </button>
-        </form>
+        <ForecastDetailActions
+          id={f.id}
+          status={f.status}
+          alreadyBroadcast={Boolean(f.broadcast_message_id)}
+          broadcastMessageId={f.broadcast_message_id}
+          hazards={f.hazards ?? []}
+          confidence={f.confidence}
+        />
       }
     >
       <div className="grid gap-4 md:grid-cols-[1fr_200px]">
@@ -101,6 +103,13 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
             verification={(f.verification as Parameters<typeof Scorecard>[0]['verification']) ?? null}
             validUntil={f.valid_until}
           />
+          <ForecastShareCard
+            id={f.id}
+            publicToken={f.public_token}
+            shareUrl={shareUrl}
+            broadcastMessageId={f.broadcast_message_id}
+            broadcastAt={f.broadcast_at}
+          />
           <div className="rounded-lg border border-wx-line bg-wx-card p-3">
             <div className="font-semibold uppercase tracking-wider text-[10px]">AI draft</div>
             <div className="mt-0.5">
@@ -111,7 +120,11 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
               )}
             </div>
           </div>
-          <Link href="/forecast" className="block text-center text-wx-accent">All forecasts →</Link>
+          <div className="flex gap-2 justify-center">
+            <Link href="/forecast" className="text-wx-accent">All forecasts</Link>
+            <span className="text-wx-mute">·</span>
+            <Link href="/forecast/templates" className="text-wx-accent">Templates</Link>
+          </div>
         </aside>
       </div>
     </DashShell>
