@@ -162,6 +162,23 @@ Deno.serve(withHealthLog('couplet-poll', async (req) => {
 
   const supa = serviceClient();
 
+  // Smart-gate: skip the renderer fan-out unless there's an active SPC
+  // convective watch or NWS tornado/severe-thunderstorm warning intersecting
+  // the Mid-South bbox. The Fly renderer is the cost driver here; outside
+  // active threats there's nothing for the couplet detector to find anyway.
+  // Set COUPLET_POLL_FORCE=1 to bypass the gate (manual diagnostics).
+  const force = Deno.env.get('COUPLET_POLL_FORCE') === '1';
+  if (!force) {
+    const { data: shouldRun, error: gateErr } = await supa.rpc('couplet_poll_should_run');
+    if (gateErr) {
+      // Gate failure shouldn't break the cron — log and fall through to the
+      // scan so a transient DB error doesn't blind us during an event.
+      console.error('couplet_poll_should_run', gateErr.message);
+    } else if (shouldRun === false) {
+      return json({ ok: true, gated: true, reason: 'no_active_convective_alert' });
+    }
+  }
+
   // Renderer VM is shared-cpu-2x:4GB; a velocity render holds ~600 MB resident
   // and an 8-wide Promise.all fan-out has OOM'd the machine in production
   // (PR01 + restart cycle). Cap concurrency at 4 — well under the documented
