@@ -7,6 +7,7 @@ export const BTN_PREFS = '⚙️ Alerts';
 export const BTN_STATUS = '🌩 Status';
 export const BTN_LOCATION = '📍 Location';
 export const BTN_HELP = '💬 Help';
+export const BTN_REPORT = '📣 Report';
 export const BTN_SHARE_LIVE = '📡 Share live location';
 
 export const SUBSCRIBER_BOT_COMMANDS = [
@@ -62,12 +63,12 @@ export function commandsHelpText(): string {
   return (
     'Mid-South WX — what you can do:\n\n' +
     'Use the buttons below the message box — no slash commands needed.\n\n' +
+    '📣 Report — send a storm report (photo, description, or both)\n' +
     '🌩 Status — see your current setup at a glance\n' +
     '📍 Location — set a temporary address or revert to home\n' +
     '⚙️ Alerts — toggle warnings/watches/advisories + quiet hours\n' +
     '💬 Help — this message\n' +
-    '📡 Share live location — attach your current pin in Telegram\n' +
-    '📣 /report — send a storm report with a photo\n\n' +
+    '📡 Share live location — attach your current pin in Telegram\n\n' +
     'Power-user shortcuts (slash commands still work):\n' +
     '• /status, /prefs, /where <address>, /home, /report\n' +
     '• /unsubscribe or STOP — opt out\n' +
@@ -83,9 +84,9 @@ export function commandsHelpText(): string {
 export function subscriberReplyKeyboard(): NonNullable<SendMessageInput['reply_markup']> {
   return {
     keyboard: [
+      [{ text: BTN_REPORT }, { text: BTN_SHARE_LIVE, request_location: true }],
       [{ text: BTN_STATUS }, { text: BTN_LOCATION }],
       [{ text: BTN_PREFS }, { text: BTN_HELP }],
-      [{ text: BTN_SHARE_LIVE, request_location: true }],
     ],
     resize_keyboard: true,
     is_persistent: true,
@@ -100,6 +101,9 @@ export function isLocationMenuText(text: string | undefined): boolean {
 }
 export function isHelpMenuText(text: string | undefined): boolean {
   return text?.trim() === BTN_HELP;
+}
+export function isReportMenuText(text: string | undefined): boolean {
+  return text?.trim() === BTN_REPORT;
 }
 
 /** Inline keyboard shown when the user taps the Location menu button. Each
