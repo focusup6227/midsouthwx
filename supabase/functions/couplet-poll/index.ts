@@ -161,8 +161,26 @@ Deno.serve(withHealthLog('couplet-poll', async (req) => {
   }
 
   const supa = serviceClient();
-  const results = await Promise.all(
-    MIDSOUTH_SITES.map((s) => scanOneSite(s, base, token, supa)),
+
+  // Renderer VM is shared-cpu-2x:4GB; a velocity render holds ~600 MB resident
+  // and an 8-wide Promise.all fan-out has OOM'd the machine in production
+  // (PR01 + restart cycle). Cap concurrency at 4 — well under the documented
+  // "4–6 concurrent renders" headroom in _renderer/fly.toml — and let the
+  // remaining sites queue. Total wall-clock cost is bounded by
+  // PER_SITE_TIMEOUT_MS × ceil(sites / CONCURRENCY) = 60 s × 2 = 120 s, still
+  // inside the function's budget.
+  const CONCURRENCY = 4;
+  const queue = [...MIDSOUTH_SITES];
+  const results: Awaited<ReturnType<typeof scanOneSite>>[] = [];
+  async function worker(): Promise<void> {
+    while (queue.length > 0) {
+      const site = queue.shift();
+      if (!site) return;
+      results.push(await scanOneSite(site, base, token, supa));
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, MIDSOUTH_SITES.length) }, () => worker()),
   );
 
   const totals = results.reduce(
