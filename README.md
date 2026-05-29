@@ -111,6 +111,28 @@ server-side.
 2. Keep **Email** auth enabled; dashboard **Invite operator** uses the Admin API **`inviteUserByEmail`** (requires `SUPABASE_SERVICE_ROLE_KEY` on the Next server). Invited users complete the link flow and are upserted into **`public.operators`** in [`app/auth/callback/route.ts`](app/auth/callback/route.ts).
 3. Middleware only requires a valid session to reach `/dashboard`; operator-specific access to subscriber/message data still flows through **`is_operator()`** and RLS.
 
+### Branded auth emails + production SMTP
+
+The operator-invite and magic-link emails are dark-branded HTML templates in [`supabase/templates/`](supabase/templates/). `supabase/config.toml` wires them via `content_path` for the **local** stack only — production is configured in the dashboard. To set up production (one-time):
+
+1. **Site URL** — Supabase **Authentication → URL Configuration → Site URL** = `https://midsouthwx.app`. The templates embed the logo via `{{ .SiteURL }}/icons/icon-192.png`, so a wrong/localhost Site URL breaks the logo.
+2. **Redirect allowlist** — add `https://midsouthwx.app/auth/callback`, a Vercel preview wildcard, and `http://localhost:3000/auth/callback`. (Mirrored in `config.toml`'s `additional_redirect_urls` for the local stack.)
+3. **Templates** — paste `supabase/templates/invite.html` and `magic_link.html` into **Authentication → Emails** (Invite user / Magic Link), with subjects `You're invited to operate Mid-South WX` and `Mid-South WX — your sign-in link`.
+4. **Custom SMTP** — Supabase's built-in email is rate-limited and not for production. **Authentication → Emails → SMTP Settings → Enable Custom SMTP**, pointed at Resend (`midsouthwx.app` is the verified sender domain):
+   | Field | Value |
+   |-------|-------|
+   | Host / Port | `smtp.resend.com` / `465` |
+   | Username | `resend` |
+   | Password | a Resend API key (`re_…`) |
+   | Sender | `MidSouthWX <invites@midsouthwx.app>` |
+
+   Then raise **Authentication → Rate Limits → emails per hour** above the tiny default.
+5. **`NEXT_PUBLIC_SITE_URL`** — set to `https://midsouthwx.app` in **Vercel** (Production). Drives the subscriber-invite logo, forecast share URLs, `{{url}}` in compose, and the operator-invite redirect fallback.
+
+> Do **not** `supabase config push` — `config.toml`'s `site_url` is localhost for local dev and would overwrite the production Site URL. Production auth/email config lives in the dashboard.
+
+The subscriber-invite email ([`app/subscribers/invite/actions.ts`](app/subscribers/invite/actions.ts)) is sent by the app via Resend's HTTP API (`RESEND_API_KEY` + `EMAIL_FROM`), independent of Supabase SMTP.
+
 ## What works in v1
 
 - Operator magic-link sign-in (`/login`), with auto-enrollment into `public.operators` on first sign-in (requires insert-self RLS policy from latest migrations).

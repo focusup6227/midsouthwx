@@ -19,3 +19,9 @@ coverage/
 supabase/.temp/
 supabase/.branches/
 .supabase/
+
+# Agent tooling artifacts (skills / plugins / MCP — installed locally, not part of the app)
+.agents/
+.claude/skills/
+.mcp.json
+skills-lock.json

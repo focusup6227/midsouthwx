@@ -125,40 +125,85 @@ export async function inviteSubscriberAction(
   // suppressed when NEXT_PUBLIC_SITE_URL isn't configured (dev/local).
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '');
   const logoBlock = siteUrl
-    ? `<img src="${siteUrl}/icons/icon-192.png" alt="MidSouthWX" width="72" height="72" style="display:inline-block;border-radius:50%;border:0" />`
+    ? `<img src="${siteUrl}/icons/icon-192.png" width="72" height="72" alt="Mid-South WX" style="display:block;border-radius:50%;border:1px solid #1f2937;" />`
     : '';
+  const FONT = `'Segoe UI',Roboto,-apple-system,Helvetica,Arial,sans-serif`;
   const html = `<!doctype html>
-<html><body style="margin:0;padding:0;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f5f5;padding:24px 12px;">
-    <tr><td align="center">
-      <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
-        <tr>
-          <td align="center" style="background:#0b1220;padding:24px 24px 20px;">
-            ${logoBlock}
-            <div style="color:#f8fafc;font-size:18px;font-weight:600;margin-top:${logoBlock ? '12px' : '0'};letter-spacing:0.02em;">MidSouthWX</div>
-            <div style="color:#94a3b8;font-size:11px;margin-top:4px;text-transform:uppercase;letter-spacing:0.08em;">Severe weather alerts</div>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:24px;line-height:1.5;">
-            <p style="margin:0 0 12px;">Hi ${escapeHtml(introName)},</p>
-            <p style="margin:0 0 12px;">You've been invited to receive severe-weather alerts for ZIP ${escapeHtml(parsed.data.zip)}. Alerts arrive as Telegram messages — tornado warnings, severe thunderstorm warnings, flash-flood warnings, and operator-sent updates.</p>
-            <p style="margin:24px 0;">
-              <a href="${deeplink}" style="display:inline-block;background:#fbbf24;color:#0b1220;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:700;">
-                Open Telegram &amp; activate
-              </a>
-            </p>
-            <p style="color:#555;font-size:13px;margin:0 0 8px;">If the button doesn't open Telegram, copy this link:</p>
-            <p style="word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:#f5f5f5;padding:8px 10px;border-radius:6px;margin:0;">${escapeHtml(deeplink)}</p>
-            <p style="color:#777;font-size:12px;margin:24px 0 0;">
-              This invite expires in 7 days. If you didn't expect this email, you can safely ignore it — no account is created until you tap Start in Telegram.
-            </p>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
-</body></html>`;
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="x-apple-disable-message-reformatting" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="supported-color-schemes" content="dark light" />
+  </head>
+  <body style="margin:0; padding:0; width:100%; background-color:#0b1220; -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%;">
+    <div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all;">
+      Activate your Mid-South WX severe-weather alerts in Telegram.
+    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0b1220;">
+      <tr>
+        <td align="center" style="padding:32px 16px;">
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:480px; max-width:480px; background-color:#111827; border:1px solid #1f2937; border-radius:12px; overflow:hidden;">
+            <tr>
+              <td align="center" style="padding:36px 36px 8px 36px;">${logoBlock}</td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:0 36px;">
+                <p style="margin:${logoBlock ? '14px' : '0'} 0 0 0; font-family:${FONT}; font-size:12px; font-weight:600; letter-spacing:0.14em; text-transform:uppercase; color:#fbbf24;">Mid-South WX</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:18px 36px 0 36px;">
+                <h1 style="margin:0; font-family:${FONT}; font-size:24px; line-height:1.25; font-weight:700; color:#e5e7eb;">Your severe-weather alerts are ready</h1>
+              </td>
+            </tr>
+            <tr>
+              <td align="left" style="padding:16px 36px 0 36px;">
+                <p style="margin:0 0 14px 0; font-family:${FONT}; font-size:15px; line-height:1.6; color:#94a3b8;">Hi <span style="color:#e5e7eb; font-weight:600;">${escapeHtml(introName)}</span>,</p>
+                <p style="margin:0; font-family:${FONT}; font-size:15px; line-height:1.6; color:#94a3b8;">You've been invited to receive severe-weather alerts for ZIP <span style="color:#e5e7eb; font-weight:600;">${escapeHtml(parsed.data.zip)}</span>. Alerts arrive as Telegram messages — tornado warnings, severe thunderstorm warnings, flash-flood warnings, and operator updates. Tap below and press <span style="color:#e5e7eb; font-weight:600;">Start</span> to activate.</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:28px 36px 8px 36px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td align="center" bgcolor="#fbbf24" style="border-radius:8px;">
+                      <a href="${deeplink}" target="_blank" style="display:inline-block; padding:13px 28px; font-family:${FONT}; font-size:15px; font-weight:700; color:#111111; text-decoration:none; border-radius:8px;">Open Telegram &amp; activate</a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:14px 36px 0 36px;">
+                <p style="margin:0; font-family:${FONT}; font-size:12px; line-height:1.5; color:#64748b;">Button not opening Telegram? Copy and paste this link:</p>
+                <p style="margin:6px 0 0 0; font-family:${FONT}; font-size:12px; line-height:1.5; word-break:break-all;"><a href="${deeplink}" target="_blank" style="color:#fbbf24; text-decoration:underline;">${escapeHtml(deeplink)}</a></p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 36px 0 36px;">
+                <div style="height:1px; line-height:1px; font-size:0; background-color:#1f2937;">&nbsp;</div>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:18px 36px 36px 36px;">
+                <p style="margin:0; font-family:${FONT}; font-size:12px; line-height:1.6; color:#64748b;">This invite expires in 7 days. If you didn't expect this email, you can safely ignore it — no account is created until you tap Start in Telegram.</p>
+              </td>
+            </tr>
+          </table>
+          <table role="presentation" width="480" cellpadding="0" cellspacing="0" border="0" style="width:480px; max-width:480px;">
+            <tr>
+              <td align="center" style="padding:20px 36px 0 36px;">
+                <p style="margin:0; font-family:${FONT}; font-size:11px; line-height:1.5; color:#475569;">Mid-South WX · Severe weather alert dashboard</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
   const text = `Hi ${introName},
 
 You've been invited to receive severe-weather alerts for ZIP ${parsed.data.zip} via Telegram.

@@ -22,8 +22,19 @@ file_size_limit = "50MiB"
 
 [auth]
 enabled = true
+# NOTE: this file configures the LOCAL Supabase stack. site_url stays localhost so
+# local magic-link / invite flows redirect back to the dev server. The PRODUCTION
+# Site URL (https://midsouthwx.app), redirect allowlist, and email templates are
+# managed in the Supabase Dashboard (Authentication → URL Configuration / Emails) —
+# do NOT `supabase config push` this, or it will overwrite prod Site URL with localhost.
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["https://midsouthwx.vercel.app"]
+additional_redirect_urls = [
+  "http://localhost:3000/auth/callback",
+  "https://midsouthwx.app",
+  "https://midsouthwx.app/auth/callback",
+  "https://midsouthwx.vercel.app",
+  "https://midsouthwx.vercel.app/auth/callback",
+]
 jwt_expiry = 3600
 enable_signup = false
 enable_anonymous_sign_ins = false
@@ -35,6 +46,11 @@ enable_confirmations = false
 
 [auth.email.template.magic_link]
 subject = "Mid-South WX — your sign-in link"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.invite]
+subject = "You're invited to operate Mid-South WX"
+content_path = "./supabase/templates/invite.html"
 
 [edge_runtime]
 enabled = true
