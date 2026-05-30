@@ -20,7 +20,7 @@ import {
   tgSendMedia,
   type QuickReply,
 } from './_shared/telegram.ts';
-import { deferThirtyMinutes, deliveryDecision } from './subscriber-prefs.ts';
+import { deliveryDecision } from './subscriber-prefs.ts';
 import {
   formatImpactPrefix,
   isConvectiveWarning,
@@ -275,29 +275,17 @@ Deno.serve(withHealthLog('telegram-send-worker', async (req) => {
   for (const group of groups) {
     for (const m of group.members) touchedMessages.add(m.row.message_id);
 
-    // Quiet-hours decision driven by the lead (highest-hazard) member. If the
-    // lead would defer, the whole group defers — keeps quiet-hours semantics
-    // consistent ("does this hazard override quiet?") instead of leaking the
-    // aggregated send around the constraint via lower-hazard members.
+    // Quiet-hours decision driven by the lead (highest-hazard) member. The
+    // lead sets whether the whole group rings loud or arrives silently —
+    // keeps quiet-hours semantics consistent ("does this hazard override
+    // quiet?") instead of leaking a loud send via lower-hazard members.
     const leadRow = group.lead.row;
-    const decision = deliveryDecision({
-      messageSource: leadRow.message_source,
-      nwsEvent: leadRow.nws_event,
-      quietHours: leadRow.quiet_hours,
-    });
-    if (decision === 'defer') {
-      const memberIds = group.members.map((m) => m.row.id);
-      await supa
-        .from('outbound_queue')
-        .update({
-          status: 'pending',
-          locked_at: null,
-          locked_by: null,
-          send_after: deferThirtyMinutes(),
-        })
-        .in('id', memberIds);
-      continue;
-    }
+    const silent =
+      deliveryDecision({
+        messageSource: leadRow.message_source,
+        nwsEvent: leadRow.nws_event,
+        quietHours: leadRow.quiet_hours,
+      }) === 'silent';
 
     try {
       const replyMarkup = buildInlineKeyboard(
@@ -319,6 +307,7 @@ Deno.serve(withHealthLog('telegram-send-worker', async (req) => {
         parse_mode: 'HTML',
         disable_web_page_preview: true,
         reply_markup: replyMarkup,
+        disable_notification: silent,
       });
 
       const memberIds = group.members.map((m) => m.row.id);
@@ -411,24 +400,12 @@ Deno.serve(withHealthLog('telegram-send-worker', async (req) => {
     if (aggregatedRowIds.has(row.id)) continue;
     touchedMessages.add(row.message_id);
 
-    const decision = deliveryDecision({
-      messageSource: row.message_source,
-      nwsEvent: row.nws_event,
-      quietHours: row.quiet_hours,
-    });
-
-    if (decision === 'defer') {
-      await supa
-        .from('outbound_queue')
-        .update({
-          status: 'pending',
-          locked_at: null,
-          locked_by: null,
-          send_after: deferThirtyMinutes(),
-        })
-        .eq('id', row.id);
-      continue;
-    }
+    const silent =
+      deliveryDecision({
+        messageSource: row.message_source,
+        nwsEvent: row.nws_event,
+        quietHours: row.quiet_hours,
+      }) === 'silent';
 
     try {
       const replyMarkup = buildInlineKeyboard(
@@ -478,6 +455,7 @@ Deno.serve(withHealthLog('telegram-send-worker', async (req) => {
           caption,
           parse_mode: 'HTML',
           reply_markup: replyMarkup,
+          disable_notification: silent,
         });
       } else {
         result = await tgSendMessage(tgToken, {
@@ -486,6 +464,7 @@ Deno.serve(withHealthLog('telegram-send-worker', async (req) => {
           parse_mode: 'HTML',
           disable_web_page_preview: true,
           reply_markup: replyMarkup,
+          disable_notification: silent,
         });
       }
 

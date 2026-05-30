@@ -32,17 +32,19 @@ export function parseQuietHours(raw: unknown): QuietHours {
   };
 }
 
-function nwsEventCategory(event: string | null): string {
+// Life-safety convective warnings that ring loud even inside a subscriber's
+// quiet hours. Deliberately narrower than "any warning": a Winter Storm or
+// High Wind Warning is not worth waking someone at 3 AM, but a tornado
+// bearing down is. Match the SQL/TS hazard classifier semantics
+// (tornado / severe thunderstorm / flash flood).
+function isLifeSafetyWarning(event: string | null): boolean {
   const e = (event ?? '').toLowerCase();
-  if (e.includes('warning')) return 'warnings';
-  if (e.includes('watch')) return 'watches';
-  if (e.includes('advisory')) return 'advisories';
-  if (e.includes('statement')) return 'statements';
-  return 'other';
-}
-
-function isWarningClass(event: string | null): boolean {
-  return nwsEventCategory(event) === 'warnings';
+  if (!e.includes('warning')) return false;
+  return (
+    e.includes('tornado') ||
+    e.includes('severe thunderstorm') ||
+    e.includes('flash flood')
+  );
 }
 
 function parseHm(hm: string): number {
@@ -68,31 +70,34 @@ function inQuietHours(qh: QuietHours, at: Date = new Date()): boolean {
   return nowM >= startM || nowM < endM;
 }
 
-export type DeliveryDecision = 'send' | 'defer';
+// 'send' rings loud (normal notification); 'silent' delivers with Telegram's
+// disable_notification flag so the message still lands immediately but makes
+// no sound/vibration — used for non-life-safety alerts inside quiet hours.
+export type DeliveryDecision = 'send' | 'silent';
 
 export function deliveryDecision(input: {
   messageSource: string;
   nwsEvent: string | null;
   quietHours: unknown;
 }): DeliveryDecision {
+  // Operator-authored DMs and check-in pings are always intentional and
+  // time-sensitive — they ring through regardless of quiet hours.
   if (input.messageSource === 'manual' || input.messageSource === 'checkin') {
     return 'send';
   }
 
+  // Tornado / Severe Thunderstorm / Flash Flood Warnings are life-safety:
+  // they ring loud even inside quiet hours.
+  if (isLifeSafetyWarning(input.nwsEvent)) return 'send';
+
+  // Everything else — watches, advisories, statements, non-convective
+  // warnings (Winter Storm, Wind, Heat …), scheduled sends, recaps — rings
+  // normally outside quiet hours but is delivered silently inside them. It
+  // still arrives immediately; it just won't make a sound at 3 AM. (We no
+  // longer defer these: deferral risked dropping time-relevant context, and
+  // a silent DM the subscriber sees on wake is more useful than a delayed one.)
   const qh = parseQuietHours(input.quietHours);
-  if (!qh.enabled || isWarningClass(input.nwsEvent)) return 'send';
-
-  // Recaps are post-event summaries — never urgent, always defer during
-  // quiet hours so a recap of an evening warning doesn't ping at 2 AM.
-  if (input.messageSource === 'recap' && inQuietHours(qh)) return 'defer';
-
-  if (input.messageSource === 'scheduled' || input.messageSource === 'nws') {
-    if (inQuietHours(qh)) return 'defer';
-  }
+  if (inQuietHours(qh)) return 'silent';
 
   return 'send';
-}
-
-export function deferThirtyMinutes(): string {
-  return new Date(Date.now() + 30 * 60_000).toISOString();
 }

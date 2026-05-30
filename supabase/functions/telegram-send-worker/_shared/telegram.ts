@@ -12,6 +12,9 @@ export type SendMessageInput = {
     inline_keyboard: { text: string; callback_data: string }[][];
   };
   disable_web_page_preview?: boolean;
+  /** When true, Telegram delivers the message without a sound/vibration.
+   *  Used for non-life-safety alerts during a subscriber's quiet hours. */
+  disable_notification?: boolean;
 };
 
 export class TelegramRateLimit extends Error {
@@ -34,6 +37,8 @@ export type SendMediaInput = {
   url: string;
   /** animation = GIFs / soundless MP4; photo = jpg/png/webp; video = mp4 */
   kind: 'animation' | 'photo' | 'video' | 'document';
+  /** When true, Telegram delivers without a sound/vibration (quiet hours). */
+  disable_notification?: boolean;
 };
 
 /** Send a media message (GIF/photo/video/document). We fetch the bytes from
@@ -76,6 +81,7 @@ export async function tgSendMedia(token: string, input: SendMediaInput) {
   if (input.caption) form.set('caption', input.caption);
   if (input.parse_mode) form.set('parse_mode', input.parse_mode);
   if (input.reply_markup) form.set('reply_markup', JSON.stringify(input.reply_markup));
+  if (input.disable_notification) form.set('disable_notification', 'true');
 
   const res = await fetch(`${TG_BASE}/bot${token}/${method}`, {
     method: 'POST',

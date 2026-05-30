@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import RadarSkeleton from './RadarSkeleton';
+import NowcastPanel from './NowcastPanel';
 import type { NwsRadarAlert } from '@/lib/nws/radar';
 
 type SpcDay = {
@@ -35,7 +36,15 @@ const RadarView = dynamic(() => import('../RadarView'), {
 });
 
 export default function RadarRoute(props: RadarRouteProps) {
-  return <RadarView {...props} />;
+  return (
+    <>
+      <RadarView {...props} />
+      {/* Operator-approval couplet nowcast panel — floats over the map,
+          self-contained (own SWR fetch + dispatch action), no coupling to
+          RadarView's internal state. */}
+      <NowcastPanel />
+    </>
+  );
 }
 
 
