@@ -701,3 +701,84 @@ In order of "will block v1 code":
 6. **(non-blocking, worth deciding early)** Audience resolution lives in two places by default: `lib/audience.ts` for the dashboard preview count, and the server action that inserts into `outbound_queue`. Preference for putting it in a single SQL function `public.resolve_audience(audience_spec jsonb) returns setof uuid` called from both? That guarantees "preview count = actual queued count" forever. Slightly more SQL up front, no drift later.
 
 Once these are answered I can start v1 code: migrations + the three Edge Functions + the compose/inbox pages.
+
+---
+
+## 14. Couplet rotation nowcasts (F9 extension)
+
+Radar-derived early warning. The Fly.io renderer detects velocity couplets
+(gate-to-gate rotation) per NEXRAD volume; we track them across scans, project
+their path forward, and — **with operator approval** — DM the subscribers in
+that projected path a heads-up *ahead of* an official NWS Tornado Warning.
+
+This is layered on after the core system and is **not** part of the v1–v4
+milestones. It is the only alerting path derived from raw radar rather than a
+CAP product, so it is gated conservatively.
+
+### 14.1 Data pipeline (shadow)
+
+| Stage | Where | What |
+|---|---|---|
+| Detect | `_renderer/couplet_detect.py` (Fly) | Per-volume gate-to-gate shear detection; returns point detections (lat/lon, shear_kt, range/azimuth). No motion. |
+| Poll | `couplet-poll` (pg_cron 1/min, smart-gated to active convective alerts) | POSTs `/couplets/scan` per Mid-South site; upserts each detection via `radar_couplets_upsert`, which assigns a stable `track_id` by 5 km / 12 min spatial-temporal match. |
+| Evaluate | `couplet-dispatcher` (pg_cron 1/min, **shadow mode**) | For each persistent track: compute motion (`couplet_track_motion`), find the strongest active SPC watch tier (`couplet_environment` → PDS_TOR/TOR/SVR), project the impact swath (`couplet_projected_swath`), match subscribers in it (`couplet_shadow_audience`), check NWS suppression (`couplet_nws_suppressor`). Persists the full decision to `couplet_alerts`. **Never inserts into `messages`/`outbound_queue`.** |
+
+`couplet_alerts.status` records what *would* have happened: `shadow` (would
+have fired — env tier + shear + audience all pass, not NWS-suppressed),
+`shadow_no_env`, `shadow_below_tier`, `shadow_no_audience`,
+`shadow_suppressed_nws`. The table snapshots `audience_subscriber_ids`,
+motion, projected swath params, and tier at evaluation time so thresholds can
+be back-tested against real storms before any live auto-fire.
+
+Tier thresholds (shear floor by environment): `PDS_TOR` 60 kt, `TOR` 70 kt,
+`SVR` 80 kt. `COUPLET_DISPATCHER_LIVE` is an explicit opt-in env var; while
+unset (the default), the dispatcher is hard-guarded to shadow mode and the
+fully-automatic firing path is intentionally unimplemented (501s if forced on).
+
+### 14.2 Operator-approval flow (current live behavior)
+
+Rather than flip the dispatcher to auto-fire, the operator approves each
+candidate from `/radar`. This reuses the shadow data with zero auto-fire risk.
+
+- **Surface** — `app/api/radar/nowcast/route.ts` (operator-RLS read) lists
+  actionable `couplet_alerts`: `status='shadow'`, `audience_count > 0`, fired
+  within the last 20 min (snapshot freshness window — the dispatcher dedups one
+  row per track per 30 min, so the audience is at most that stale).
+- **Panel** — `app/radar/_components/NowcastPanel.tsx` floats over the map
+  (mounted via `RadarRoute`, leaving `RadarView` untouched): a muted
+  "Nowcasts: clear" pill normally, a pulsing amber badge with one-tap **Send**
+  buttons when rotation qualifies. SWR-polled every 30 s.
+- **Dispatch** — `app/radar/nowcast-actions.ts` → `dispatchNowcast()`:
+  operator-gated (mirrors `compose/sendNow`), **atomically claims** the row
+  (`shadow → dispatched`, guarded on `status='shadow'`) so a double-tap can't
+  fire twice, then composes a calm "rotation heads-up" and sends it through the
+  standard pipeline — insert `messages` with `source='manual'` +
+  `audience_spec={subscribers: <snapshot ids>}`, call `enqueue_message_system`,
+  backfill `couplet_alerts.message_id`. Rolls the claim back to `shadow` on any
+  failure so the candidate can be retried.
+
+`source='manual'` is deliberate: per the quiet-hours delivery rules (§ delivery
+lifecycle), manual sends ring loud even inside a subscriber's quiet hours,
+which is correct for a life-safety pre-alert. The DM copy explicitly states it
+is an early radar-based heads-up, **not** an official NWS Tornado Warning.
+
+### 14.3 Schema + RPCs (migration `20260613000002_couplet_alerts_shadow.sql`)
+
+- `couplet_alerts` — operator-only SELECT RLS; service_role writes from the
+  dispatcher; `message_id` FK links a dispatched nowcast back to its `messages`
+  row. Pruned after 30 days.
+- `couplet_track_motion`, `couplet_environment`, `couplet_projected_swath`,
+  `couplet_shadow_audience`, `couplet_nws_suppressor`,
+  `claim_couplet_candidate_tracks` — all `security definer`, granted to
+  `service_role` only. The operator-approval write path therefore uses the
+  stored `audience_subscriber_ids` snapshot (via the admin client in the server
+  action) rather than re-deriving the swath audience client-side.
+
+### 14.4 Path to live auto-fire (future)
+
+Once shadow data validates the thresholds: implement the live branch in
+`couplet-dispatcher` behind `COUPLET_DISPATCHER_LIVE=1`, with the reserved
+per-tier mode matrix (PDS_TOR/TOR → auto, SVR → operator review) and the
+`pending_approval`/`dispatched`/`cancelled`/`expired` statuses already defined
+on the `couplet_alert_status` enum. The operator-approval panel stays as the
+review surface for any tier kept on `review`.
