@@ -68,7 +68,15 @@ Deno.serve(withHealthLog('nws-poll', async (req) => {
 
   const supa = serviceClient();
   const features: Record<string, unknown>[] = [];
-  let url: string | null = 'https://api.weather.gov/alerts/active';
+  // Scope the national feed to the Mid-South. The radar sites span AL/AR/KY/MS/TN;
+  // LA and MO are included because the NEXRAD beams (and warning polygons) clip
+  // across those borders. Without this filter the unfiltered /alerts/active feed
+  // returns the whole country (~350 on calm days, 2K–5K+ during outbreaks), and
+  // since every feature drives 1–2 upsert RPCs at 2 polls/min, that alone was
+  // generating >1M DB calls/day. The `area` param filters server-side at NWS.
+  const NWS_AREA = 'AL,AR,KY,LA,MO,MS,TN';
+  let url: string | null =
+    `https://api.weather.gov/alerts/active?area=${NWS_AREA}`;
   let pages = 0;
   // Sanity cap: prevents an infinite loop if NWS pagination ever loops, but
   // high enough that even a major nationwide outbreak (10K+ active alerts)
