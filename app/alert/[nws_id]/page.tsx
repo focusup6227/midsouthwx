@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin } from '@/lib/supabase/server';
 import { fmtTs, relTime, nwsApiUrl } from '@/lib/nws/display';
 import AlertMap from './AlertMap';
 
@@ -31,7 +31,12 @@ export default async function PublicAlertPage({
 }: {
   params: { nws_id: string };
 }) {
-  const supa = supabaseServer();
+  // Public page: anonymous visitors (subscribers tapping the {{url}} link from
+  // Telegram, the operator in Telegram's session-less webview) have no operator
+  // session, so the RLS-respecting client would return zero rows here and 404.
+  // Read with the service-role client — the curated column set below exposes no
+  // PII, and NWS alert data is already public.
+  const supa = supabaseAdmin();
   const { data: alert } = await supa
     .from('nws_alerts')
     .select(

@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { supabaseServer } from '@/lib/supabase/server';
+import { supabaseAdmin } from '@/lib/supabase/server';
 import { fmtTs, relTime, nwsApiUrl } from '@/lib/nws/display';
 import AlertMap from '@/app/alert/[nws_id]/AlertMap';
 
@@ -115,7 +115,11 @@ export default async function PublicMessagePage({
 }: {
   params: { id: string };
 }) {
-  const supa = supabaseServer();
+  // Public permalink: anonymous visitors have no operator session, so the
+  // RLS-respecting client would return zero rows and 404. Read with the
+  // service-role client — the curated columns are broadcast content (no
+  // subscriber PII), matching the public /alert/[nws_id] and /f/[token] pages.
+  const supa = supabaseAdmin();
   const { data: msg } = await supa
     .from('messages')
     .select(
