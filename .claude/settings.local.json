@@ -46,7 +46,12 @@
       "Bash(git add *)",
       "Bash(git -c commit.gpgsign=false commit -m ' *)",
       "Bash(git push *)",
-      "Bash(fly logs *)"
+      "Bash(fly logs *)",
+      "mcp__resend__list-emails"
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
 }
