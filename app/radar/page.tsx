@@ -1,6 +1,7 @@
 import DashShell from '@/components/DashShell';
 import { supabaseServer } from '@/lib/supabase/server';
 import { classifyNwsEvent, geometryCentroid, nwsRadarLabel, type NwsRadarAlert } from '@/lib/nws/radar';
+import { classifyConcernType } from '@/lib/nws/concern';
 import { buildStormTracksCollection } from '@/lib/nws/storm-tracks';
 import RadarRoute from './_components/RadarRoute';
 
@@ -66,6 +67,8 @@ async function fetchInitialWarnings(): Promise<WarningsResponse> {
         nws_id: String(p.nws_id ?? ''),
         category,
         hazard,
+        // Event-based for SSR; the client SWR refetch refines MDs from the body.
+        concern_type: classifyConcernType(event),
         event,
         label: nwsRadarLabel(event, (p.area_desc as string | null) ?? null),
         headline: (p.headline as string | null) ?? null,

@@ -22,6 +22,9 @@ export type NwsRadarAlert = {
   nws_id: string;
   category: NwsAlertCategory;
   hazard: NwsHazardKind;
+  // What the alert is *about* (tornado/severe/flood/winter/fire/wind/other).
+  // For MDs this is classified from the discussion body, not the event string.
+  concern_type: import('./concern').ConcernType;
   event: string;
   label: string;
   headline: string | null;

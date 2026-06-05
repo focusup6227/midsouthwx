@@ -5,6 +5,7 @@ import {
   nwsRadarLabel,
   type NwsRadarAlert,
 } from '@/lib/nws/radar';
+import { classifyConcernType, classifyMdConcernType } from '@/lib/nws/concern';
 import { buildStormTracksCollection } from '@/lib/nws/storm-tracks';
 import { classifyAlertSeverity } from '@/lib/nws/display';
 import { NextResponse } from 'next/server';
@@ -88,6 +89,9 @@ export async function GET() {
       nws_id: String(p.nws_id ?? ''),
       category,
       hazard,
+      // Event-based concern for watches/warnings; MDs are refined from the
+      // discussion body just below (the event string alone is uninformative).
+      concern_type: classifyConcernType(event),
       event,
       label: nwsRadarLabel(event, (p.area_desc as string | null) ?? null),
       headline: (p.headline as string | null) ?? null,
@@ -105,6 +109,24 @@ export async function GET() {
     });
   }
 
+  // Refine MD concern type from the discussion body. MDs all share
+  // event="Mesoscale Discussion", so the concern (tornado vs winter vs fire…)
+  // only lives in the stored text. One focused query (MDs only) keeps this off
+  // the hot path for the common case where there are no active MDs.
+  const mdWarnings = warnings.filter((w) => w.category === 'discussion');
+  if (mdWarnings.length) {
+    const { data: mdRows } = await supa
+      .from('nws_alerts')
+      .select('id, description')
+      .in('id', mdWarnings.map((w) => w.id).filter(Boolean));
+    const descById = new Map<string, string | null>(
+      (mdRows ?? []).map((r) => [String(r.id), (r.description as string | null) ?? null]),
+    );
+    for (const w of mdWarnings) {
+      w.concern_type = classifyMdConcernType(descById.get(w.id) ?? null);
+    }
+  }
+
   const geojson: GeoJSON.FeatureCollection<Geom> = {
     type: 'FeatureCollection',
     features: warnings.map((w) => ({
@@ -116,6 +138,7 @@ export async function GET() {
         nws_id: w.nws_id,
         category: w.category,
         hazard: w.hazard,
+        concern_type: w.concern_type,
         event: w.event,
         label: w.label,
         headline: w.headline,
