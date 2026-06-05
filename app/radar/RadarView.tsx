@@ -811,6 +811,28 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showSpc, setShowSpc] = useState(urlInitial.showSpc ?? false);
   const [spcDay, setSpcDay] = useState<1 | 2 | 3>(1);
   const [selectedWarning, setSelectedWarning] = useState<NwsWarning | null>(null);
+  // Warning → environmental sounding. Click a warning's "Sounding" action to
+  // pull a model Skew-T at the polygon centroid (reuses /api/forecast/sounding,
+  // GFS column → MetPy). Lets the operator read the storm environment without
+  // leaving the radar. Held in a small modal state with its own load/error.
+  const [warningSounding, setWarningSounding] = useState<
+    { label: string; lat: number; lon: number; imageUrl: string | null; loading: boolean; error: string | null } | null
+  >(null);
+  const openWarningSounding = useCallback(async (w: NwsWarning) => {
+    const [lon, lat] = w.centroid;
+    setWarningSounding({ label: w.event, lat, lon, imageUrl: null, loading: true, error: null });
+    try {
+      const r = await fetch(`/api/forecast/sounding?lat=${lat}&lon=${lon}`);
+      const d = await r.json();
+      setWarningSounding((s) =>
+        s && s.lat === lat && s.lon === lon
+          ? { ...s, loading: false, imageUrl: d.image_url ?? null, error: d.image_url ? null : (d.error ?? 'no_image') }
+          : s,
+      );
+    } catch {
+      setWarningSounding((s) => (s && s.lat === lat && s.lon === lon ? { ...s, loading: false, error: 'fetch_failed' } : s));
+    }
+  }, []);
   // Map popup anchored at the polygon click location. `candidates` holds every
   // warning whose polygon was under the click, deduped by id, so overlapping
   // warnings render a chooser instead of silently picking the topmost one.
@@ -4026,6 +4048,56 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           ) : null}
         </Map>
         </div>
+        {warningSounding && (
+          <div
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+            onClick={() => setWarningSounding(null)}
+            role="presentation"
+          >
+            <div
+              className="relative max-h-[90vh] w-full max-w-[520px] overflow-y-auto rounded-xl border border-wx-line bg-wx-card p-3 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+            >
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold text-wx-fg">
+                  Sounding · {warningSounding.label}
+                  <span className="ml-1 font-mono text-[10px] text-wx-mute">
+                    {warningSounding.lat.toFixed(2)}, {warningSounding.lon.toFixed(2)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWarningSounding(null)}
+                  className="shrink-0 text-wx-mute hover:text-wx-fg"
+                  aria-label="Close sounding"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              {warningSounding.loading ? (
+                <div className="flex h-64 items-center justify-center text-[11px] text-wx-mute">
+                  Rendering Skew-T at the warning centroid…
+                </div>
+              ) : warningSounding.error ? (
+                <div className="flex h-32 items-center justify-center text-center text-[11px] text-wx-danger">
+                  Sounding unavailable ({warningSounding.error})
+                </div>
+              ) : warningSounding.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={warningSounding.imageUrl}
+                  alt={`Environmental sounding at ${warningSounding.label}`}
+                  className="mx-auto block w-full rounded-md"
+                />
+              ) : null}
+              <div className="mt-1 text-[9px] text-wx-mute">
+                Model column Skew-T at the polygon centroid · GFS
+              </div>
+            </div>
+          </div>
+        )}
         {splitProduct && (
           <div className="relative h-full flex-1 min-w-0 border-l border-wx-line">
             <Map
@@ -5045,6 +5117,14 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       <Send size={11} /> Send to polygon
                     </a>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => openWarningSounding(selectedWarning)}
+                    className="mt-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 border border-wx-line text-wx-fg hover:border-wx-accent hover:bg-wx-accent/5 rounded-md text-[11px] font-medium w-full"
+                    title="Model Skew-T at this polygon's centroid — read the storm environment"
+                  >
+                    <Atom size={11} /> Environmental sounding
+                  </button>
                   {selectedWarning.forecast_track && selectedWarning.in_path_count != null ? (
                     (() => {
                       const trackUrl = composeUrlForWarningTrack(selectedWarning);
