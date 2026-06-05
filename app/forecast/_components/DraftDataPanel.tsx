@@ -6,11 +6,12 @@ import ModelsPanel from '../data/_components/ModelsPanel';
 import MesoanalysisPanel from '../data/_components/MesoanalysisPanel';
 import PointForecastPanel from '../data/_components/PointForecastPanel';
 import EnsemblePlumePanel from '../data/_components/EnsemblePlumePanel';
+import HydroPanel from '../data/_components/HydroPanel';
 import SevereParamsPanel from '../data/_components/SevereParamsPanel';
 import ForecastSoundingPanel from '../data/_components/ForecastSoundingPanel';
 import SatellitePanel from '../data/_components/SatellitePanel';
 
-type Tab = 'severe' | 'models' | 'satellite' | 'meso' | 'point' | 'ensemble' | 'sounding';
+type Tab = 'severe' | 'models' | 'satellite' | 'meso' | 'point' | 'ensemble' | 'hydro' | 'sounding';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'severe', label: 'Severe' },
@@ -19,6 +20,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'meso', label: 'Mesoanalysis' },
   { key: 'point', label: 'Point forecast' },
   { key: 'ensemble', label: 'Ensemble' },
+  { key: 'hydro', label: 'Hydro' },
   { key: 'sounding', label: 'Sounding' },
 ];
 
@@ -71,6 +73,7 @@ export default function DraftDataPanel() {
           {tab === 'meso' ? <MesoanalysisPanel /> : null}
           {tab === 'point' ? <PointForecastPanel /> : null}
           {tab === 'ensemble' ? <EnsemblePlumePanel /> : null}
+          {tab === 'hydro' ? <HydroPanel /> : null}
           {tab === 'sounding' ? <ForecastSoundingPanel /> : null}
         </div>
       ) : null}

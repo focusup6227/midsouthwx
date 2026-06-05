@@ -4,6 +4,7 @@ import MesoanalysisPanel from './_components/MesoanalysisPanel';
 import ModelsPanel from './_components/ModelsPanel';
 import PointForecastPanel from './_components/PointForecastPanel';
 import EnsemblePlumePanel from './_components/EnsemblePlumePanel';
+import HydroPanel from './_components/HydroPanel';
 import SevereParamsPanel from './_components/SevereParamsPanel';
 import SatellitePanel from './_components/SatellitePanel';
 import ForecastSoundingPanel from './_components/ForecastSoundingPanel';
@@ -48,6 +49,7 @@ export default function ForecastDataPage() {
         <SatellitePanel />
         <MesoanalysisPanel />
         <ForecastSoundingPanel />
+        <HydroPanel />
       </div>
     </DashShell>
   );
