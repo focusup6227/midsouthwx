@@ -4741,7 +4741,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               {(effectiveProduct === 'correlation' || effectiveProduct === 'zdr' || effectiveProduct === 'kdp') && selectedSite && (
                 <p className="text-[10px] text-wx-mute mt-1">
                   {level2Loading && level2Attempt > 0 ? `Warming renderer · retry ${level2Attempt}/${level2MaxAttempts}…`
-                    : level2Loading ? (effectiveProduct === 'zdr' ? 'Rendering differential reflectivity…' : 'Rendering correlation coefficient…')
+                    : level2Loading ? (effectiveProduct === 'zdr' ? 'Rendering differential reflectivity…' : effectiveProduct === 'kdp' ? 'Retrieving KDP from differential phase…' : 'Rendering correlation coefficient…')
                     : level2Error === 'renderer_not_configured' ? 'Renderer not configured (see .env.local)'
                     : level2Error === 'renderer_waking' ? `Renderer waking up · retry ${level2Attempt}/${level2MaxAttempts}…`
                     : (level2Error === 'renderer_unreachable' || level2Error === 'renderer_timeout') ? 'Renderer slow — retrying…'
