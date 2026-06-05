@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import DashShell from '@/components/DashShell';
 import ForecastFormLoader from '../_components/ForecastFormLoader';
+import DraftDataPanel from '../_components/DraftDataPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,7 +49,10 @@ export default function NewForecastPage({
         </Link>
       }
     >
-      <ForecastFormLoader initialArea={initialArea} />
+      <div className="space-y-4">
+        <ForecastFormLoader initialArea={initialArea} />
+        <DraftDataPanel />
+      </div>
     </DashShell>
   );
 }

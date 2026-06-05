@@ -18,3 +18,7 @@ netCDF4==1.7.2
 # `cfgrib selfcheck` gates the build.
 cfgrib==0.9.15.1
 eccodes==2.47.0
+# Forecast Skew-T soundings (sounding.py): MetPy provides the skew-T plot,
+# parcel theory, and indices. Pulls pint/pandas/scipy/pooch — numpy-1.26 + py3.12
+# compatible. Verified locally against live GFS columns.
+metpy==1.7.1

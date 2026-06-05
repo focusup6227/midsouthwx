@@ -37,9 +37,10 @@ COPY *.py /app/
 # Bundled low-res US state boundaries for model-field overlays (model_render.py).
 COPY geo /app/geo
 
-# Fail the build early if the GRIB stack can't find the bundled ecCodes lib,
-# rather than discovering it at first /render-model request.
-RUN python -m cfgrib selfcheck
+# Fail the build early if the GRIB or sounding stack can't import, rather than
+# discovering it at the first /render-model or /render-sounding request.
+RUN python -m cfgrib selfcheck \
+    && python -c "import metpy.calc; from metpy.plots import SkewT, Hodograph; print('metpy ok')"
 
 # Fly health-check expects the app on 0.0.0.0:8080 — this was the binding bug
 # in the previous renderer. uvicorn's --host 0.0.0.0 is the fix.

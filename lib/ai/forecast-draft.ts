@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { FORECAST_DRAFT_SYSTEM } from './prompts';
 import type { ConvectiveSummary } from '@/lib/forecast/open-meteo';
+import type { SevereSample } from '@/lib/forecast/severe-sample';
 
 // Hazards the form supports. The model is constrained to a subset of these;
 // any value outside the enum is dropped during zod parse.
@@ -53,6 +54,9 @@ export type ForecastContext = {
   // window (see lib/forecast/open-meteo.ts). Optional — null when the sample
   // failed, so older drafts and text-only fallbacks still parse.
   thermo?: ConvectiveSummary | null;
+  // HRRR kinematic ingredients (SRH/shear/CAPE/CIN) at the centroid from the
+  // renderer's /sample-point. Optional — null when the renderer is unreachable.
+  severe?: SevereSample | null;
 };
 
 export type ForecastDraftInput = {
@@ -187,9 +191,23 @@ function buildPrompt(input: ForecastDraftInput): string {
         .join('; ');
       lines.push(`- Trace (~6 h): ${trace}.`);
     }
-    lines.push('Cite these instability numbers where relevant; note that shear/SRH/STP are NOT in this sample, so hedge tornado/organized-severe wording on the SPC outlook + AFD rather than these values alone.');
+    lines.push('Cite these instability numbers where relevant.');
   } else {
     lines.push('- No model thermodynamic sample available; reason from the SPC outlook, AFD, and reports above.');
+  }
+
+  lines.push('');
+  lines.push('## HRRR severe-storm ingredients (area centroid, current analysis)');
+  if (context.severe && (context.severe.sbcape != null || context.severe.srh_0_1km != null)) {
+    const s = context.severe;
+    const fmt = (v: number | null, u: string) => (v == null ? 'n/a' : `${v}${u}`);
+    lines.push(`Source: ${s.model}${s.valid_time ? ` valid ${s.valid_time}` : ''}.`);
+    lines.push(`- SBCAPE ${fmt(s.sbcape, ' J/kg')} · SBCIN ${fmt(s.sbcin, ' J/kg')}`);
+    lines.push(`- 0-1 km SRH ${fmt(s.srh_0_1km, ' m2/s2')} · 0-3 km SRH ${fmt(s.srh_0_3km, ' m2/s2')}`);
+    lines.push(`- 0-1 km bulk shear ${fmt(s.shear_0_1km_kt, ' kt')} · 0-6 km bulk shear ${fmt(s.shear_0_6km_kt, ' kt')}`);
+    lines.push('Use these to calibrate organized-severe / tornado wording: meaningful 0-6km shear (>=35 kt) with adequate CAPE supports organized/supercell potential; strong 0-1km SRH (>=150 m2/s2) raises low-level rotation/tornado concern. Low values argue against organized severe regardless of outlook tone.');
+  } else {
+    lines.push('- No HRRR kinematic sample available; hedge organized-severe/tornado wording on the SPC outlook + AFD rather than asserting shear/SRH-driven potential.');
   }
 
   if (user_note && user_note.trim()) {

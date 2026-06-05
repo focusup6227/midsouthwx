@@ -32,6 +32,7 @@ from alert_snapshot import router as alert_snapshot_router
 from couplet_detect import router as couplet_router
 from glm import router as glm_router
 from model_render import router as model_router
+from sounding import router as sounding_router
 from polar import build_geojson
 from png_render import build_png
 from radar_io import download_volume, find_latest_volume, read_volume
@@ -67,6 +68,9 @@ app.include_router(couplet_router)
 # dashboard's /forecast/data Models panel. Self-auths via the RENDERER_TOKEN
 # bearer. Renders are cached in Supabase Storage by model/field/fhr/region/cycle.
 app.include_router(model_router)
+
+# Forecast Skew-T soundings (GFS/NAM column → MetPy skew-T). Same auth + cache.
+app.include_router(sounding_router)
 
 # In-process lock per cache key so concurrent requests for the same scan
 # share one render instead of stampeding. Keyed by `cache_id`.

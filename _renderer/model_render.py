@@ -63,6 +63,12 @@ _PRECIP = LinearSegmentedColormap.from_list("precip", [
 _HGT = LinearSegmentedColormap.from_list("hgt", [
     "#6d28d9", "#2563eb", "#0891b2", "#10b981", "#fde047", "#f97316", "#dc2626",
 ])
+_WIND = LinearSegmentedColormap.from_list("wind", [
+    "#0b1220", "#1d4ed8", "#0891b2", "#10b981", "#fde047", "#f97316", "#dc2626", "#a21caf",
+])
+_DEWP = LinearSegmentedColormap.from_list("dewp", [
+    "#7f1d1d", "#b45309", "#a3a30a", "#10b981", "#0891b2", "#1d4ed8", "#4c1d95",
+])
 
 # --- field catalog --------------------------------------------------------
 # Each field: NOMADS var/level filter flags, a transform from GRIB native
@@ -113,6 +119,28 @@ FIELDS: dict[str, dict] = {
         "xf": lambda a: a,
         "cmap": _REFL, "vmin": 5, "vmax": 75, "mask_below": 5,
     },
+    "dewp2m": {
+        "label": "2 m Dewpoint", "unit": "°F",
+        "var": "DPT", "lev": "2_m_above_ground",
+        "fbk": {"typeOfLevel": "heightAboveGround", "level": 2},
+        "xf": lambda a: a * 9.0 / 5.0 - 459.67,  # K -> °F
+        "cmap": _DEWP, "vmin": 20, "vmax": 80,
+    },
+    "t850": {
+        "label": "850 hPa Temperature", "unit": "°C",
+        "var": "TMP", "lev": "850_mb",
+        "fbk": {"typeOfLevel": "isobaricInhPa", "level": 850},
+        "xf": lambda a: a - 273.15,  # K -> °C
+        "cmap": _THERMAL, "vmin": -10, "vmax": 35, "contour": True,
+    },
+    # Wind is a two-component field: speed is shaded, barbs overlaid. `vars`
+    # (plural) signals the multi-message read path in _open_wind.
+    "wind10m": {
+        "label": "10 m Wind", "unit": "kt",
+        "vars": ["UGRD", "VGRD"], "lev": "10_m_above_ground",
+        "wind": True,
+        "cmap": _WIND, "vmin": 0, "vmax": 60,
+    },
 }
 
 # --- model catalog --------------------------------------------------------
@@ -128,7 +156,7 @@ MODELS: dict[str, dict] = {
         "fff": 3,
         "cycles": [0, 6, 12, 18], "cycle_lag_h": 4,
         "fhr_max": 84, "fhr_step": 3,
-        "fields": ["t2m", "mslp", "cape", "apcp", "hgt500"],
+        "fields": ["t2m", "dewp2m", "wind10m", "mslp", "cape", "apcp", "t850", "hgt500"],
     },
     "nam": {
         "label": "NAM 12 km",
@@ -138,7 +166,7 @@ MODELS: dict[str, dict] = {
         "fff": 2,
         "cycles": [0, 6, 12, 18], "cycle_lag_h": 3,
         "fhr_max": 60, "fhr_step": 3,
-        "fields": ["t2m", "mslp", "cape", "apcp"],
+        "fields": ["t2m", "dewp2m", "wind10m", "mslp", "cape", "apcp", "t850"],
     },
     "hrrr": {
         "label": "HRRR 3 km",
@@ -148,7 +176,7 @@ MODELS: dict[str, dict] = {
         "fff": 2,
         "cycles": list(range(24)), "cycle_lag_h": 2,
         "fhr_max": 18, "fhr_step": 1,
-        "fields": ["t2m", "refc", "cape"],
+        "fields": ["t2m", "dewp2m", "wind10m", "refc", "cape"],
     },
 }
 
@@ -205,9 +233,11 @@ def build_url(model: str, field: str, fhr: int, ymd: str, hh: str) -> str:
     params = {
         "dir": dirpath,
         "file": file,
-        f"var_{f['var']}": "on",
         f"lev_{f['lev']}": "on",
     }
+    # Single-var fields use `var`; wind (and any future multi-var field) uses `vars`.
+    for v in (f["vars"] if "vars" in f else [f["var"]]):
+        params[f"var_{v}"] = "on"
     from urllib.parse import urlencode
     return f"{NOMADS_BASE}/{m['cgi']}?{urlencode(params)}"
 
@@ -264,6 +294,37 @@ def _open_field(grib_bytes: bytes, field: str):
                 pass
 
 
+def _open_wind(grib_bytes: bytes):
+    """Decode a 2-component wind GRIB subset to (lon, lat, u, v, valid_time)."""
+    import xarray as xr
+
+    with tempfile.NamedTemporaryFile(suffix=".grib2", delete=False) as tf:
+        tf.write(grib_bytes)
+        path = tf.name
+    try:
+        ds = xr.open_dataset(path, engine="cfgrib", backend_kwargs={"indexpath": ""})
+        u = v = None
+        for name in ds.data_vars:
+            da = ds[name].squeeze()
+            sn = str(da.attrs.get("standard_name", "")).lower()
+            if "eastward" in sn or name.lower().startswith("u"):
+                u = da
+            elif "northward" in sn or name.lower().startswith("v"):
+                v = da
+        if u is None or v is None:
+            raise RuntimeError("wind components not found in GRIB")
+        lat = ds["latitude"].values
+        lon = ds["longitude"].values
+        vt = str(ds["valid_time"].values) if "valid_time" in ds.coords else None
+        return lon, lat, np.asarray(u.values, float), np.asarray(v.values, float), vt
+    finally:
+        for p in (path, path + ".idx"):
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 def render_to_png(model: str, field: str, fhr: int, region: str,
                   ymd: str, hh: str) -> tuple[bytes, dict]:
     if model not in MODELS:
@@ -277,14 +338,22 @@ def render_to_png(model: str, field: str, fhr: int, region: str,
 
     url = build_url(model, field, fhr, ymd, hh)
     grib = fetch_grib(url)
-    lon, lat, data, valid_time = _open_field(grib, field)
+
+    is_wind = bool(fcfg.get("wind"))
+    u_kt = v_kt = None
+    if is_wind:
+        lon, lat, u, v, valid_time = _open_wind(grib)
+        MS_TO_KT = 1.94384
+        u_kt, v_kt = u * MS_TO_KT, v * MS_TO_KT
+        data = np.hypot(u_kt, v_kt)  # wind speed (kt), shaded
+    else:
+        lon, lat, data, valid_time = _open_field(grib, field)
+        data = fcfg["xf"](data)
+        if fcfg.get("mask_below") is not None:
+            data = np.ma.masked_less(data, fcfg["mask_below"])
 
     # Normalize longitudes to -180..180 for state-overlay alignment.
     lon = np.where(lon > 180.0, lon - 360.0, lon)
-
-    data = fcfg["xf"](data)
-    if fcfg.get("mask_below") is not None:
-        data = np.ma.masked_less(data, fcfg["mask_below"])
 
     west, east, south, north = REGIONS[region]
 
@@ -322,6 +391,21 @@ def render_to_png(model: str, field: str, fhr: int, region: str,
         except Exception:
             pass
 
+    # Wind barbs overlay (knots), subsampled for legibility.
+    if is_wind and u_kt is not None:
+        if lon.ndim == 1:
+            order = np.argsort(lon)
+            lon2d, lat2d = np.meshgrid(lon[order], lat)
+            uu, vv = u_kt[:, order], v_kt[:, order]
+        else:
+            lon2d, lat2d, uu, vv = lon, lat, u_kt, v_kt
+        ny, nx = lon2d.shape
+        sx, sy = max(1, nx // 18), max(1, ny // 14)
+        ax.barbs(
+            lon2d[::sy, ::sx], lat2d[::sy, ::sx], uu[::sy, ::sx], vv[::sy, ::sx],
+            length=6.5, linewidth=0.7, color="#f8fafc",
+        )
+
     # State boundaries.
     for ring in _load_states():
         ax.plot(ring[:, 0], ring[:, 1], color="#94a3b8", linewidth=0.5, alpha=0.6)
@@ -350,6 +434,109 @@ def render_to_png(model: str, field: str, fhr: int, region: str,
         "source": f"NOMADS {MODELS[model]['label']}",
     }
     return buf.getvalue(), meta
+
+
+# --- point sampling for severe-weather params (AI draft grounding) ---------
+# HRRR wrfsfc carries the kinematic ingredients Open-Meteo lacks: storm-relative
+# helicity (HLCY) and bulk-shear components (VUCSH/VVCSH), plus CAPE/CIN. We
+# fetch a multi-field GRIB subset and read the value nearest a point with
+# eccodes' find_nearest — far simpler than xarray for scattered point reads.
+
+SAMPLE_VARS = ["CAPE", "CIN", "HLCY", "VUCSH", "VVCSH"]
+SAMPLE_LEVS = [
+    "surface",
+    "3000-0_m_above_ground",
+    "1000-0_m_above_ground",
+    "0-6000_m_above_ground",
+    "0-1000_m_above_ground",
+]
+
+
+def _sample_url(ymd: str, hh: str, fhr: int) -> str:
+    from urllib.parse import urlencode
+    params = {
+        "dir": f"/hrrr.{ymd}/conus",
+        "file": f"hrrr.t{hh}z.wrfsfcf{fhr:02d}.grib2",
+    }
+    for v in SAMPLE_VARS:
+        params[f"var_{v}"] = "on"
+    for lv in SAMPLE_LEVS:
+        params[f"lev_{lv}"] = "on"
+    return f"{NOMADS_BASE}/filter_hrrr_2d.pl?{urlencode(params)}"
+
+
+def sample_point(lat: float, lon: float, ymd: str, hh: str, fhr: int = 0) -> dict:
+    """Read HRRR severe-storm ingredients nearest (lat, lon). Raises on no-GRIB."""
+    import eccodes as ec
+
+    grib = fetch_grib(_sample_url(ymd, hh, fhr))
+    MS_TO_KT = 1.94384
+    with tempfile.NamedTemporaryFile(suffix=".grib2", delete=False) as tf:
+        tf.write(grib)
+        path = tf.name
+
+    vals: dict[tuple, float] = {}
+    valid_time = None
+    try:
+        with open(path, "rb") as f:
+            while True:
+                gid = ec.codes_grib_new_from_file(f)
+                if gid is None:
+                    break
+                try:
+                    short = ec.codes_get(gid, "shortName")
+                    # Layer fields encode the depth as top/bottom fixed surfaces,
+                    # and the non-zero bound isn't consistently top vs bottom
+                    # (HLCY is "3000-0", shear is "0-6000"). Key on the non-zero
+                    # bound so 0-1km/0-3km/0-6km layers stay distinct.
+                    try:
+                        top = max(ec.codes_get(gid, "topLevel"), ec.codes_get(gid, "bottomLevel"))
+                    except Exception:
+                        top = ec.codes_get(gid, "level")
+                    if valid_time is None:
+                        try:
+                            valid_time = f"{ec.codes_get(gid, 'validityDate')}{ec.codes_get(gid, 'validityTime'):04d}"
+                        except Exception:
+                            pass
+                    near = ec.codes_grib_find_nearest(gid, lat, lon)[0]
+                    vals[(short, int(top))] = float(near.value)
+                finally:
+                    ec.codes_release(gid)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+    def g(short: str, top: int) -> float | None:
+        v = vals.get((short, top))
+        return None if v is None or v != v else v  # drop NaN
+
+    def shear_kt(top: int) -> float | None:
+        u, v = g("vucsh", top), g("vvcsh", top)
+        if u is None or v is None:
+            return None
+        return round((u * u + v * v) ** 0.5 * MS_TO_KT, 1)
+
+    sbcape = g("cape", 0)
+    sbcin = g("cin", 0)
+    return {
+        "model": "HRRR 3 km",
+        "cycle": f"{ymd}{hh}",
+        "fhr": fhr,
+        "valid_time": valid_time,
+        "point": {"lat": round(lat, 3), "lon": round(lon, 3)},
+        "sbcape": None if sbcape is None else round(sbcape),
+        "sbcin": None if sbcin is None else round(sbcin),
+        "srh_0_1km": _r(g("hlcy", 1000)),
+        "srh_0_3km": _r(g("hlcy", 3000)),
+        "shear_0_1km_kt": shear_kt(1000),
+        "shear_0_6km_kt": shear_kt(6000),
+    }
+
+
+def _r(v: float | None) -> float | None:
+    return None if v is None else round(v)
 
 
 def catalog() -> dict:
@@ -505,7 +692,37 @@ def model_catalog() -> dict:
     return catalog()
 
 
+class SampleRequest(BaseModel):
+    lat: float
+    lon: float
+    cycle: Optional[str] = None  # "YYYYMMDDHH"; None → latest HRRR
+    fhr: int = Field(default=0, ge=0, le=18)
+
+
+@router.post("/sample-point")
+async def sample_point_route(req: SampleRequest, authorization: str = Header(default="")) -> dict:
+    token = os.environ.get("RENDERER_TOKEN", "")
+    if not token or authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="unauthorized")
+    last_err = None
+    for ymd, hh in _cycles_to_try("hrrr", req.cycle):
+        try:
+            return await asyncio.to_thread(sample_point, req.lat, req.lon, ymd, hh, req.fhr)
+        except RuntimeError as e:
+            last_err = str(e)
+            continue
+    raise HTTPException(status_code=502, detail=f"no_posted_cycle: {last_err or 'unavailable'}")
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "sample":
+        lat = float(sys.argv[2]) if len(sys.argv) > 2 else 35.15
+        lon = float(sys.argv[3]) if len(sys.argv) > 3 else -90.05
+        ymd, hh = latest_cycle("hrrr")
+        print(f"HRRR sample cycle {ymd} {hh}Z at {lat},{lon}")
+        import json as _json
+        print(_json.dumps(sample_point(lat, lon, ymd, hh, 0), indent=2))
+        sys.exit(0)
     model = sys.argv[1] if len(sys.argv) > 1 else "gfs"
     field = sys.argv[2] if len(sys.argv) > 2 else "t2m"
     fhr = int(sys.argv[3]) if len(sys.argv) > 3 else 24

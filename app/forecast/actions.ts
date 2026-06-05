@@ -7,6 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { generateForecastDraft, type ForecastContext, type ForecastDraft } from '@/lib/ai/forecast-draft';
 import { sampleConvectiveContext } from '@/lib/forecast/open-meteo';
+import { sampleSevereParams } from '@/lib/forecast/severe-sample';
 
 // Mirrors compose page's HAZARD_KINDS (app/compose/page.tsx:44). Keeping these
 // in lockstep matters because the forecast → compose hand-off forwards
@@ -106,7 +107,14 @@ export async function draftForecast(input: DraftForecastInput): Promise<DraftFor
   const centroid = ctx.area_centroid?.coordinates;
   if (centroid && centroid.length >= 2) {
     const [lng, lat] = centroid;
-    ctx.thermo = await sampleConvectiveContext(lat, lng, parsed.valid_from, parsed.valid_until);
+    // Thermo (Open-Meteo, over the window) + kinematics (HRRR, current analysis)
+    // sampled in parallel; both best-effort and independent.
+    const [thermo, severe] = await Promise.all([
+      sampleConvectiveContext(lat, lng, parsed.valid_from, parsed.valid_until),
+      sampleSevereParams(lat, lng),
+    ]);
+    ctx.thermo = thermo;
+    ctx.severe = severe;
   }
 
   const { draft, raw, prompt } = await generateForecastDraft({
