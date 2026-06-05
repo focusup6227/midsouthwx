@@ -3,6 +3,7 @@ import DashShell from '@/components/DashShell';
 import MesoanalysisPanel from './_components/MesoanalysisPanel';
 import ModelsPanel from './_components/ModelsPanel';
 import PointForecastPanel from './_components/PointForecastPanel';
+import EnsemblePlumePanel from './_components/EnsemblePlumePanel';
 import SevereParamsPanel from './_components/SevereParamsPanel';
 import SatellitePanel from './_components/SatellitePanel';
 import ForecastSoundingPanel from './_components/ForecastSoundingPanel';
@@ -41,6 +42,7 @@ export default function ForecastDataPage() {
     >
       <div className="space-y-4">
         <PointForecastPanel />
+        <EnsemblePlumePanel />
         <SevereParamsPanel />
         <ModelsPanel />
         <SatellitePanel />

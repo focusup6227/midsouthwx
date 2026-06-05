@@ -10,6 +10,16 @@
 // This is deliberately deploy-free (no GRIB, no renderer). When the model
 // renderer lands, a point-sample endpoint can enrich this with shear/SRH/STP.
 
+// Paid-ready seam: free hosts by default; set OPEN_METEO_BASE /
+// OPEN_METEO_ENSEMBLE_BASE / OPEN_METEO_API_KEY to switch to the commercial
+// endpoint later without touching call sites.
+export const OPEN_METEO_BASE = process.env.OPEN_METEO_BASE || 'https://api.open-meteo.com';
+export const OPEN_METEO_ENSEMBLE_BASE =
+  process.env.OPEN_METEO_ENSEMBLE_BASE || 'https://ensemble-api.open-meteo.com';
+export function openMeteoKeyParam(): string {
+  return process.env.OPEN_METEO_API_KEY ? `&apikey=${process.env.OPEN_METEO_API_KEY}` : '';
+}
+
 export type ConvectiveSample = {
   t: string;            // ISO hour (UTC)
   cape: number | null;  // J/kg
@@ -43,7 +53,7 @@ export async function sampleConvectiveContext(
   untilIso: string,
 ): Promise<ConvectiveSummary | null> {
   try {
-    const url = new URL('https://api.open-meteo.com/v1/forecast');
+    const url = new URL(`${OPEN_METEO_BASE}/v1/forecast`);
     url.searchParams.set('latitude', lat.toFixed(3));
     url.searchParams.set('longitude', lon.toFixed(3));
     url.searchParams.set('hourly', 'cape,convective_inhibition,lifted_index');
