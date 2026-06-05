@@ -1058,8 +1058,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showMping, setShowMping] = useState(urlInitial.showMping ?? false);
   const mpingSwr = useMping(showMping);
   const mpingGeo = (mpingSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
-  type InspectorSectionKey = 'source' | 'overlays' | 'alerts' | 'forecasts';
+  type InspectorSectionKey = 'threats' | 'source' | 'overlays' | 'alerts' | 'forecasts';
   const [inspectorSections, setInspectorSections] = useState<Record<InspectorSectionKey, boolean>>({
+    threats: true,
     source: true,
     overlays: true,
     alerts: true,
@@ -2993,6 +2994,88 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       return eff <= t && exp > t;
     });
   }, [warnings, scrubTimeMs, isCategoryVisible]);
+
+  // Unified Threat Board — one prioritized triage list merging the three threat
+  // streams the operator otherwise has to scan separately: issued NWS
+  // warnings/watches, ProbSevere ML cells, and velocity-couplet rotation IDs.
+  // Issued warnings sort to the top (ground truth), then guidance interleaved by
+  // intensity (ProbSevere prob, couplet shear). Each row flies the map there and
+  // opens the matching detail. The single "what needs my attention now" surface.
+  const threatBoard = useMemo(() => {
+    type Threat = {
+      key: string;
+      kind: 'warning' | 'probsevere' | 'couplet';
+      score: number;
+      badge: string;
+      title: string;
+      sub: string;
+      dot: string;
+      center: [number, number] | null;
+      warning?: NwsWarning;
+      cell?: (typeof probSevereTop)[number];
+    };
+    const out: Threat[] = [];
+    for (const w of displayWarnings) {
+      if (w.category !== 'warning' && w.category !== 'watch') continue;
+      const weight =
+        w.concern_type === 'tornado' ? 320
+        : w.concern_type === 'severe' ? 220
+        : w.concern_type === 'flood' ? 120
+        : w.concern_type === 'winter' ? 80 : 60;
+      const dot =
+        w.concern_type === 'tornado' ? 'bg-red-500'
+        : w.concern_type === 'severe' ? 'bg-amber-400'
+        : w.concern_type === 'flood' ? 'bg-emerald-400'
+        : w.concern_type === 'winter' ? 'bg-indigo-400' : 'bg-fuchsia-400';
+      out.push({
+        key: `w:${w.id}`,
+        kind: 'warning',
+        score: (w.category === 'warning' ? 1000 : 400) + weight,
+        badge: w.category === 'warning' ? 'WRN' : 'WCH',
+        title: w.event,
+        sub: shortNwsLocation(w.area_desc) ?? '',
+        dot,
+        center: w.centroid,
+        warning: w,
+      });
+    }
+    for (const c of probSevereTop) {
+      const dot =
+        c.topType === 'tor' ? 'bg-red-500'
+        : c.topType === 'hail' ? 'bg-cyan-400'
+        : c.topType === 'wind' ? 'bg-blue-400' : 'bg-amber-400';
+      out.push({
+        key: `ps:${c.id}`,
+        kind: 'probsevere',
+        score: c.topProb,
+        badge: 'PSv',
+        title: `${c.topType.toUpperCase()} ${c.topProb}%`,
+        sub: c.id ? `#${c.id.slice(-4)}` : '',
+        dot,
+        center: c.center,
+        cell: c,
+      });
+    }
+    for (const f of coupletGeo.features ?? []) {
+      const p = (f.properties ?? {}) as Record<string, unknown>;
+      const shear = Number(p.max_shear_kt ?? 0);
+      const geom = f.geometry;
+      const center = geom?.type === 'Point' ? (geom.coordinates as [number, number]) : null;
+      out.push({
+        key: `c:${String(p.track_id ?? '')}`,
+        kind: 'couplet',
+        score: shear,
+        badge: 'ROT',
+        title: `Couplet ${Math.round(shear)}kt`,
+        sub: String(p.track_id ?? ''),
+        dot: 'bg-fuchsia-400',
+        center,
+      });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out.slice(0, 14);
+  }, [displayWarnings, probSevereTop, coupletGeo]);
+
   const displayWarningsGeo = useMemo<GeoJSON.FeatureCollection>(() => {
     const t = scrubTimeMs;
     return {
@@ -4670,6 +4753,55 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   </>
                 );
               })()}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => toggleInspectorSection('threats')}
+                className="flex items-center justify-between w-full text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold hover:text-wx-fg"
+                aria-expanded={inspectorSections.threats}
+              >
+                <span>Threat board · {threatBoard.length}</span>
+                <ChevronDown size={12} className={`transition ${inspectorSections.threats ? '' : '-rotate-90'}`} />
+              </button>
+              {inspectorSections.threats && (
+                threatBoard.length === 0 ? (
+                  <p className="text-[10px] text-wx-mute">No active threats — quiet right now.</p>
+                ) : (
+                  <div className="flex flex-col gap-1 max-h-56 overflow-y-auto wx-scroll">
+                    {threatBoard.map((th) => (
+                      <button
+                        key={th.key}
+                        type="button"
+                        onClick={() => {
+                          if (th.center) {
+                            mapRef.current?.flyTo({ center: th.center, zoom: th.kind === 'warning' ? 8.5 : 8, duration: 700 });
+                          }
+                          if (th.kind === 'warning' && th.warning) setSelectedWarning(th.warning);
+                          if (th.kind === 'probsevere' && th.cell) {
+                            const c = th.cell;
+                            setProbSeverePopup({
+                              lng: c.center[0], lat: c.center[1],
+                              topType: c.topType, topProb: c.topProb,
+                              severe: c.severe, tor: c.tor, hail: c.hail, wind: c.wind,
+                              readout: c.readout, me: c.me, ms: c.ms,
+                            });
+                          }
+                        }}
+                        className="flex items-center gap-2 rounded-md border border-wx-line bg-wx-ink px-2 py-1.5 text-left hover:border-wx-accent"
+                      >
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${th.dot} shrink-0`} />
+                        <span className="w-6 shrink-0 text-[8px] font-semibold uppercase tracking-wider text-wx-mute">{th.badge}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[10.5px] font-medium text-wx-fg">{th.title}</span>
+                          {th.sub ? <span className="block truncate text-[9px] text-wx-mute">{th.sub}</span> : null}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )
+              )}
             </div>
 
             <div className="border-t border-wx-line/40 -mt-2 pt-3 flex flex-col gap-[18px]">
