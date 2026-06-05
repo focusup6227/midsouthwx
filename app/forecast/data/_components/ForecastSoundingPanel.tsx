@@ -21,10 +21,23 @@ const MODELS = [
   { key: 'nam', label: 'NAM 12 km', fhrMax: 60, step: 3 },
 ];
 
+// Real RAOB launch sites near the Mid-South (mirror of renderer RAOB_OBS_STATIONS).
+const RAOB_OBS = [
+  { wmo: '72340', name: 'Little Rock · AR' },
+  { wmo: '72235', name: 'Jackson · MS' },
+  { wmo: '72230', name: 'Birmingham · AL' },
+  { wmo: '72248', name: 'Shreveport · LA' },
+  { wmo: '72357', name: 'Norman · OK' },
+  { wmo: '72233', name: 'Slidell · LA' },
+  { wmo: '72249', name: 'Fort Worth · TX' },
+];
+
 export default function ForecastSoundingPanel() {
+  const [mode, setMode] = useState<'fcst' | 'obs'>('fcst');
   const [modelKey, setModelKey] = useState('gfs');
   const [pt, setPt] = useState<ForecastPoint>(DEFAULT_POINT);
   const [fhr, setFhr] = useState(0);
+  const [obsWmo, setObsWmo] = useState('72340');
   const [res, setRes] = useState<SoundingResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -37,7 +50,10 @@ export default function ForecastSoundingPanel() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch(`/api/forecast/sounding?model=${modelKey}&lat=${pt.lat}&lon=${pt.lon}&fhr=${fhr}`);
+      const url = mode === 'obs'
+        ? `/api/forecast/obs-sounding?wmo=${obsWmo}&name=${encodeURIComponent(RAOB_OBS.find((s) => s.wmo === obsWmo)?.name ?? '')}`
+        : `/api/forecast/sounding?model=${modelKey}&lat=${pt.lat}&lon=${pt.lon}&fhr=${fhr}`;
+      const r = await fetch(url);
       const d: SoundingResult = await r.json();
       if (id !== reqId.current) return;
       if (d.error) setErr(d.error);
@@ -47,7 +63,7 @@ export default function ForecastSoundingPanel() {
     } finally {
       if (id === reqId.current) setLoading(false);
     }
-  }, [modelKey, pt.lat, pt.lon, fhr]);
+  }, [mode, modelKey, pt.lat, pt.lon, fhr, obsWmo]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -65,67 +81,108 @@ export default function ForecastSoundingPanel() {
     <section className="space-y-3 rounded-lg border border-wx-line bg-wx-card p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-wx-fg">Forecast sounding (Skew-T)</h2>
+          <h2 className="text-sm font-semibold text-wx-fg">Sounding (Skew-T)</h2>
           <p className="text-[11px] text-wx-mute">
-            Model column · parcel + hodograph + indices
+            {mode === 'obs' ? 'Observed RAOB (00Z/12Z)' : 'Model column'} · parcel + hodograph + indices
             {res ? ` · ${res.cached ? 'cached' : `rendered ${res.render_ms}ms`}` : ''}
             {res?.sbcape != null ? ` · SBCAPE ${res.sbcape} J/kg` : ''}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => load()}
-          className="inline-flex items-center gap-1 rounded-md border border-wx-line bg-wx-ink px-2 py-1 text-[11px] text-wx-mute hover:text-wx-fg hover:border-wx-accent"
-        >
-          <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex overflow-hidden rounded-md border border-wx-line">
+            {(['obs', 'fcst'] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={`px-2.5 py-1 text-[11px] ${
+                  mode === m ? 'bg-wx-accent/15 text-wx-fg' : 'bg-wx-ink text-wx-mute hover:text-wx-fg'
+                }`}
+              >
+                {m === 'obs' ? 'Observed' : 'Forecast'}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => load()}
+            className="inline-flex items-center gap-1 rounded-md border border-wx-line bg-wx-ink px-2 py-1 text-[11px] text-wx-mute hover:text-wx-fg hover:border-wx-accent"
+          >
+            <RefreshCw size={11} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
+        </div>
       </header>
 
       <div className="grid gap-3 sm:grid-cols-[200px_1fr]">
         <div className="flex flex-col gap-2">
-          <label className="flex flex-col gap-1 text-[11px]">
-            <span className="font-semibold uppercase tracking-wider text-wx-mute">Model</span>
-            <select
-              value={modelKey}
-              onChange={(e) => setModelKey(e.target.value)}
-              className="rounded-md border border-wx-line bg-wx-ink px-2 py-1.5 text-xs text-wx-fg outline-none focus:border-wx-accent"
-            >
-              {MODELS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
-          </label>
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-wx-mute">Location</span>
-          <div className="flex flex-col gap-0.5">
-            {MIDSOUTH_POINTS.map((p) => {
-              const on = p.key === pt.key;
-              return (
-                <button
-                  key={p.key}
-                  type="button"
-                  onClick={() => setPt(p)}
-                  className={`rounded-md px-2 py-1 text-left text-[11.5px] ${
-                    on ? 'bg-wx-accent/15 text-wx-fg ring-1 ring-wx-accent' : 'text-wx-mute hover:text-wx-fg hover:bg-wx-ink'
-                  }`}
+          {mode === 'obs' ? (
+            <>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-wx-mute">RAOB station</span>
+              <div className="flex flex-col gap-0.5">
+                {RAOB_OBS.map((s) => {
+                  const on = s.wmo === obsWmo;
+                  return (
+                    <button
+                      key={s.wmo}
+                      type="button"
+                      onClick={() => setObsWmo(s.wmo)}
+                      className={`rounded-md px-2 py-1 text-left text-[11.5px] ${
+                        on ? 'bg-wx-accent/15 text-wx-fg ring-1 ring-wx-accent' : 'text-wx-mute hover:text-wx-fg hover:bg-wx-ink'
+                      }`}
+                    >
+                      <MapPin size={10} className="mr-1.5 inline" />{s.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="flex flex-col gap-1 text-[11px]">
+                <span className="font-semibold uppercase tracking-wider text-wx-mute">Model</span>
+                <select
+                  value={modelKey}
+                  onChange={(e) => setModelKey(e.target.value)}
+                  className="rounded-md border border-wx-line bg-wx-ink px-2 py-1.5 text-xs text-wx-fg outline-none focus:border-wx-accent"
                 >
-                  <MapPin size={10} className="mr-1.5 inline" />
-                  {p.city} · {p.state}
-                </button>
-              );
-            })}
-          </div>
-          <label className="flex flex-col gap-1 text-[11px]">
-            <span className="font-semibold uppercase tracking-wider text-wx-mute">
-              Forecast hour · <span className="font-mono text-wx-fg">F{String(fhr).padStart(3, '0')}</span>
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={model.fhrMax}
-              step={model.step}
-              value={fhr}
-              onChange={(e) => setFhr(parseInt(e.target.value, 10))}
-              className="w-full accent-wx-accent"
-            />
-          </label>
+                  {MODELS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+              </label>
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-wx-mute">Location</span>
+              <div className="flex flex-col gap-0.5">
+                {MIDSOUTH_POINTS.map((p) => {
+                  const on = p.key === pt.key;
+                  return (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => setPt(p)}
+                      className={`rounded-md px-2 py-1 text-left text-[11.5px] ${
+                        on ? 'bg-wx-accent/15 text-wx-fg ring-1 ring-wx-accent' : 'text-wx-mute hover:text-wx-fg hover:bg-wx-ink'
+                      }`}
+                    >
+                      <MapPin size={10} className="mr-1.5 inline" />
+                      {p.city} · {p.state}
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="flex flex-col gap-1 text-[11px]">
+                <span className="font-semibold uppercase tracking-wider text-wx-mute">
+                  Forecast hour · <span className="font-mono text-wx-fg">F{String(fhr).padStart(3, '0')}</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={model.fhrMax}
+                  step={model.step}
+                  value={fhr}
+                  onChange={(e) => setFhr(parseInt(e.target.value, 10))}
+                  className="w-full accent-wx-accent"
+                />
+              </label>
+            </>
+          )}
         </div>
 
         <div className="relative flex items-center justify-center rounded-md border border-wx-line bg-[#0b1220]">

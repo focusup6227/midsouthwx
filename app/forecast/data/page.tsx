@@ -5,7 +5,6 @@ import ModelsPanel from './_components/ModelsPanel';
 import PointForecastPanel from './_components/PointForecastPanel';
 import SevereParamsPanel from './_components/SevereParamsPanel';
 import ForecastSoundingPanel from './_components/ForecastSoundingPanel';
-import SoundingPanel from './_components/SoundingPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +44,6 @@ export default function ForecastDataPage() {
         <ModelsPanel />
         <MesoanalysisPanel />
         <ForecastSoundingPanel />
-        <SoundingPanel />
       </div>
     </DashShell>
   );

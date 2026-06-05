@@ -100,36 +100,35 @@ def _extract_column(grib: bytes, lat: float, lon: float):
     return col
 
 
-def render_sounding(model: str, lat: float, lon: float, ymd: str, hh: str,
-                    fhr: int) -> tuple[bytes, dict]:
-    if model not in SND_MODELS:
-        raise ValueError(f"unknown sounding model {model}")
+# Real RAOB launch sites near the Mid-South (Memphis/Nashville don't launch).
+RAOB_OBS_STATIONS = [
+    {"wmo": "72340", "code": "LZK", "name": "Little Rock", "state": "AR"},
+    {"wmo": "72235", "code": "JAN", "name": "Jackson", "state": "MS"},
+    {"wmo": "72230", "code": "BMX", "name": "Birmingham", "state": "AL"},
+    {"wmo": "72248", "code": "SHV", "name": "Shreveport", "state": "LA"},
+    {"wmo": "72357", "code": "OUN", "name": "Norman", "state": "OK"},
+    {"wmo": "72233", "code": "LIX", "name": "Slidell", "state": "LA"},
+    {"wmo": "72249", "code": "FWD", "name": "Fort Worth", "state": "TX"},
+]
+
+
+def _plot_skewt(p, Tc, Tdc, u_kt, v_kt, title_lines, source_label):
+    """Shared Skew-T render for model and observed columns.
+
+    Inputs are plain numpy arrays: pressure [hPa], temp/dewpoint [°C], u/v [kt],
+    surface→top (descending pressure). Returns (png_bytes, indices_meta).
+    """
     import metpy.calc as mpcalc
     from metpy.plots import Hodograph, SkewT
     from metpy.units import units
     from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-    grib = fetch_grib(_snd_url(model, lat, lon, ymd, hh, fhr), timeout=30.0)
-    col = _extract_column(grib, lat, lon)
-
-    # Keep levels that have all four fields; sort surface->top (desc pressure).
-    levels = sorted([lv for lv, d in col.items() if {"t", "r", "u", "v"} <= d.keys()], reverse=True)
-    if len(levels) < 5:
-        raise RuntimeError(f"insufficient column ({len(levels)} levels)")
-
-    p = np.array(levels, dtype=float)
-    T = np.array([col[lv]["t"] for lv in levels]) - 273.15
-    RH = np.clip(np.array([col[lv]["r"] for lv in levels]), 1, 100)
-    u = np.array([col[lv]["u"] for lv in levels]) * 1.94384  # m/s -> kt
-    v = np.array([col[lv]["v"] for lv in levels]) * 1.94384
-
     pq = p * units.hPa
-    Tq = T * units.degC
-    Tdq = mpcalc.dewpoint_from_relative_humidity(Tq, RH * units.percent)
-    uq = u * units.knots
-    vq = v * units.knots
+    Tq = Tc * units.degC
+    Tdq = Tdc * units.degC
+    uq = u_kt * units.knots
+    vq = v_kt * units.knots
 
-    # Indices (best-effort; parcel calcs can fail on odd columns).
     cape = cin = lcl_p = li = None
     prof = None
     try:
@@ -166,7 +165,6 @@ def render_sounding(model: str, lat: float, lon: float, ymd: str, hh: str,
     skew.ax.set_ylim(1000, 100)
     skew.ax.set_xlim(-40, 45)
 
-    # Hodograph inset (0-10 km wind).
     try:
         ax_hod = inset_axes(skew.ax, "38%", "30%", loc="upper right")
         ax_hod.set_facecolor("#0b1220")
@@ -177,16 +175,13 @@ def render_sounding(model: str, lat: float, lon: float, ymd: str, hh: str,
     except Exception:
         pass
 
-    # Index readout.
     def fmt(q, unit, n=0):
         try:
             return f"{q.to(unit).magnitude:.{n}f}"
         except Exception:
             return "n/a"
 
-    lines = [
-        f"{SND_MODELS[model]['label']}  F{fhr:03d}  {ymd} {hh}Z",
-        f"{lat:.2f}N {abs(lon):.2f}W",
+    lines = list(title_lines) + [
         f"SBCAPE {fmt(cape,'joule/kilogram') if cape is not None else 'n/a'} J/kg",
         f"SBCIN  {fmt(cin,'joule/kilogram') if cin is not None else 'n/a'} J/kg",
         f"LI     {fmt(li[0],'delta_degC',1) if li is not None else 'n/a'}",
@@ -200,16 +195,91 @@ def render_sounding(model: str, lat: float, lon: float, ymd: str, hh: str,
     fig.savefig(buf, format="png", facecolor="#0b1220")
     plt.close(fig)
 
-    meta = {
-        "model": SND_MODELS[model]["label"],
-        "cycle": f"{ymd}{hh}",
-        "fhr": fhr,
-        "point": {"lat": round(lat, 3), "lon": round(lon, 3)},
+    return buf.getvalue(), {
         "sbcape": None if cape is None else round(float(cape.to("joule/kilogram").magnitude)),
         "sbcin": None if cin is None else round(float(cin.to("joule/kilogram").magnitude)),
-        "source": f"NOMADS {SND_MODELS[model]['label']}",
+        "source": source_label,
     }
-    return buf.getvalue(), meta
+
+
+def render_sounding(model: str, lat: float, lon: float, ymd: str, hh: str,
+                    fhr: int) -> tuple[bytes, dict]:
+    if model not in SND_MODELS:
+        raise ValueError(f"unknown sounding model {model}")
+    import metpy.calc as mpcalc
+    from metpy.units import units
+
+    grib = fetch_grib(_snd_url(model, lat, lon, ymd, hh, fhr), timeout=30.0)
+    col = _extract_column(grib, lat, lon)
+    levels = sorted([lv for lv, d in col.items() if {"t", "r", "u", "v"} <= d.keys()], reverse=True)
+    if len(levels) < 5:
+        raise RuntimeError(f"insufficient column ({len(levels)} levels)")
+
+    p = np.array(levels, dtype=float)
+    T = np.array([col[lv]["t"] for lv in levels]) - 273.15
+    RH = np.clip(np.array([col[lv]["r"] for lv in levels]), 1, 100)
+    u = np.array([col[lv]["u"] for lv in levels]) * 1.94384  # m/s -> kt
+    v = np.array([col[lv]["v"] for lv in levels]) * 1.94384
+    Tdc = np.asarray(
+        mpcalc.dewpoint_from_relative_humidity(T * units.degC, RH * units.percent).to("degC").magnitude,
+        dtype=float)
+
+    title = [f"{SND_MODELS[model]['label']}  F{fhr:03d}  {ymd} {hh}Z", f"{lat:.2f}N {abs(lon):.2f}W"]
+    png, idx = _plot_skewt(p, T, Tdc, u, v, title, f"NOMADS {SND_MODELS[model]['label']}")
+    return png, {"model": SND_MODELS[model]["label"], "cycle": f"{ymd}{hh}", "fhr": fhr,
+                 "point": {"lat": round(lat, 3), "lon": round(lon, 3)}, **idx}
+
+
+def _fetch_raob(wmo: str, ymd: str, hh: str):
+    """Parse a University of Wyoming TEXT:LIST observed sounding into arrays."""
+    import re
+    ddhh = f"{ymd[6:8]}{hh}"
+    url = ("https://weather.uwyo.edu/cgi-bin/sounding?region=naconf&TYPE=TEXT%3ALIST"
+           f"&YEAR={ymd[0:4]}&MONTH={ymd[4:6]}&FROM={ddhh}&TO={ddhh}&STNM={wmo}")
+    with httpx.Client(timeout=30.0, follow_redirects=True) as c:
+        text = c.get(url).text
+    if "Can't get" in text or "PRES" not in text:
+        raise RuntimeError("no_obs")
+    text = re.sub(r"<[^>]*>", "", text)
+    rows = []
+    started = False
+    for ln in text.splitlines():
+        if "PRES" in ln and "HGHT" in ln:
+            started = True
+            continue
+        if not started:
+            continue
+        if "Station" in ln or "Showalter" in ln:
+            break
+        # Fixed-width 7-char columns: PRES HGHT TEMP DWPT RELH MIXR DRCT SKNT ...
+        def col(i):
+            return ln[i * 7:(i + 1) * 7].strip()
+        pres, temp, dwpt, drct, sknt = col(0), col(2), col(3), col(6), col(7)
+        if not (pres and temp and dwpt and drct and sknt):
+            continue
+        try:
+            rows.append((float(pres), float(temp), float(dwpt), float(drct), float(sknt)))
+        except ValueError:
+            continue
+    if len(rows) < 5:
+        raise RuntimeError(f"insufficient obs column ({len(rows)} levels)")
+    rows.sort(key=lambda r: -r[0])  # surface -> top
+    p = np.array([r[0] for r in rows])
+    Tc = np.array([r[1] for r in rows])
+    Tdc = np.array([r[2] for r in rows])
+    drad = np.radians(np.array([r[3] for r in rows]))
+    spd = np.array([r[4] for r in rows])  # knots
+    u = -spd * np.sin(drad)
+    v = -spd * np.cos(drad)
+    return p, Tc, Tdc, u, v
+
+
+def render_obs_sounding(wmo: str, name: str, ymd: str, hh: str) -> tuple[bytes, dict]:
+    p, Tc, Tdc, u, v = _fetch_raob(wmo, ymd, hh)
+    title = [f"RAOB {name} ({wmo})  {hh}Z {ymd}", "observed upper-air"]
+    png, idx = _plot_skewt(p, Tc, Tdc, u, v, title, "Observed RAOB (UWyo)")
+    return png, {"model": f"RAOB {name}", "cycle": f"{ymd}{hh}", "fhr": 0,
+                 "point": {"wmo": wmo}, **idx}
 
 
 # --- FastAPI router --------------------------------------------------------
@@ -299,7 +369,88 @@ async def render_sounding_route(req: SoundingRequest, authorization: str = Heade
     raise HTTPException(status_code=502, detail=f"no_posted_cycle: {last_err or 'unavailable'}")
 
 
+class ObsSoundingRequest(BaseModel):
+    wmo: str
+    name: str = ""
+    cycle: Optional[str] = None  # "YYYYMMDDHH"; None → latest 00/12Z, walk back
+    force: bool = False
+
+
+def _obs_cycles(cycle: Optional[str]) -> list[tuple[str, str]]:
+    """Observed releases are 00Z/12Z; return latest then walk back a few."""
+    if cycle and len(cycle) == 10:
+        return [(cycle[:8], cycle[8:10])]
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    base = now.replace(hour=(12 if now.hour >= 12 else 0), minute=0, second=0, microsecond=0)
+    out = []
+    for k in range(4):
+        c = base - timedelta(hours=12 * k)
+        out.append((c.strftime("%Y%m%d"), f"{c.hour:02d}"))
+    return out
+
+
+@router.post("/render-obs-sounding")
+async def render_obs_sounding_route(req: ObsSoundingRequest, authorization: str = Header(default="")) -> dict:
+    token = os.environ.get("RENDERER_TOKEN", "")
+    if not token or authorization != f"Bearer {token}":
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    from storage import fetch_metadata, public_url, upload, upload_metadata
+
+    started = time.time()
+    last_err = None
+    for ymd, hh in _obs_cycles(req.cycle):
+        cache_id = f"sounding/obs/{req.wmo}/{ymd}{hh}"
+        asset_path, meta_path = f"{cache_id}.png", f"{cache_id}.meta.json"
+        if not req.force:
+            cached = await fetch_metadata(meta_path)
+            if cached:
+                return {**cached, "image_url": public_url(asset_path), "cached": True,
+                        "render_ms": int((time.time() - started) * 1000)}
+        lock = _snd_locks.setdefault(cache_id, asyncio.Lock())
+        async with lock:
+            if not req.force:
+                cached = await fetch_metadata(meta_path)
+                if cached:
+                    return {**cached, "image_url": public_url(asset_path), "cached": True,
+                            "render_ms": int((time.time() - started) * 1000)}
+            try:
+                async with _snd_sem:
+                    body, meta = await asyncio.to_thread(
+                        render_obs_sounding, req.wmo, req.name or req.wmo, ymd, hh)
+            except RuntimeError as e:
+                last_err = str(e)
+                continue
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"render_failed: {e}")
+            try:
+                await upload(asset_path, body, "image/png")
+                await upload_metadata(meta_path, meta)
+            except Exception as e:
+                raise HTTPException(status_code=502, detail=f"upload_failed: {e}")
+        if len(_snd_locks) > 200:
+            _snd_locks.clear()
+        return {**meta, "image_url": public_url(asset_path), "cached": False,
+                "render_ms": int((time.time() - started) * 1000)}
+
+    raise HTTPException(status_code=502, detail=f"no_obs: {last_err or 'unavailable'}")
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "obs":
+        wmo = sys.argv[2] if len(sys.argv) > 2 else "72357"
+        for ymd, hh in _obs_cycles(None):
+            try:
+                png, meta = render_obs_sounding(wmo, wmo, ymd, hh)
+                with open("/tmp/obs_sounding_test.png", "wb") as f:
+                    f.write(png)
+                print(f"obs {wmo} {ymd} {hh}Z -> /tmp/obs_sounding_test.png ({len(png)}b)")
+                print(meta)
+                break
+            except RuntimeError as e:
+                print(f"  {ymd} {hh}Z: {e}")
+        sys.exit(0)
     model = sys.argv[1] if len(sys.argv) > 1 else "gfs"
     lat = float(sys.argv[2]) if len(sys.argv) > 2 else 35.15
     lon = float(sys.argv[3]) if len(sys.argv) > 3 else -90.05
