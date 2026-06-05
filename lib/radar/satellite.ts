@@ -1,14 +1,13 @@
-// GOES-East (GOES-19) satellite imagery catalog for the forecast workflow.
+// GOES-East (GOES-19) + GOES-West (GOES-18) satellite imagery catalog.
 //
 // Source: NOAA NESDIS STAR static sector JPEGs (cdn.star.nesdis.noaa.gov).
-// Unlike the tile layers in /radar/RadarView.tsx (which need a Mapbox instance),
-// STAR serves a single "latest" image per sector+band — so the workflow's
-// SatellitePanel can show it as a plain <img>, matching the model/mesoanalysis
-// panels. Covers water vapor (B08/09/10), clean IR (B13), visible (B02), and
-// GeoColor. ~5–15 min cadence.
+// Single "latest" image per satellite+sector+band → plain <img> (no Mapbox),
+// matching the model/mesoanalysis panels. Covers water vapor (B08/09/10),
+// clean IR (B13), visible (B02), GeoColor, Air Mass. ~5–15 min cadence.
 
 export type SatBand = { key: string; label: string; group: 'Clouds' | 'Water vapor' | 'RGB' };
 export type SatSector = { key: string; label: string; conus?: boolean };
+export type SatSatellite = { key: string; label: string; goes: string; defaultSector: string; sectors: SatSector[] };
 
 export const SAT_BANDS: SatBand[] = [
   { key: 'GEOCOLOR', label: 'GeoColor', group: 'RGB' },
@@ -20,32 +19,50 @@ export const SAT_BANDS: SatBand[] = [
   { key: 'AirMass', label: 'Air Mass RGB', group: 'RGB' },
 ];
 
-export const SAT_SECTORS: SatSector[] = [
-  { key: 'smv', label: 'Mid-South (S. Miss Valley)' },
-  { key: 'se', label: 'Southeast' },
-  { key: 'umv', label: 'Upper Miss Valley' },
-  { key: 'sp', label: 'Southern Plains' },
-  { key: 'CONUS', label: 'CONUS', conus: true },
+export const SAT_SATELLITES: SatSatellite[] = [
+  {
+    key: 'east', label: 'GOES-East', goes: 'GOES19', defaultSector: 'smv',
+    sectors: [
+      { key: 'smv', label: 'Mid-South (S. Miss Valley)' },
+      { key: 'se', label: 'Southeast' },
+      { key: 'umv', label: 'Upper Miss Valley' },
+      { key: 'sp', label: 'Southern Plains' },
+      { key: 'CONUS', label: 'CONUS', conus: true },
+    ],
+  },
+  {
+    key: 'west', label: 'GOES-West', goes: 'GOES18', defaultSector: 'CONUS',
+    sectors: [
+      { key: 'CONUS', label: 'CONUS (West)', conus: true },
+      { key: 'psw', label: 'Pacific SW' },
+      { key: 'pnw', label: 'Pacific NW' },
+    ],
+  },
 ];
 
-export const SAT_DEFAULT_SECTOR = 'smv';
 export const SAT_DEFAULT_BAND = 'GEOCOLOR';
 
-const STAR_BASE = 'https://cdn.star.nesdis.noaa.gov/GOES19/ABI';
+const STAR_BASE = 'https://cdn.star.nesdis.noaa.gov';
 
-export function satImageUrl(sector: string, band: string, cacheKey?: number): string {
-  const bust = cacheKey ? `?_t=${cacheKey}` : '';
-  const s = SAT_SECTORS.find((x) => x.key === sector);
-  if (s?.conus) {
-    // CONUS uses a different path + native aspect ratio.
-    return `${STAR_BASE}/CONUS/${band}/1250x750.jpg${bust}`;
-  }
-  return `${STAR_BASE}/SECTOR/${sector}/${band}/1200x1200.jpg${bust}`;
+export function satSatellite(key: string): SatSatellite {
+  return SAT_SATELLITES.find((s) => s.key === key) ?? SAT_SATELLITES[0];
 }
 
-export function satStarPage(sector: string, band: string): string {
-  const s = SAT_SECTORS.find((x) => x.key === sector);
-  return s?.conus
-    ? `https://www.star.nesdis.noaa.gov/GOES/conus_band.php?sat=G19&band=${band}`
-    : `https://www.star.nesdis.noaa.gov/GOES/sector_band.php?sat=G19&sector=${sector}&band=${band}`;
+export function satImageUrl(satKey: string, sector: string, band: string, cacheKey?: number): string {
+  const sat = satSatellite(satKey);
+  const sec = sat.sectors.find((x) => x.key === sector) ?? sat.sectors[0];
+  const bust = cacheKey ? `?_t=${cacheKey}` : '';
+  if (sec.conus) {
+    return `${STAR_BASE}/${sat.goes}/ABI/CONUS/${band}/1250x750.jpg${bust}`;
+  }
+  return `${STAR_BASE}/${sat.goes}/ABI/SECTOR/${sec.key}/${band}/1200x1200.jpg${bust}`;
+}
+
+export function satStarPage(satKey: string, sector: string, band: string): string {
+  const sat = satSatellite(satKey);
+  const sec = sat.sectors.find((x) => x.key === sector) ?? sat.sectors[0];
+  const g = sat.goes === 'GOES19' ? 'G19' : 'G18';
+  return sec.conus
+    ? `https://www.star.nesdis.noaa.gov/GOES/conus_band.php?sat=${g}&band=${band}`
+    : `https://www.star.nesdis.noaa.gov/GOES/sector_band.php?sat=${g}&sector=${sec.key}&band=${band}`;
 }

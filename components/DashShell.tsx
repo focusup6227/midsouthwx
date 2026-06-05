@@ -51,8 +51,7 @@ export default async function DashShell({
     { href: '/nws', label: 'NWS' },
     { href: '/radar', label: 'Radar' },
     { href: '/briefing', label: 'Briefing' },
-    { href: '/forecast', label: 'Forecast' },
-    { href: '/forecast/workflow', label: 'Workflow' },
+    { href: '/forecast/workflow', label: 'Forecast' },
     { href: '/map', label: 'Map' },
   ];
 

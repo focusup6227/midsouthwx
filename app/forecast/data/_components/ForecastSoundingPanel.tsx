@@ -113,7 +113,7 @@ export default function ForecastSoundingPanel() {
         </div>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-[200px_1fr]">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[200px_1fr]">
         <div className="flex flex-col gap-2">
           {mode === 'obs' ? (
             <>
@@ -185,10 +185,13 @@ export default function ForecastSoundingPanel() {
           )}
         </div>
 
-        <div className="relative flex items-center justify-center rounded-md border border-wx-line bg-[#0b1220]">
+        <div className="relative overflow-x-auto rounded-md border border-wx-line bg-[#0b1220]">
           {res?.image_url ? (
+            // On phones, render at a legible fixed width and let it scroll
+            // (like the ensemble graph) instead of squashing to screen width;
+            // on desktop, center + cap height.
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={res.image_url} alt={`${model.label} sounding ${pt.city} F${fhr}`} className="block w-full sm:max-h-[560px] sm:w-auto" />
+            <img src={res.image_url} alt={`${model.label} sounding ${pt.city} F${fhr}`} className="mx-auto block w-[460px] max-w-none sm:max-h-[560px] sm:w-auto" />
           ) : (
             <div className="flex h-80 items-center justify-center text-[12px] text-wx-mute">
               {errMsg ?? (loading ? 'Rendering sounding…' : 'Select a point')}

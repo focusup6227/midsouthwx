@@ -4,6 +4,7 @@ import DashShell from '@/components/DashShell';
 import { supabaseServer } from '@/lib/supabase/server';
 import ForecastDetailActions from './_components/ForecastDetailActions';
 import ForecastShareCard from './_components/ForecastShareCard';
+import DistributePanel from './_components/DistributePanel';
 import Scorecard from './_components/Scorecard';
 
 export const dynamic = 'force-dynamic';
@@ -48,6 +49,9 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
   const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '');
   const shareUrl = f.public_token && siteUrl ? `${siteUrl}/f/${f.public_token}` : null;
 
+  // Forecast polygon for the distribute-panel area image (Mapbox Static).
+  const { data: areaJson } = await supa.rpc('forecast_area_geojson', { p_id: params.id });
+
   return (
     <DashShell
       title={f.title}
@@ -65,6 +69,7 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
       }
     >
       <div className="grid gap-4 md:grid-cols-[1fr_200px]">
+        <div className="space-y-4">
         <div className="space-y-3 rounded-lg border border-wx-line bg-wx-card p-4">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full border border-amber-700 bg-amber-500/10 px-2 py-[1px] text-[10px] font-semibold uppercase tracking-wider text-amber-300">
@@ -91,6 +96,17 @@ export default async function ForecastDetailPage({ params }: { params: { id: str
               No discussion text recorded.
             </div>
           )}
+        </div>
+        <DistributePanel
+          title={f.title}
+          hazards={f.hazards ?? []}
+          confidence={f.confidence}
+          validFrom={f.valid_from}
+          validUntil={f.valid_until}
+          discussion={f.discussion}
+          shareUrl={shareUrl}
+          area={(areaJson as GeoJSON.Polygon | GeoJSON.MultiPolygon | null) ?? null}
+        />
         </div>
 
         <aside className="space-y-3 text-xs text-wx-mute">

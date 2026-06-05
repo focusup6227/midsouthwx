@@ -214,7 +214,7 @@ export default function PointForecastPanel() {
         </button>
       </header>
 
-      <div className="grid gap-2 sm:grid-cols-[200px_1fr]">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[200px_1fr]">
         <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-wx-mute">Location</span>
           {MIDSOUTH_POINTS.map((p) => {
