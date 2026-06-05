@@ -44,6 +44,7 @@ import {
   useMping,
   useStormReports,
   useStormReportClusters,
+  useProbSevere,
   WARNINGS_KEY,
   STORM_REPORTS_KEY,
   STORM_REPORT_CLUSTERS_KEY,
@@ -152,6 +153,24 @@ const NCEP_WMS_URL = (workspace: string, layer: string, cacheKey: number) =>
   `&layers=${encodeURIComponent(layer)}&styles=` +
   `&format=image/png&transparent=true` +
   `&width=256&height=256&crs=EPSG:3857` +
+  `&bbox={bbox-epsg-3857}` +
+  `&_t=${cacheKey}`;
+
+// IEM RIDGE single-site NEXRAD via the RIDGE WMS (layers=single = latest scan).
+// IEM keeps these pre-rendered, so GetMap returns near-instantly — vs. the
+// 30–90 s Py-ART Level II render — letting default single-site reflectivity/
+// velocity paint immediately. N0Q = base reflectivity (256-level), N0U = base
+// velocity, N0B = super-res reflectivity. Hi-res Level II (Py-ART) stays opt-in
+// for dual-pol + click-to-sample. `sector` is the 3-letter site id (ICAO minus
+// its leading K/P/T). Mapbox fills {bbox-epsg-3857} per tile. Attribution: IEM.
+const IEM_RIDGE_URL = (site: string, prod: 'N0Q' | 'N0U' | 'N0B', cacheKey: number) =>
+  `https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/ridge.cgi` +
+  `?service=WMS&request=GetMap&version=1.1.1` +
+  `&layers=single&sector=${site.toUpperCase().slice(1)}&prod=${prod}&styles=` +
+  `&format=image/png&transparent=true` +
+  // 512px tiles: a full viewport is ~9 GetMaps instead of ~35, so IEM's CGI
+  // doesn't shed the initial burst with 503s (it tolerates the smaller fan-out).
+  `&width=512&height=512&srs=EPSG:3857` +
   `&bbox={bbox-epsg-3857}` +
   `&_t=${cacheKey}`;
 
@@ -630,7 +649,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     (urlInitial.product as ProductKey) ?? 'composite',
   );
   const [selectedSite, setSelectedSite] = useState<string | null>(urlInitial.site ?? null);
-  const [hiRes, setHiRes] = useState(urlInitial.hiRes ?? true);
+  // Default OFF: single-site refl/vel paints from instant IEM RIDGE tiles. The
+  // 30–90 s Py-ART Level II render is opt-in (toggle) for pinpoint single-site
+  // detail + click-to-sample gate values. A shared ?hiRes=1 link still honors it.
+  const [hiRes, setHiRes] = useState(urlInitial.hiRes ?? false);
   const [pngFallback, setPngFallback] = useState(false);
   const [selectedElevation, setSelectedElevation] = useState<number | 'composite'>(0.5);
   const [level2Loading, setLevel2Loading] = useState(false);
@@ -778,6 +800,17 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     candidates: NwsWarning[];
     chosenId: string | null;
   } | null>(null);
+  const [probSeverePopup, setProbSeverePopup] = useState<{
+    lng: number;
+    lat: number;
+    topType: string;
+    topProb: number;
+    severe: number;
+    tor: number;
+    hail: number;
+    wind: number;
+    readout: string;
+  } | null>(null);
   const [hoverPixel, setHoverPixel] = useState<{ lng: number; lat: number; sample: number | null } | null>(null);
   const [hoverSub, setHoverSub] = useState<any | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -812,6 +845,25 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const coupletsSwr = useCouplets(showCouplets);
   const coupletGeo = (coupletsSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   const coupletTracks = (coupletsSwr.data?.tracks ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
+
+  // ProbSevere 3.0 — object-based ML severe probabilities. Default off (CONUS
+  // feed, most useful during active convection); the headline nowcasting aid.
+  const [showProbSevere, setShowProbSevere] = useState(urlInitial.showProbSevere ?? false);
+  const probSevereSwr = useProbSevere(showProbSevere);
+  const probSevereGeo = (probSevereSwr.data ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
+  // Cells actually drawn (≥1% severe signal) — what the map shows, so the
+  // toggle count never claims more than is visible. The highest prob in view
+  // surfaces the day's ceiling at a glance.
+  const probSevereDrawn = useMemo(() => {
+    let count = 0;
+    let max = 0;
+    for (const f of probSevereGeo.features) {
+      const p = Number((f.properties as { topProb?: number } | null)?.topProb ?? 0);
+      if (p >= 1) count++;
+      if (p > max) max = p;
+    }
+    return { count, max };
+  }, [probSevereGeo]);
 
   // F10: MRMS MESH (Max Estimated Size of Hail) overlay. Translucent raster
   // layered on top of whatever the operator's looking at — keeps the
@@ -898,6 +950,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     showSitePills,
     showLightning,
     showCouplets,
+    showProbSevere,
     showMesh,
     meshWindow,
     showMetar,
@@ -1734,12 +1787,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const liveTileUrl: string | null = useMemo(() => {
     if (useLibreWxR) return null;
     if (selectedSite) {
-      const site = selectedSite.toLowerCase();
       switch (effectiveProduct) {
         case 'reflectivity':
-          return NCEP_WMS_URL(site, `${site}:${site}_sr_bref`, tileCacheKey);
+          return IEM_RIDGE_URL(selectedSite, 'N0Q', tileCacheKey);
         case 'velocity':
-          return NCEP_WMS_URL(site, `${site}:${site}_sr_bvel`, tileCacheKey);
+          return IEM_RIDGE_URL(selectedSite, 'N0U', tileCacheKey);
         case 'correlation':
           return null; // Level II only
         default:
@@ -1793,13 +1845,22 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
   const liveRadarSource = useMemo(() => {
     if (!liveTileUrl) return null;
-    const base = { type: 'raster' as const, tiles: [liveTileUrl], tileSize: 256 };
+    // IEM single-site refl/vel is requested as 512px tiles to keep the per-view
+    // fan-out small (see IEM_RIDGE_URL); everything else stays at 256.
+    const iemSingleSite =
+      !!selectedSite &&
+      (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity');
+    const base = {
+      type: 'raster' as const,
+      tiles: [liveTileUrl],
+      tileSize: iemSingleSite ? 512 : 256,
+    };
     if (effectiveProduct === 'satellite' && satSource !== 'lwxr') {
       const cfg = GOES_SOURCES[satSource as GoesSourceId];
       if (cfg) return { ...base, maxzoom: cfg.maxzoom };
     }
     return base;
-  }, [liveTileUrl, effectiveProduct, satSource]);
+  }, [liveTileUrl, effectiveProduct, satSource, selectedSite]);
 
   // Right-pane (split view) tile URL. Mirrors liveTileUrl's logic but always
   // for `splitProduct`, and only when splitProduct is set AND we have a site
@@ -1807,12 +1868,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // mosaic twice).
   const altTileUrl: string | null = useMemo(() => {
     if (!splitProduct || !selectedSite) return null;
-    const site = selectedSite.toLowerCase();
     switch (splitProduct) {
       case 'reflectivity':
-        return NCEP_WMS_URL(site, `${site}:${site}_sr_bref`, tileCacheKey);
+        return IEM_RIDGE_URL(selectedSite, 'N0Q', tileCacheKey);
       case 'velocity':
-        return NCEP_WMS_URL(site, `${site}:${site}_sr_bvel`, tileCacheKey);
+        return IEM_RIDGE_URL(selectedSite, 'N0U', tileCacheKey);
       default:
         return null;
     }
@@ -1820,7 +1880,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
   const altLiveRadarSource = useMemo(() => {
     if (!altTileUrl) return null;
-    return { type: 'raster' as const, tiles: [altTileUrl], tileSize: 256 };
+    // Split-pane alt is always IEM single-site refl/vel → 512px tiles to match.
+    return { type: 'raster' as const, tiles: [altTileUrl], tileSize: 512 };
   }, [altTileUrl]);
 
   const altSourceKey = useMemo(() => {
@@ -2289,6 +2350,27 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           volume_count: Number(props?.volume_count ?? 1),
           lat: Number(lat),
           lon: Number(lon),
+        });
+        return;
+      }
+    }
+    // ProbSevere object click → readout popup. High priority: clicking a storm
+    // object to see its full ML breakdown (probs + the radar/NWP ingredients) is
+    // a core nowcasting action.
+    if (showProbSevere && map.getLayer('probsevere-fill')) {
+      const psHits = map.queryRenderedFeatures(e.point, { layers: ['probsevere-fill'] });
+      if (psHits.length > 0) {
+        const props = psHits[0].properties as any;
+        setProbSeverePopup({
+          lng: e.lngLat.lng,
+          lat: e.lngLat.lat,
+          topType: String(props?.topType ?? 'severe'),
+          topProb: Number(props?.topProb ?? 0),
+          severe: Number(props?.ProbSevere ?? 0),
+          tor: Number(props?.ProbTor ?? 0),
+          hail: Number(props?.ProbHail ?? 0),
+          wind: Number(props?.ProbWind ?? 0),
+          readout: String(props?.readout ?? ''),
         });
         return;
       }
@@ -3583,6 +3665,87 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             />
           </Source>
 
+          {/* ProbSevere 3.0 — object-based ML severe probabilities. Each storm
+              object is filled/outlined by its dominant hazard (tor=red,
+              hail=cyan, wind=blue, severe=amber); opacity + outline width scale
+              with the probability, so a 70% ProbTor cell reads loud and a 3%
+              blip reads faint. Labels appear once the dominant prob clears 10%
+              to keep quiet days uncluttered. */}
+          <Source id="probsevere-source" type="geojson" data={probSevereGeo as any}>
+            <Layer
+              id="probsevere-fill"
+              {...overlayAnchor}
+              type="fill"
+              // ProbSevere tags every tracked cell, including 0% (no severe
+              // signal at all) — those are noise, so draw only cells with ≥1%.
+              // Shown objects stay legible even at low prob and bolden as the
+              // probability climbs.
+              filter={['>=', ['get', 'topProb'], 1] as any}
+              layout={{ visibility: showProbSevere ? 'visible' : 'none' }}
+              paint={{
+                'fill-color': [
+                  'match', ['get', 'topType'],
+                  'tor', '#ef4444',
+                  'hail', '#22d3ee',
+                  'wind', '#3b82f6',
+                  '#f59e0b',
+                ] as any,
+                'fill-opacity': [
+                  'interpolate', ['linear'], ['get', 'topProb'],
+                  1, 0.14, 50, 0.32, 90, 0.46,
+                ] as any,
+              }}
+            />
+            <Layer
+              id="probsevere-line"
+              {...overlayAnchor}
+              type="line"
+              filter={['>=', ['get', 'topProb'], 1] as any}
+              layout={{
+                visibility: showProbSevere ? 'visible' : 'none',
+                'line-cap': 'round',
+                'line-join': 'round',
+              }}
+              paint={{
+                'line-color': [
+                  'match', ['get', 'topType'],
+                  'tor', '#ef4444',
+                  'hail', '#22d3ee',
+                  'wind', '#3b82f6',
+                  '#f59e0b',
+                ] as any,
+                'line-width': [
+                  'interpolate', ['linear'], ['get', 'topProb'],
+                  1, 1.8, 50, 3.2, 90, 4.5,
+                ] as any,
+                'line-opacity': 0.95,
+              }}
+            />
+            <Layer
+              id="probsevere-label"
+              {...overlayAnchor}
+              type="symbol"
+              filter={['>=', ['get', 'topProb'], 10] as any}
+              layout={{
+                visibility: showProbSevere ? 'visible' : 'none',
+                'text-field': [
+                  'concat',
+                  ['to-string', ['get', 'topProb']], '% ',
+                  ['upcase', ['get', 'topType']],
+                ] as any,
+                'text-size': ['interpolate', ['linear'], ['zoom'], 4, 10, 8, 12, 12, 14] as any,
+                'text-anchor': 'center',
+                'text-allow-overlap': false,
+                'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+              }}
+              paint={{
+                'text-color': '#f8fafc',
+                'text-halo-color': '#0b1220',
+                'text-halo-width': 1.8,
+              }}
+            />
+          </Source>
+
           {selection && selection.type === 'circle' && selectionCircleData && (
             <Source id="selection-circle" type="geojson" data={selectionCircleData}>
               <Layer id="sel-circle" type="circle" paint={selectionCirclePaint} {...overlayAnchor} />
@@ -3602,6 +3765,62 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           )}
 
           <AnnotationLayer geojson={annotations.geojson} />
+
+          {probSeverePopup ? (
+            <Popup
+              longitude={probSeverePopup.lng}
+              latitude={probSeverePopup.lat}
+              anchor="bottom"
+              offset={12}
+              closeButton={false}
+              closeOnClick={false}
+              onClose={() => setProbSeverePopup(null)}
+              maxWidth="300px"
+              className="wx-warning-popup"
+            >
+              {(() => {
+                const TYPE_COLOR: Record<string, string> = {
+                  tor: 'text-red-400', hail: 'text-cyan-300', wind: 'text-blue-400', severe: 'text-amber-400',
+                };
+                const row = (label: string, v: number, hot: boolean) => (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[10px] text-wx-mute">{label}</span>
+                    <span className={`font-mono text-[11px] ${hot ? 'text-wx-fg font-semibold' : 'text-wx-mute'}`}>{v}%</span>
+                  </div>
+                );
+                const p = probSeverePopup;
+                return (
+                  <div className="w-[280px] space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`text-[12px] font-semibold ${TYPE_COLOR[p.topType] ?? 'text-wx-fg'}`}>
+                        ProbSevere · {p.topType.toUpperCase()} {p.topProb}%
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setProbSeverePopup(null)}
+                        className="text-wx-mute hover:text-wx-fg"
+                        aria-label="Close popup"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                    <div className="space-y-0.5 rounded-md border border-wx-line bg-wx-ink p-2">
+                      {row('ProbSevere', p.severe, p.topType === 'severe')}
+                      {row('ProbTor', p.tor, p.topType === 'tor')}
+                      {row('ProbHail', p.hail, p.topType === 'hail')}
+                      {row('ProbWind', p.wind, p.topType === 'wind')}
+                    </div>
+                    {p.readout ? (
+                      <pre className="max-h-44 overflow-y-auto whitespace-pre-wrap rounded-md border border-wx-line bg-wx-ink p-2 font-mono text-[10px] leading-relaxed text-wx-mute">
+                        {p.readout}
+                      </pre>
+                    ) : null}
+                    <div className="text-[9px] text-wx-mute">NOAA/CIMSS ProbSevere 3.0</div>
+                  </div>
+                );
+              })()}
+            </Popup>
+          ) : null}
 
           {warningPopup ? (
             <Popup
@@ -4020,7 +4239,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       if (effectiveProduct === 'correlation') return `Level II · ρhv · ${tiltLabel}`;
                       return `Level II · ${tiltLabel}${useL2Png ? ' · PNG' : ''}`;
                     }
-                    return selectedSite ? 'Single-site' : 'CONUS · QCD';
+                    return selectedSite ? 'IEM · base 0.5°' : 'CONUS · QCD';
                   })()}
                 </span>
               </div>
@@ -4498,6 +4717,22 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   title={showCouplets ? 'Hide NEXRAD velocity-couplet IDs' : 'Show NEXRAD velocity-couplet IDs'}
                 >
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showCouplets ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+              {/* ProbSevere 3.0 — object-based ML severe probabilities. */}
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] text-wx-mute">
+                  ProbSevere · {probSevereDrawn.count} cell{probSevereDrawn.count === 1 ? '' : 's'}
+                  {probSevereDrawn.max >= 1 ? ` · max ${probSevereDrawn.max}%` : ''}
+                  {showProbSevere && probSevereSwr.isLoading ? ' · updating' : ''}
+                </span>
+                <button
+                  onClick={() => setShowProbSevere((v) => !v)}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showProbSevere ? 'bg-rose-500' : 'bg-wx-line'}`}
+                  aria-pressed={showProbSevere}
+                  title={showProbSevere ? 'Hide ProbSevere ML storm objects' : 'Show ProbSevere ML storm objects'}
+                >
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showProbSevere ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
               {/* F13: mPING crowdsource reports overlay. */}

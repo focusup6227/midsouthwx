@@ -276,6 +276,25 @@ export function useMrmsMesh(enabled: boolean, windowMin: number) {
   });
 }
 
+// ProbSevere 3.0 — object-based ML severe-storm probabilities (NOAA/CIMSS).
+// Each feature is a storm object with topType/topProb (dominant hazard) plus
+// the underlying ProbSevere/ProbTor/ProbHail/ProbWind and key params. Gated by
+// a toggle since it's a CONUS feed; refreshes on the ~2-min production cadence.
+export type ProbSevereResponse = GeoJSON.FeatureCollection & {
+  validTime?: string;
+  fetchedAt?: number;
+  error?: string;
+};
+const EMPTY_PROBSEVERE: ProbSevereResponse = { type: 'FeatureCollection', features: [] };
+export const PROBSEVERE_KEY = '/api/radar/probsevere';
+export function useProbSevere(enabled: boolean) {
+  return useSWR<ProbSevereResponse>(enabled ? PROBSEVERE_KEY : null, jsonFetcher, {
+    ...BASE_OPTS,
+    refreshInterval: 120_000,
+    fallbackData: EMPTY_PROBSEVERE,
+  });
+}
+
 export type AfdItem = {
   id: string;
   wfo: string;

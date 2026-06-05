@@ -26,6 +26,7 @@ export type RadarUrlState = {
   showSitePills: boolean;       // NEXRAD geographic site pills overlay
   showLightning: boolean;       // GOES-19 GLM lightning flashes overlay
   showCouplets: boolean;        // F9: NEXRAD velocity-couplet rotation IDs
+  showProbSevere: boolean;      // ProbSevere 3.0 object-based ML severe probabilities
   showMesh: boolean;            // F10: MRMS MESH (Max Estimated Size of Hail) overlay
   meshWindow: 30 | 60 | 120;    // F10: MESH accumulation window in minutes
   showMetar: boolean;           // F12: METAR surface obs overlay
@@ -54,6 +55,7 @@ const KEY_MAP = {
   showSitePills:      'pills',
   showLightning:      'ltg',
   showCouplets:       'cpl',
+  showProbSevere:     'psv',
   showMesh:           'mesh',
   meshWindow:         'mwin',
   showMetar:          'mtr',
@@ -83,7 +85,7 @@ export function parseRadarUrl(search: string): Partial<RadarUrlState> {
   }
   const flags: (keyof RadarUrlState)[] = [
     'showNws', 'showSpc', 'showLsr', 'showZones', 'showSubs', 'showStormTracks', 'showArrows', 'showCap',
-    'inspectorCollapsed', 'uiHidden', 'showSitePills', 'showLightning', 'showCouplets', 'showMesh', 'showMetar', 'showMping',
+    'inspectorCollapsed', 'uiHidden', 'showSitePills', 'showLightning', 'showCouplets', 'showProbSevere', 'showMesh', 'showMetar', 'showMping',
     'showStormReports', 'showCoverage',
   ];
   for (const k of flags) {
@@ -141,6 +143,7 @@ export function useRadarUrlSync(state: RadarUrlState) {
     setOrDelete(KEY_MAP.showSitePills, state.showSitePills ? null : '0');
     setOrDelete(KEY_MAP.showLightning, state.showLightning ? '1' : null);
     setOrDelete(KEY_MAP.showCouplets, state.showCouplets ? '1' : null);
+    setOrDelete(KEY_MAP.showProbSevere, state.showProbSevere ? '1' : null);
     setOrDelete(KEY_MAP.showMesh, state.showMesh ? '1' : null);
     setOrDelete(KEY_MAP.meshWindow, state.meshWindow === 30 ? null : String(state.meshWindow));
     setOrDelete(KEY_MAP.showMetar, state.showMetar ? '1' : null);
@@ -172,6 +175,7 @@ export function useRadarUrlSync(state: RadarUrlState) {
     state.showSitePills,
     state.showLightning,
     state.showCouplets,
+    state.showProbSevere,
     state.showMesh,
     state.meshWindow,
     state.showMetar,
