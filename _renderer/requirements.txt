@@ -8,3 +8,13 @@ matplotlib==3.9.3
 orjson==3.10.12
 boto3==1.35.86
 netCDF4==1.7.2
+# Forecast model rendering (NOMADS GRIB2 subset -> matplotlib PNG, model_render.py).
+# xarray is intentionally NOT pinned here: arm-pyart==1.19.5 already requires
+# xarray>=2024.10.0 and the working image resolves a numpy-1.26-compatible one,
+# so we let Py-ART drive that version and avoid a resolution conflict. cfgrib
+# 0.9.15.1 works with that recent xarray (verified locally against live NOMADS
+# GFS/NAM/HRRR). The `eccodes` wheel pulls `eccodeslib`, which bundles the
+# ecCodes C library — no system libeccodes apt package needed; the Dockerfile's
+# `cfgrib selfcheck` gates the build.
+cfgrib==0.9.15.1
+eccodes==2.47.0

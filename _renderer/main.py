@@ -31,6 +31,7 @@ from alert_loop import router as alert_loop_router
 from alert_snapshot import router as alert_snapshot_router
 from couplet_detect import router as couplet_router
 from glm import router as glm_router
+from model_render import router as model_router
 from polar import build_geojson
 from png_render import build_png
 from radar_io import download_volume, find_latest_volume, read_volume
@@ -61,6 +62,11 @@ app.include_router(alert_loop_router)
 # NEXRAD site; persists to public.radar_couplets with stable track IDs.
 # Self-auths via the same RENDERER_TOKEN bearer.
 app.include_router(couplet_router)
+
+# Model fields (forecast side): NOMADS GRIB2 subset → matplotlib PNG for the
+# dashboard's /forecast/data Models panel. Self-auths via the RENDERER_TOKEN
+# bearer. Renders are cached in Supabase Storage by model/field/fhr/region/cycle.
+app.include_router(model_router)
 
 # In-process lock per cache key so concurrent requests for the same scan
 # share one render instead of stampeding. Keyed by `cache_id`.

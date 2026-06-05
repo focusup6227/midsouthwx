@@ -1,12 +1,16 @@
 import Link from 'next/link';
 import DashShell from '@/components/DashShell';
 import MesoanalysisPanel from './_components/MesoanalysisPanel';
+import ModelsPanel from './_components/ModelsPanel';
+import PointForecastPanel from './_components/PointForecastPanel';
 import SoundingPanel from './_components/SoundingPanel';
 
 export const dynamic = 'force-dynamic';
 
-// Decision-support viewers for the forecasting workflow. Two panels here:
-//   - SPC Mesoanalysis (raster GIFs, ~30-min cadence)
+// Decision-support viewers for the forecasting workflow. Panels here:
+//   - Point forecast (NWS hourly NDFD meteogram + nearest obs)
+//   - Models (GFS/NAM/HRRR fields rendered from NOMADS GRIB by forecast hour)
+//   - SPC Mesoanalysis (raster GIFs, ~30-min cadence; 1/2/4-up compare)
 //   - RAOB soundings (external viewer links per station)
 //
 // Kept on a dedicated route rather than bolted onto /forecast/new so the
@@ -32,6 +36,8 @@ export default function ForecastDataPage() {
       }
     >
       <div className="space-y-4">
+        <PointForecastPanel />
+        <ModelsPanel />
         <MesoanalysisPanel />
         <SoundingPanel />
       </div>

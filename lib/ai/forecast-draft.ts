@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { FORECAST_DRAFT_SYSTEM } from './prompts';
+import type { ConvectiveSummary } from '@/lib/forecast/open-meteo';
 
 // Hazards the form supports. The model is constrained to a subset of these;
 // any value outside the enum is dropped during zod parse.
@@ -48,6 +49,10 @@ export type ForecastContext = {
     location?: string | null;
     occurred_at?: string | null;
   }>;
+  // Quantitative thermodynamics sampled at the area centroid over the valid
+  // window (see lib/forecast/open-meteo.ts). Optional — null when the sample
+  // failed, so older drafts and text-only fallbacks still parse.
+  thermo?: ConvectiveSummary | null;
 };
 
 export type ForecastDraftInput = {
@@ -163,6 +168,28 @@ function buildPrompt(input: ForecastDraftInput): string {
     }
   } else {
     lines.push('- No LSRs reported in the area in the past 24h.');
+  }
+
+  lines.push('');
+  lines.push('## Model thermodynamics (area centroid, valid window)');
+  if (context.thermo) {
+    const t = context.thermo;
+    lines.push(`Source: ${t.source}.`);
+    if (t.peak_cape) {
+      lines.push(`- Peak CAPE: ${t.peak_cape.value} J/kg at ${t.peak_cape.at}${t.cin_at_peak != null ? ` (CIN ${t.cin_at_peak} J/kg at that hour)` : ''}.`);
+    }
+    if (t.min_lifted_index) {
+      lines.push(`- Most unstable Lifted Index: ${t.min_lifted_index.value} at ${t.min_lifted_index.at}.`);
+    }
+    if (t.trace.length) {
+      const trace = t.trace
+        .map((s) => `${s.t.slice(5, 16)} CAPE ${s.cape ?? '—'}/CIN ${s.cin ?? '—'}/LI ${s.li ?? '—'}`)
+        .join('; ');
+      lines.push(`- Trace (~6 h): ${trace}.`);
+    }
+    lines.push('Cite these instability numbers where relevant; note that shear/SRH/STP are NOT in this sample, so hedge tornado/organized-severe wording on the SPC outlook + AFD rather than these values alone.');
+  } else {
+    lines.push('- No model thermodynamic sample available; reason from the SPC outlook, AFD, and reports above.');
   }
 
   if (user_note && user_note.trim()) {

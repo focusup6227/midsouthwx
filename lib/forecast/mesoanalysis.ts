@@ -75,3 +75,22 @@ export function mesoUrl(sectorCode: string, fieldCode: string, cacheKey?: number
 
 export const MESO_DEFAULT_SECTOR = 's19';
 export const MESO_DEFAULT_FIELD = 'sbcp';
+
+// Curated multi-field views. Reading mesoanalysis is a comparison task — you
+// look at instability *next to* shear *next to* a composite to decide whether
+// the setup is real. Each preset loads a 4-up grid tuned to one question.
+// All codes are in MESO_FIELDS (i.e. verified to return 200 from SPC); the
+// off-list CIN / lapse-rate / esrh codes 403 and are deliberately excluded.
+export type MesoanalysisPreset = {
+  key: string;
+  label: string;
+  fields: [string, string, string, string];
+};
+
+export const MESO_PRESETS: MesoanalysisPreset[] = [
+  { key: 'overview',  label: 'Overview',  fields: ['pmsl', 'ttd', 'sbcp', 'shr6'] },
+  { key: 'tornado',   label: 'Tornado',   fields: ['stpc', 'srh1', 'ehi1', 'sbcp'] },
+  { key: 'supercell', label: 'Supercell', fields: ['scp', 'eshr', 'srh3', 'mucp'] },
+  { key: 'hail',      label: 'Hail',      fields: ['sigh', 'mucp', 'shr6', 'muli'] },
+  { key: 'instab',    label: 'Instability', fields: ['sbcp', 'mlcp', 'mucp', 'muli'] },
+];

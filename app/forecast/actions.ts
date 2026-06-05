@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { generateForecastDraft, type ForecastContext, type ForecastDraft } from '@/lib/ai/forecast-draft';
+import { sampleConvectiveContext } from '@/lib/forecast/open-meteo';
 
 // Mirrors compose page's HAZARD_KINDS (app/compose/page.tsx:44). Keeping these
 // in lockstep matters because the forecast → compose hand-off forwards
@@ -97,6 +98,16 @@ export async function draftForecast(input: DraftForecastInput): Promise<DraftFor
   if (!context) throw new Error('forecast_context returned no data');
 
   const ctx = context as ForecastContext;
+
+  // Enrich the text snapshot with quantitative thermodynamics sampled at the
+  // area centroid over the valid window. Best-effort — a null sample leaves the
+  // draft text-only. Persisted into source_refs so the audit trail records the
+  // numbers the model actually saw.
+  const centroid = ctx.area_centroid?.coordinates;
+  if (centroid && centroid.length >= 2) {
+    const [lng, lat] = centroid;
+    ctx.thermo = await sampleConvectiveContext(lat, lng, parsed.valid_from, parsed.valid_until);
+  }
 
   const { draft, raw, prompt } = await generateForecastDraft({
     context: ctx,

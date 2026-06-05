@@ -34,6 +34,12 @@ COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py /app/
+# Bundled low-res US state boundaries for model-field overlays (model_render.py).
+COPY geo /app/geo
+
+# Fail the build early if the GRIB stack can't find the bundled ecCodes lib,
+# rather than discovering it at first /render-model request.
+RUN python -m cfgrib selfcheck
 
 # Fly health-check expects the app on 0.0.0.0:8080 — this was the binding bug
 # in the previous renderer. uvicorn's --host 0.0.0.0 is the fix.
