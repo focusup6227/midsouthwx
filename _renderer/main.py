@@ -86,7 +86,7 @@ _render_semaphore = asyncio.Semaphore(2)
 
 class RenderRequest(BaseModel):
     site: str = Field(min_length=4, max_length=4)
-    product: Literal["refl", "vel", "cc"]
+    product: Literal["refl", "vel", "cc", "zdr"]
     format: Literal["png", "geojson"] = "geojson"
     sweep_index: int = 0
     composite: bool = False

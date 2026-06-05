@@ -73,6 +73,21 @@ _CMAPS = {
         (1.00 / 1.05, "#FFB4D7"),
         (1.00,        "#A43696"),
     ]),
+    # ZDR (differential reflectivity), vmin=-4 vmax=8 → position (v+4)/12.
+    # Negative (hail/graupel) = purple/gray; near-zero = gray; positive rain
+    # ramps cyan→green→yellow→orange→red; very high (big drops/melting) = pink.
+    "zdr": LinearSegmentedColormap.from_list("zdr", [
+        (0.0 / 12,  "#5b21b6"),  # -4 dB  hail / graupel
+        (3.0 / 12,  "#6b7280"),  # -1 dB  gray
+        (4.0 / 12,  "#9ca3af"),  #  0 dB  near-zero
+        (5.0 / 12,  "#22d3ee"),  # +1 dB  drizzle / small
+        (6.0 / 12,  "#10b981"),  # +2 dB
+        (7.0 / 12,  "#84cc16"),  # +3 dB  rain
+        (8.0 / 12,  "#facc15"),  # +4 dB
+        (9.0 / 12,  "#f97316"),  # +5 dB  large drops
+        (10.0 / 12, "#ef4444"),  # +6 dB
+        (1.0,       "#fbcfe8"),  # +8 dB  very large drops / melting
+    ]),
 }
 
 

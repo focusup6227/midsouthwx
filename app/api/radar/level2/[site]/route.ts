@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 
 import { NEXRAD_CODES } from '@/lib/radar/sites';
 
-const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'cc']);
+const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'cc', 'zdr']);
 const ALLOWED_FORMATS = new Set(['png', 'geojson']);
 
 const ALLOWED_SITES = new Set(NEXRAD_CODES);
@@ -19,7 +19,7 @@ type SweepInfo = { index: number; elevation_deg: number };
 
 type RendererResponse = {
   site: string;
-  product: 'refl' | 'vel' | 'cc';
+  product: 'refl' | 'vel' | 'cc' | 'zdr';
   scan_time: string;
   image_url?: string | null;
   geojson_url?: string | null;
