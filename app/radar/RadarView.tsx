@@ -1130,15 +1130,21 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
   const mapCursor = drawMode !== 'none' ? 'crosshair' : 'grab';
 
-  const [viewState, setViewState] = useState({
-    longitude: -89.8,
-    latitude: 35.0,
-    zoom: 7,
-  });
+  // Start the camera on the URL-selected site, not a fixed Mid-South default —
+  // otherwise loading/reloading a `?s=<site>` link (the site persists in the URL
+  // but the map center does not) leaves the camera over Memphis while requesting
+  // the selected single-site radar there, which is outside that radar's range
+  // and paints nothing. The interactive picker already flyTo()s; this fixes the
+  // cold-load / shared-link / reload path.
+  const initialSite = urlInitial.site ? NEXRAD_SITES_BY_CODE[urlInitial.site.toUpperCase()] : null;
+  const initialView = initialSite
+    ? { longitude: initialSite.center[0], latitude: initialSite.center[1], zoom: initialSite.zoom }
+    : { longitude: -89.8, latitude: 35.0, zoom: 7 };
+  const [viewState, setViewState] = useState(initialView);
   // Settled viewport — only changes on `moveend`. Memos that do expensive
   // work (nearestSites sort, distance ranking) depend on this, NOT on the
   // live `viewState`, so they don't recompute 60×/sec during pan.
-  const [settledView, setSettledView] = useState({ longitude: -89.8, latitude: 35.0, zoom: 7 });
+  const [settledView, setSettledView] = useState(initialView);
 
   // Single-site picker state. siteQuery drives the search box; pickerSites is
   // derived (search matches when there's a query, otherwise the N closest
