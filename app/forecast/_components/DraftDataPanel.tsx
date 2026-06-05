@@ -5,13 +5,17 @@ import { ChevronDown, ChevronRight, LineChart } from 'lucide-react';
 import ModelsPanel from '../data/_components/ModelsPanel';
 import MesoanalysisPanel from '../data/_components/MesoanalysisPanel';
 import PointForecastPanel from '../data/_components/PointForecastPanel';
+import SevereParamsPanel from '../data/_components/SevereParamsPanel';
+import ForecastSoundingPanel from '../data/_components/ForecastSoundingPanel';
 
-type Tab = 'models' | 'meso' | 'point';
+type Tab = 'severe' | 'models' | 'meso' | 'point' | 'sounding';
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: 'severe', label: 'Severe' },
   { key: 'models', label: 'Models' },
   { key: 'meso', label: 'Mesoanalysis' },
   { key: 'point', label: 'Point forecast' },
+  { key: 'sounding', label: 'Sounding' },
 ];
 
 // In-place data reference while drafting, so the operator doesn't have to flip
@@ -21,7 +25,7 @@ const TABS: { key: Tab; label: string }[] = [
 // the page from getting tall and to fire only the active viewer's fetches.
 export default function DraftDataPanel() {
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<Tab>('models');
+  const [tab, setTab] = useState<Tab>('severe');
 
   return (
     <section className="rounded-lg border border-wx-line bg-wx-card">
@@ -56,10 +60,12 @@ export default function DraftDataPanel() {
               </button>
             ))}
           </div>
-          {/* Mount only the active tab so we don't fire all three viewers' fetches. */}
+          {/* Mount only the active tab so we don't fire every viewer's fetches. */}
+          {tab === 'severe' ? <SevereParamsPanel /> : null}
           {tab === 'models' ? <ModelsPanel /> : null}
           {tab === 'meso' ? <MesoanalysisPanel /> : null}
           {tab === 'point' ? <PointForecastPanel /> : null}
+          {tab === 'sounding' ? <ForecastSoundingPanel /> : null}
         </div>
       ) : null}
     </section>

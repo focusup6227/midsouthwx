@@ -3,6 +3,7 @@ import DashShell from '@/components/DashShell';
 import MesoanalysisPanel from './_components/MesoanalysisPanel';
 import ModelsPanel from './_components/ModelsPanel';
 import PointForecastPanel from './_components/PointForecastPanel';
+import SevereParamsPanel from './_components/SevereParamsPanel';
 import ForecastSoundingPanel from './_components/ForecastSoundingPanel';
 import SoundingPanel from './_components/SoundingPanel';
 
@@ -10,6 +11,7 @@ export const dynamic = 'force-dynamic';
 
 // Decision-support viewers for the forecasting workflow. Panels here:
 //   - Point forecast (NWS hourly NDFD meteogram + nearest obs)
+//   - Severe ingredients (HRRR CAPE/CIN/SRH/shear at a point — same data the AI uses)
 //   - Models (GFS/NAM/HRRR fields from NOMADS GRIB by forecast hour; model compare)
 //   - SPC Mesoanalysis (raster GIFs, ~30-min cadence; 1/2/4-up compare)
 //   - Forecast sounding (Skew-T rendered from a model column via MetPy)
@@ -39,6 +41,7 @@ export default function ForecastDataPage() {
     >
       <div className="space-y-4">
         <PointForecastPanel />
+        <SevereParamsPanel />
         <ModelsPanel />
         <MesoanalysisPanel />
         <ForecastSoundingPanel />
