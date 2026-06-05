@@ -76,7 +76,7 @@ type ProductMeta = {
 const PRODUCTS: Record<ProductKey, ProductMeta> = {
   composite:    { label: 'Composite Reflectivity', short: 'CREF', modes: { composite: true,  site: false }, icon: CloudLightning },
   reflectivity: { label: 'Base Reflectivity',      short: 'BREF', modes: { composite: true,  site: true  }, icon: Radio },
-  velocity:     { label: 'Base Velocity',          short: 'BVEL', modes: { composite: false, site: true  }, icon: Wind },
+  velocity:     { label: 'Storm-Rel Velocity',     short: 'SRV',  modes: { composite: false, site: true  }, icon: Wind },
   correlation:  { label: 'Correlation Coeff',      short: 'CC',   modes: { composite: false, site: true  }, icon: Atom },
   zdr:          { label: 'Differential Refl (ZDR)', short: 'ZDR', modes: { composite: false, site: true  }, icon: Droplets },
   rotation:     { label: 'Rotation (Az-Shear)',    short: 'ROT',  modes: { composite: true,  site: false }, icon: RotateCw },
@@ -158,11 +158,14 @@ const NCEP_WMS_URL = (workspace: string, layer: string, cacheKey: number) =>
 // IEM RIDGE single-site NEXRAD via the RIDGE WMS (layers=single = latest scan).
 // IEM keeps these pre-rendered, so GetMap returns near-instantly — vs. the
 // 30–90 s Py-ART Level II render — letting default single-site reflectivity/
-// velocity paint immediately. N0Q = base reflectivity (256-level), N0U = base
-// velocity, N0B = super-res reflectivity. Hi-res Level II (Py-ART) stays opt-in
-// for dual-pol + click-to-sample. `sector` is the 3-letter site id (ICAO minus
-// its leading K/P/T). Mapbox fills {bbox-epsg-3857} per tile. Attribution: IEM.
-const IEM_RIDGE_URL = (site: string, prod: 'N0Q' | 'N0U' | 'N0B', cacheKey: number) =>
+// velocity paint immediately. PRODUCT CODES: IEM stopped rendering the legacy
+// N0Q (base refl) / N0U (base vel) in 2023 — those return a stale 3-yr-old scan!
+// The CURRENT live products are the super-res set:
+//   N0B = super-res base reflectivity, N0S = storm-relative velocity.
+// (N0Q/N0U kept in the type only as a reminder of what NOT to use.) Hi-res
+// Level II (Py-ART) stays opt-in for true base velocity + dual-pol + sampling.
+// `sector` is the 3-letter site id (ICAO minus leading K/P/T). Attribution: IEM.
+const IEM_RIDGE_URL = (site: string, prod: 'N0B' | 'N0S', cacheKey: number) =>
   `https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/ridge.cgi` +
   `?service=WMS&request=GetMap&version=1.1.1` +
   `&layers=single&sector=${site.toUpperCase().slice(1)}&prod=${prod}&styles=` +
@@ -1972,9 +1975,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (selectedSite) {
       switch (effectiveProduct) {
         case 'reflectivity':
-          return IEM_RIDGE_URL(selectedSite, 'N0Q', tileCacheKey);
+          return IEM_RIDGE_URL(selectedSite, 'N0B', tileCacheKey);
         case 'velocity':
-          return IEM_RIDGE_URL(selectedSite, 'N0U', tileCacheKey);
+          return IEM_RIDGE_URL(selectedSite, 'N0S', tileCacheKey);
         case 'correlation':
           return null; // Level II only
         default:
@@ -2053,9 +2056,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (!splitProduct || !selectedSite) return null;
     switch (splitProduct) {
       case 'reflectivity':
-        return IEM_RIDGE_URL(selectedSite, 'N0Q', tileCacheKey);
+        return IEM_RIDGE_URL(selectedSite, 'N0B', tileCacheKey);
       case 'velocity':
-        return IEM_RIDGE_URL(selectedSite, 'N0U', tileCacheKey);
+        return IEM_RIDGE_URL(selectedSite, 'N0S', tileCacheKey);
       default:
         return null;
     }
@@ -4465,7 +4468,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               )}
             </Map>
             <div className="absolute top-2 left-2 z-10 px-2 py-1 rounded bg-wx-card/95 border border-wx-line text-[10px] uppercase tracking-wider font-bold text-wx-fg">
-              {splitProduct === 'reflectivity' ? 'BREF' : splitProduct === 'velocity' ? 'BVEL' : splitProduct}
+              {splitProduct === 'reflectivity' ? 'BREF' : splitProduct === 'velocity' ? 'SRV' : splitProduct}
               <span className="ml-1.5 font-mono font-normal text-wx-mute">· {selectedSite ?? ''}</span>
             </div>
           </div>
@@ -4725,7 +4728,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       if (effectiveProduct === 'zdr') return `Level II · ZDR · ${tiltLabel}`;
                       return `Level II · ${tiltLabel}${useL2Png ? ' · PNG' : ''}`;
                     }
-                    return selectedSite ? 'IEM · base 0.5°' : 'CONUS · QCD';
+                    return selectedSite
+                      ? (effectiveProduct === 'velocity' ? 'IEM · SRV 0.5°' : 'IEM · super-res 0.5°')
+                      : 'CONUS · QCD';
                   })()}
                 </span>
               </div>
@@ -5003,7 +5008,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                     <div>
                       <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Split view</div>
                       <div className="text-[10px] text-wx-mute">
-                        {effectiveProduct === 'reflectivity' ? 'BREF | BVEL' : 'BVEL | BREF'}
+                        {effectiveProduct === 'reflectivity' ? 'BREF | SRV' : 'SRV | BREF'}
                       </div>
                     </div>
                     <button
