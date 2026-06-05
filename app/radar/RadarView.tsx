@@ -985,6 +985,51 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     };
   }, [probSevereTop]);
 
+  // ProbSevere trend — diff successive snapshots (the feed has persistent cell
+  // IDs + per-cell ENI flash rate) to get each cell's probability tendency (↑/↓)
+  // and lightning-jump (flash-rate surge). Trend builds after the first ~2-min
+  // refresh; the first load has no prior snapshot to compare against. This is
+  // the "is it intensifying" signal that turns a snapshot into a nowcast.
+  // Plain Record, not Map — `Map` is shadowed by the react-map-gl component import.
+  const probSeverePrevRef = useRef<Record<string, { prob: number; flash: number }>>({});
+  const [probSevereTrend, setProbSevereTrend] = useState<Record<string, { dProb: number; dFlash: number }>>({});
+  useEffect(() => {
+    const prev = probSeverePrevRef.current;
+    const nextSnap: Record<string, { prob: number; flash: number }> = {};
+    const trend: Record<string, { dProb: number; dFlash: number }> = {};
+    for (const f of probSevereGeo.features) {
+      const p = (f.properties ?? {}) as Record<string, number | string>;
+      const id = String(p.ID ?? '');
+      if (!id) continue;
+      const prob = Number(p.topProb ?? 0);
+      const flash = Number(p.FLASH_RATE ?? 0);
+      nextSnap[id] = { prob, flash };
+      const old = prev[id];
+      if (old) trend[id] = { dProb: prob - old.prob, dFlash: flash - old.flash };
+    }
+    probSeverePrevRef.current = nextSnap;
+    setProbSevereTrend(trend);
+  }, [probSevereGeo]);
+
+  // Rapidly-intensifying cells — a prob jump (≥8 pts) or lightning jump (flash
+  // rate ≥+4/min) since the last scan. Surfaced as a ring on the map + a badge
+  // in the threat list so the operator's eye is pulled to escalating storms.
+  const probSevereHot = useMemo(() => {
+    const features: GeoJSON.Feature[] = [];
+    for (const c of probSevereTop) {
+      const t = probSevereTrend[c.id];
+      if (!t) continue;
+      if (t.dProb >= 8 || t.dFlash >= 4) {
+        features.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: c.center },
+          properties: { reason: t.dProb >= 8 ? `↑${t.dProb}%` : `⚡+${Math.round(t.dFlash)}` },
+        });
+      }
+    }
+    return { type: 'FeatureCollection' as const, features };
+  }, [probSevereTop, probSevereTrend]);
+
   // F10: MRMS MESH (Max Estimated Size of Hail) overlay. Translucent raster
   // layered on top of whatever the operator's looking at — keeps the
   // reflectivity context while showing where hail has actually fallen in
@@ -3930,6 +3975,44 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             />
           </Source>
 
+          {/* Rapidly-intensifying ProbSevere cells — a bright ring + reason
+              badge (prob jump or lightning jump) so escalating storms pull the
+              eye. The "is it getting worse" nowcast signal. */}
+          <Source id="probsevere-hot-source" type="geojson" data={probSevereHot as any}>
+            <Layer
+              id="probsevere-hot-ring"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showProbSevere ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 12, 8, 20, 12, 30] as any,
+                'circle-color': 'rgba(0,0,0,0)',
+                'circle-stroke-color': '#fde047',
+                'circle-stroke-width': 2.5,
+                'circle-stroke-opacity': 0.9,
+              }}
+            />
+            <Layer
+              id="probsevere-hot-label"
+              {...overlayAnchor}
+              type="symbol"
+              layout={{
+                visibility: showProbSevere ? 'visible' : 'none',
+                'text-field': ['concat', '⚠ ', ['get', 'reason']] as any,
+                'text-size': ['interpolate', ['linear'], ['zoom'], 4, 10, 8, 12, 12, 14] as any,
+                'text-anchor': 'bottom',
+                'text-offset': [0, -1.6],
+                'text-allow-overlap': true,
+                'text-font': ['DIN Pro Bold', 'Arial Unicode MS Bold'],
+              }}
+              paint={{
+                'text-color': '#fde047',
+                'text-halo-color': '#0b1220',
+                'text-halo-width': 1.8,
+              }}
+            />
+          </Source>
+
           {selection && selection.type === 'circle' && selectionCircleData && (
             <Source id="selection-circle" type="geojson" data={selectionCircleData}>
               <Layer id="sel-circle" type="circle" paint={selectionCirclePaint} {...overlayAnchor} />
@@ -5005,6 +5088,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       : c.topType === 'hail' ? 'bg-cyan-400'
                       : c.topType === 'wind' ? 'bg-blue-400'
                       : 'bg-amber-400';
+                    const t = probSevereTrend[c.id];
+                    const hot = !!t && (t.dProb >= 8 || t.dFlash >= 4);
+                    // Tendency arrow from the probability delta since last scan.
+                    const arrow = !t || Math.abs(t.dProb) < 1 ? null : t.dProb > 0 ? '▲' : '▼';
                     return (
                       <button
                         key={c.id || `${c.center[0]},${c.center[1]}`}
@@ -5018,12 +5105,18 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                             readout: c.readout,
                           });
                         }}
-                        className="flex w-full items-center justify-between gap-2 rounded-md border border-wx-line bg-wx-ink px-2 py-1 text-left hover:border-wx-accent"
+                        className={`flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1 text-left hover:border-wx-accent ${hot ? 'border-yellow-400/70 bg-yellow-400/10' : 'border-wx-line bg-wx-ink'}`}
                       >
                         <span className="flex items-center gap-1.5">
                           <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
                           <span className="font-mono text-[10.5px] font-semibold text-wx-fg">{c.topProb}%</span>
+                          {arrow ? (
+                            <span className={`text-[9px] ${t!.dProb > 0 ? 'text-rose-400' : 'text-sky-400'}`}>
+                              {arrow}{Math.abs(t!.dProb)}
+                            </span>
+                          ) : null}
                           <span className="text-[9px] uppercase tracking-wider text-wx-mute">{c.topType}</span>
+                          {hot ? <span className="text-[9px] font-semibold text-yellow-300">⚠ {t!.dProb >= 8 ? 'intensifying' : 'ltg jump'}</span> : null}
                         </span>
                         {c.id ? <span className="font-mono text-[9px] text-wx-mute">#{c.id.slice(-4)}</span> : null}
                       </button>
