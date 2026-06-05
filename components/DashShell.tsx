@@ -62,6 +62,7 @@ export default async function DashShell({
     { href: '/regions', label: 'Regions' },
     { href: '/alerts', label: 'Alerts' },
     { href: '/reports', label: 'Reports' },
+    { href: '/forecast/skill', label: 'Forecast skill' },
     { href: '/analytics/warnings', label: 'Verification' },
     { href: '/checkins', label: 'Check-ins' },
     { href: '/log', label: 'Log' },

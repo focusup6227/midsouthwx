@@ -51,7 +51,13 @@ export default async function ForecastListPage() {
       title="Forecasts"
       width="wide"
       actions={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/forecast/skill"
+            className="inline-flex items-center gap-2 rounded-lg border border-wx-line bg-wx-ink px-3 py-1.5 text-sm font-semibold text-wx-fg hover:border-wx-accent hover:text-wx-accent"
+          >
+            Skill
+          </Link>
           <Link
             href="/forecast/data"
             className="inline-flex items-center gap-2 rounded-lg border border-wx-line bg-wx-ink px-3 py-1.5 text-sm font-semibold text-wx-fg hover:border-wx-accent hover:text-wx-accent"
