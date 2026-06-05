@@ -8,6 +8,7 @@ import NotificationPermissionButton from './NotificationPermissionButton';
 import SevereAlertAudio from './SevereAlertAudio';
 import StormReportAudio from './StormReportAudio';
 import MobileNavOverlay from './MobileNavOverlay';
+import MobileNavMenu from './MobileNavMenu';
 
 type Props = {
   title?: string;
@@ -118,19 +119,8 @@ export default async function DashShell({
               </div>
             </details>
             <FieldModeToggle active={field} />
+            <MobileNavMenu links={[...primary, ...secondary]} />
           </div>
-        </nav>
-        <nav className="mx-auto flex max-w-7xl gap-1 overflow-x-auto px-4 pb-2 md:hidden">
-          {[...primary, ...secondary].map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className="whitespace-nowrap rounded border border-wx-line px-2.5 py-1 text-xs text-wx-mute"
-            >
-              {l.label}
-              {l.extra}
-            </Link>
-          ))}
         </nav>
       </header>
       {bare ? (
