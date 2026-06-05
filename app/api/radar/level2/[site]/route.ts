@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 
 import { NEXRAD_CODES } from '@/lib/radar/sites';
 
-const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'cc', 'zdr']);
+const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'cc', 'zdr', 'kdp']);
 const ALLOWED_FORMATS = new Set(['png', 'geojson']);
 
 const ALLOWED_SITES = new Set(NEXRAD_CODES);
@@ -19,7 +19,7 @@ type SweepInfo = { index: number; elevation_deg: number };
 
 type RendererResponse = {
   site: string;
-  product: 'refl' | 'vel' | 'cc' | 'zdr';
+  product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp';
   scan_time: string;
   image_url?: string | null;
   geojson_url?: string | null;
@@ -82,8 +82,10 @@ export async function GET(
       // and ~3× a typical cold-start "hello" — we used to give 120 s here,
       // but that meant a downed renderer held 6+ browser connection slots
       // open for 2 minutes apiece, starving other /api/radar/* fetches with
-      // ERR_INSUFFICIENT_RESOURCES.
-      signal: AbortSignal.timeout(30_000),
+      // ERR_INSUFFICIENT_RESOURCES. KDP is the exception: it runs an iterative
+      // PHIDP→KDP retrieval on top of the read, so the first (uncached) render
+      // needs more headroom; subsequent scans are cached and return instantly.
+      signal: AbortSignal.timeout(product === 'kdp' ? 55_000 : 30_000),
     });
 
     if (!upstream.ok) {

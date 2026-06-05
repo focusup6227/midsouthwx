@@ -18,7 +18,7 @@ import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 import {
   CloudLightning, Radio, Wind, Atom, RotateCw, Satellite,
   Play, Pause, Trash2, Send, Target, Search, X,
-  ChevronLeft, ChevronRight, ChevronDown, Eye, EyeOff, MousePointer2, Zap, Droplets,
+  ChevronLeft, ChevronRight, ChevronDown, Eye, EyeOff, MousePointer2, Zap, Droplets, CloudRain,
 } from 'lucide-react';
 import {
   NEXRAD_SITES,
@@ -64,7 +64,7 @@ import { MODEL_OVERLAYS, DISABLED_MODELS, type ModelOverlayKey } from '@/lib/rad
 //     Composite-only; resolves the latest dataset URL through /api/radar/mrms-latest.
 //   - Fly.io Level II renderer — single-site Correlation Coefficient (ρhv) and the
 //     Hi-Res reflectivity/velocity options.
-type ProductKey = 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'zdr' | 'rotation' | 'satellite';
+type ProductKey = 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'zdr' | 'kdp' | 'rotation' | 'satellite';
 
 type ProductMeta = {
   label: string;
@@ -79,6 +79,7 @@ const PRODUCTS: Record<ProductKey, ProductMeta> = {
   velocity:     { label: 'Storm-Rel Velocity',     short: 'SRV',  modes: { composite: false, site: true  }, icon: Wind },
   correlation:  { label: 'Correlation Coeff',      short: 'CC',   modes: { composite: false, site: true  }, icon: Atom },
   zdr:          { label: 'Differential Refl (ZDR)', short: 'ZDR', modes: { composite: false, site: true  }, icon: Droplets },
+  kdp:          { label: 'Specific Diff Phase (KDP)', short: 'KDP', modes: { composite: false, site: true }, icon: CloudRain },
   rotation:     { label: 'Rotation (Az-Shear)',    short: 'ROT',  modes: { composite: true,  site: false }, icon: RotateCw },
   satellite:    { label: 'Satellite (IR cloud)',   short: 'SAT',  modes: { composite: true,  site: false }, icon: Satellite },
 };
@@ -307,7 +308,7 @@ const CC_STOPS: [number, string][] = [
 // ZDR is rendered via the PNG path (useL2Png), so these GeoJSON paint helpers
 // never actually run for 'zdr' — the union just keeps the types aligned with
 // level2Product. (ZDR falls through to the CC stops here but is unreachable.)
-function buildFillColorExpr(product: 'refl' | 'vel' | 'cc' | 'zdr', _vmin: number, _vmax: number): any {
+function buildFillColorExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp', _vmin: number, _vmax: number): any {
   // The renderer stores raw values in properties.v (dBZ for refl, m/s for vel,
   // dimensionless for cc), so the interpolate stops compare against raw scale
   // too. (Earlier code normalized to a 0–255 byte scale to match the original
@@ -325,7 +326,7 @@ function buildFillColorExpr(product: 'refl' | 'vel' | 'cc' | 'zdr', _vmin: numbe
   return out;
 }
 
-function buildFillOpacityExpr(product: 'refl' | 'vel' | 'cc' | 'zdr', userOpacity: number,
+function buildFillOpacityExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp', userOpacity: number,
                               _vmin: number, _vmax: number): any {
   if (product !== 'refl') return userOpacity;
   // Light rain (5 dBZ) shows at half opacity; full opacity by 20 dBZ. Below
@@ -1656,10 +1657,12 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     effectiveProduct === 'velocity' ? 'vel'
     : effectiveProduct === 'correlation' ? 'cc'
     : effectiveProduct === 'zdr' ? 'zdr'
+    : effectiveProduct === 'kdp' ? 'kdp'
     : 'refl';
   const useLevel2 = !!selectedSite && (
     effectiveProduct === 'correlation'
     || effectiveProduct === 'zdr'
+    || effectiveProduct === 'kdp'
     || (hiRes && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity'))
   );
   // CC + ZDR always use the PNG path. A super-res dual-pol sweep produces
@@ -1667,7 +1670,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // download on cell and parse on the phone (manifests as "stuck loading").
   // PNG renders the same gates as a single ~300 KB raster, no pointer readout
   // but the operator cares about pattern (debris ball, hail/ZDR signature).
-  const useL2Png = pngFallback || effectiveProduct === 'correlation' || effectiveProduct === 'zdr';
+  const useL2Png = pngFallback || effectiveProduct === 'correlation' || effectiveProduct === 'zdr' || effectiveProduct === 'kdp';
 
   const selectProduct = useCallback((k: ProductKey) => {
     const meta = PRODUCTS[k];
@@ -4665,7 +4668,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             >
               <ChevronLeft size={14} className="text-wx-mute group-hover:text-wx-fg" />
               <div
-                className={`flex-1 w-2 my-1 rounded-sm ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(180deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(180deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(180deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(180deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'satellite' ? 'bg-[linear-gradient(180deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]' : 'bg-[linear-gradient(180deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`}
+                className={`flex-1 w-2 my-1 rounded-sm ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(180deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(180deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(180deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(180deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'kdp' ? 'bg-[linear-gradient(180deg,#4b5563_0%,#1f2937_17%,#0ea5e9_25%,#10b981_33%,#84cc16_50%,#facc15_67%,#f97316_83%,#ec4899_100%)]' : effectiveProduct === 'satellite' ? 'bg-[linear-gradient(180deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]' : 'bg-[linear-gradient(180deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`}
               />
               <span className="font-mono text-[9px] text-wx-mute">{PRODUCTS[effectiveProduct].short}</span>
             </button>
@@ -4726,6 +4729,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                           })();
                       if (effectiveProduct === 'correlation') return `Level II · ρhv · ${tiltLabel}`;
                       if (effectiveProduct === 'zdr') return `Level II · ZDR · ${tiltLabel}`;
+                      if (effectiveProduct === 'kdp') return `Level II · KDP · ${tiltLabel}`;
                       return `Level II · ${tiltLabel}${useL2Png ? ' · PNG' : ''}`;
                     }
                     return selectedSite
@@ -4734,7 +4738,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   })()}
                 </span>
               </div>
-              {(effectiveProduct === 'correlation' || effectiveProduct === 'zdr') && selectedSite && (
+              {(effectiveProduct === 'correlation' || effectiveProduct === 'zdr' || effectiveProduct === 'kdp') && selectedSite && (
                 <p className="text-[10px] text-wx-mute mt-1">
                   {level2Loading && level2Attempt > 0 ? `Warming renderer · retry ${level2Attempt}/${level2MaxAttempts}…`
                     : level2Loading ? (effectiveProduct === 'zdr' ? 'Rendering differential reflectivity…' : 'Rendering correlation coefficient…')
@@ -4760,12 +4764,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   : ['Warm', '·', '·', 'Cold cloud tops'];
                 return (
                   <>
-                    <div className={`h-2.5 rounded-[3px] mt-1 ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(90deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(90deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(90deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(90deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'satellite' ? satGradient : 'bg-[linear-gradient(90deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`} />
+                    <div className={`h-2.5 rounded-[3px] mt-1 ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(90deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(90deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(90deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(90deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'kdp' ? 'bg-[linear-gradient(90deg,#4b5563_0%,#1f2937_17%,#0ea5e9_25%,#10b981_33%,#84cc16_50%,#facc15_67%,#f97316_83%,#ec4899_100%)]' : effectiveProduct === 'satellite' ? satGradient : 'bg-[linear-gradient(90deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`} />
                     <div className="flex justify-between text-[9.5px] font-mono text-wx-mute mt-1">
                       {effectiveProduct === 'velocity' && ['−64', '−32', '0', '+32', '+64 kts'].map(t => <span key={t}>{t}</span>)}
                       {effectiveProduct === 'rotation' && ['0', '0.005', '0.010', '0.015', '0.020 s⁻¹'].map(t => <span key={t}>{t}</span>)}
                       {effectiveProduct === 'correlation' && ['0.2', '0.5', '0.8', '0.95', '1.0'].map(t => <span key={t}>{t}</span>)}
                       {effectiveProduct === 'zdr' && ['−4', '0', '+2', '+4', '+8 dB'].map(t => <span key={t}>{t}</span>)}
+                      {effectiveProduct === 'kdp' && ['−1', '0', '1', '2', '3', '5 °/km'].map(t => <span key={t}>{t}</span>)}
                       {effectiveProduct === 'satellite' && satLabels.map((t, i) => <span key={`${t}-${i}`}>{t}</span>)}
                       {(effectiveProduct === 'composite' || effectiveProduct === 'reflectivity') && ['5', '15', '25', '35', '45', '55', '65', '75 dBZ'].map(t => <span key={t}>{t}</span>)}
                     </div>

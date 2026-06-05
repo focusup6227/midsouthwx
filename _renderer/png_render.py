@@ -88,6 +88,19 @@ _CMAPS = {
         (10.0 / 12, "#ef4444"),  # +6 dB
         (1.0,       "#fbcfe8"),  # +8 dB  very large drops / melting
     ]),
+    # KDP (specific differential phase), vmin=-1 vmax=5 → position (v+1)/6.
+    # Negative (noise/hail side-lobe) gray; near-zero faint; positive ramps
+    # green→yellow→orange→red→magenta with rain rate (heavy-rain cores).
+    "kdp": LinearSegmentedColormap.from_list("kdp", [
+        (0.0 / 6, "#4b5563"),  # -1   gray (noise / negative)
+        (1.0 / 6, "#1f2937"),  #  0   dark / near-zero
+        (1.5 / 6, "#0ea5e9"),  #  0.5 light rain
+        (2.0 / 6, "#10b981"),  #  1
+        (3.0 / 6, "#84cc16"),  #  2
+        (4.0 / 6, "#facc15"),  #  3   heavy
+        (5.0 / 6, "#f97316"),  #  4
+        (1.0,     "#ec4899"),  #  5   extreme rain rate
+    ]),
 }
 
 

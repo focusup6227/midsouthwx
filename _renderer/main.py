@@ -86,7 +86,7 @@ _render_semaphore = asyncio.Semaphore(2)
 
 class RenderRequest(BaseModel):
     site: str = Field(min_length=4, max_length=4)
-    product: Literal["refl", "vel", "cc", "zdr"]
+    product: Literal["refl", "vel", "cc", "zdr", "kdp"]
     format: Literal["png", "geojson"] = "geojson"
     sweep_index: int = 0
     composite: bool = False
@@ -169,11 +169,26 @@ async def render(req: RenderRequest, authorization: str = Header(default="")) ->
                 os.remove(local_path)
             raise HTTPException(status_code=502, detail=f"parse_failed: {e}")
 
+        # KDP isn't a raw Level II moment — it's retrieved from differential
+        # phase (PHIDP). _ensure_kdp extracts the requested tilt and runs the
+        # retrieval on just that sweep (full-volume is minutes); it returns a
+        # single-sweep radar, so we render its sweep 0 below.
+        build_sweep_index = req.sweep_index
+        if req.product == "kdp":
+            try:
+                radar = await asyncio.to_thread(_ensure_kdp, radar, req.sweep_index)
+                build_sweep_index = 0
+            except Exception as e:
+                log.exception("kdp retrieval failed")
+                with suppress(OSError):
+                    os.remove(local_path)
+                raise HTTPException(status_code=502, detail=f"kdp_failed: {e}")
+
         try:
             async with _render_semaphore:
                 if req.format == "geojson":
                     body, meta = await asyncio.to_thread(
-                        build_geojson, radar, req.product, req.sweep_index, req.composite,
+                        build_geojson, radar, req.product, build_sweep_index, req.composite,
                     )
                     # Supabase Storage's default bucket allowlist excludes
                     # application/geo+json; the body is gzipped GeoJSON so
@@ -183,7 +198,7 @@ async def render(req: RenderRequest, authorization: str = Header(default="")) ->
                     content_type = "application/gzip"
                 else:
                     body, meta = await asyncio.to_thread(
-                        build_png, radar, req.product, req.sweep_index, req.composite,
+                        build_png, radar, req.product, build_sweep_index, req.composite,
                     )
                     content_type = "image/png"
                     meta["count"] = None
@@ -205,6 +220,28 @@ async def render(req: RenderRequest, authorization: str = Header(default="")) ->
 
     return _response(req, scan_time, meta, asset_path,
                      cached=False, started=started)
+
+
+def _ensure_kdp(radar, sweep_index: int):
+    """Return a single-sweep radar with a retrieved KDP field.
+
+    NEXRAD Level II ships differential phase (PHIDP) but not KDP; KDP is the
+    range-derivative of PHIDP and must be retrieved. Py-ART's Maesaka
+    linear-programming estimator is the standard — but it's iterative and
+    running it on the full ~14-sweep volume takes minutes (and times out). We
+    only ever render one tilt, so extract just the requested sweep first; the
+    retrieval then runs on ~1/14th the gates and finishes in seconds. The
+    returned radar has a single sweep (index 0), so the caller renders sweep 0.
+    """
+    import pyart
+
+    n = int(radar.nsweeps)
+    idx = sweep_index if 0 <= sweep_index < n else 0
+    sub = radar.extract_sweeps([idx])
+    if "specific_differential_phase" not in sub.fields:
+        kdp_dict, _filtered_phidp, _phidp_r = pyart.retrieve.kdp_maesaka(sub)
+        sub.add_field("specific_differential_phase", kdp_dict, replace_existing=True)
+    return sub
 
 
 def _response(req: RenderRequest, scan_time, meta: dict, asset_path: str,

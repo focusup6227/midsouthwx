@@ -26,7 +26,8 @@ PYART_FIELDS = {
     "refl": "reflectivity",
     "vel": "velocity",
     "cc": "cross_correlation_ratio",
-    "zdr": "differential_reflectivity",  # dual-pol: hail / debris / drop size
+    "zdr": "differential_reflectivity",       # dual-pol: hail / debris / drop size
+    "kdp": "specific_differential_phase",     # dual-pol: rain rate / heavy-rain cores
 }
 
 # Dashboard's color-scale bounds. Returned in the response so the frontend
@@ -36,16 +37,19 @@ COLOR_RANGES = {
     "vel": (-64.0, 64.0),    # m/s
     "cc": (0.0, 1.05),       # ρhv
     "zdr": (-4.0, 8.0),      # dB (ZDR)
+    "kdp": (-1.0, 5.0),      # deg/km (KDP)
 }
 
 # Drop gates below threshold to keep the GeoJSON small. None = keep all values.
 # ZDR is meaningful at negative values (hail/graupel), so no low cutoff — we
-# rely on Py-ART's own field mask (gates below SNR are already masked out).
+# rely on Py-ART's own field mask (gates below SNR are already masked out). KDP
+# (retrieved from PHIDP) is only defined where there's echo, so None too.
 MASK_THRESHOLDS = {
     "refl": -10.0,
     "vel": None,
     "cc": 0.2,
     "zdr": None,
+    "kdp": None,
 }
 
 # Max range to render (m). Beyond ~230 km NEXRAD beams are very high above the

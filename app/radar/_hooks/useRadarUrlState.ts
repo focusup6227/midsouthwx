@@ -64,7 +64,7 @@ const KEY_MAP = {
   showCoverage:       'cov',
 } as const satisfies Record<keyof RadarUrlState, string>;
 
-const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'zdr', 'rotation', 'satellite']);
+const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'zdr', 'kdp', 'rotation', 'satellite']);
 const VALID_SAT_SOURCES = new Set([
   'lwxr', 'goes-cleanir', 'goes-geocolor', 'goes-visible', 'goes-airmass', 'goes-dust', 'goes-firetemp',
 ]);
