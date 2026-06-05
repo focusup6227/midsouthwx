@@ -79,7 +79,7 @@ export default async function DashShell({
       ) : null}
       <header
         className={`sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur ${
-          mobileCompact ? 'hidden md:block' : ''
+          mobileCompact ? 'hidden tallmd:block' : ''
         }`}
       >
         <nav className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5">

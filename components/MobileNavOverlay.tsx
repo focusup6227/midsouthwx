@@ -18,7 +18,9 @@ type Props = {
 /**
  * Floating hamburger for `bare` pages (radar/map) so the dashboard chrome
  * doesn't eat ~80px of vertical space at the top of the viewport on phones.
- * Renders only on mobile; desktop keeps the standard sticky header.
+ * Renders whenever the compact layout is active — narrow widths AND short
+ * landscape phones (see the `tallmd` screen). Tall desktops keep the standard
+ * sticky header.
  */
 export default function MobileNavOverlay({ primary, secondary, field }: Props) {
   const [open, setOpen] = useState(false);
@@ -37,7 +39,7 @@ export default function MobileNavOverlay({ primary, secondary, field }: Props) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="md:hidden fixed top-3 right-14 z-[60] inline-flex items-center justify-center w-9 h-9 rounded-lg bg-wx-card/95 border border-wx-line backdrop-blur-sm shadow-lg text-wx-fg"
+        className="tallmd:hidden fixed top-3 right-14 z-[60] inline-flex items-center justify-center w-9 h-9 rounded-lg bg-wx-card/95 border border-wx-line backdrop-blur-sm shadow-lg text-wx-fg"
         aria-label="Open menu"
         aria-expanded={open}
       >
@@ -52,7 +54,7 @@ export default function MobileNavOverlay({ primary, secondary, field }: Props) {
 
       {open ? (
         <div
-          className="md:hidden fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm"
+          className="tallmd:hidden fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm"
           onClick={() => setOpen(false)}
           role="presentation"
         >

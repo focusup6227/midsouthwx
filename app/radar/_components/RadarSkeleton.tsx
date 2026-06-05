@@ -5,7 +5,7 @@ import { Radio } from 'lucide-react';
 // in RadarView so hydration paints into the same box.
 export default function RadarSkeleton() {
   return (
-    <div className="h-[calc(100vh-3.5rem)] md:h-[calc(100vh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
+    <div className="h-[100dvh] tallmd:h-[calc(100dvh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
       <div className="flex-1 relative overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_40%,#0f1729_0%,#070b14_70%)]" />
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-wx-muted">

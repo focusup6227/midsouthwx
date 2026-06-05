@@ -8,6 +8,15 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      screens: {
+        // Width AND height gate for the desktop dashboard chrome. Landscape
+        // phones are wide (>=768px) but short (~390px tall), so a plain `md`
+        // width check renders the full nav bar and subtracts a header that
+        // eats the limited vertical space. Require real vertical room before
+        // showing desktop chrome; otherwise the radar/map full-bleed compact
+        // layout (floating hamburger) kicks in.
+        tallmd: { raw: '(min-width: 768px) and (min-height: 500px)' },
+      },
       colors: {
         wx: {
           ink: '#0b1220',
