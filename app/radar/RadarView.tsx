@@ -854,6 +854,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     hail: number;
     wind: number;
     readout: string;
+    me: number; // motion east m/s — for the warn-from-cell projected corridor
+    ms: number; // motion south m/s
   } | null>(null);
   const [hoverPixel, setHoverPixel] = useState<{ lng: number; lat: number; sample: number | null } | null>(null);
   const [hoverSub, setHoverSub] = useState<any | null>(null);
@@ -2539,6 +2541,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           hail: Number(props?.ProbHail ?? 0),
           wind: Number(props?.ProbWind ?? 0),
           readout: String(props?.readout ?? ''),
+          me: Number(props?.MOTION_EAST ?? 0),
+          ms: Number(props?.MOTION_SOUTH ?? 0),
         });
         return;
       }
@@ -2676,6 +2680,40 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (body) params.set('body', body);
     return `/compose?${params.toString()}`;
   }, []);
+
+  // Warn-from-cell: draft an alert straight from a ProbSevere object, addressed
+  // to its *projected path* (the cell motion-projected ~45 min into a corridor)
+  // so the operator warns where the storm is going, not just where it is. Falls
+  // back to a radius around the cell when it's near-stationary.
+  const composeUrlForProbSevereCell = useCallback(
+    (p: NonNullable<typeof probSeverePopup>): string => {
+      const hazard = p.topType === 'tor' ? 'tornado' : 'severe';
+      const corridor_km = p.topType === 'tor' ? 5 : 7;
+      const speed = Math.hypot(p.me, p.ms); // m/s
+      const params = new URLSearchParams();
+      if (speed >= 0.5) {
+        const cosLat = Math.cos((p.lat * Math.PI) / 180) || 1e-6;
+        const dt = 45 * 60;
+        const end: [number, number] = [
+          p.lng + (p.me * dt) / (111320 * cosLat),
+          p.lat + (-p.ms * dt) / 111320,
+        ];
+        const spec = {
+          type: 'track',
+          line: { type: 'LineString', coordinates: [[p.lng, p.lat], end] },
+          corridor_km,
+        };
+        params.set('geo', JSON.stringify(spec));
+      } else {
+        params.set('geo', JSON.stringify({ type: 'circle', center: [p.lng, p.lat], radius_km: corridor_km * 1.5 }));
+      }
+      params.set('hazard', hazard);
+      const lead = (p.readout || '').split('\n')[0] || `ProbSevere ${p.topType.toUpperCase()} ${p.topProb}%`;
+      params.set('body', lead);
+      return `/compose?${params.toString()}`;
+    },
+    [],
+  );
 
   const goToCompose = () => {
     if (!selection) return;
@@ -4082,6 +4120,15 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                         {p.readout}
                       </pre>
                     ) : null}
+                    <a
+                      href={composeUrlForProbSevereCell(p)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-wx-accent px-2.5 py-1.5 text-[11px] font-semibold text-black hover:bg-amber-300"
+                      title="Draft an alert addressed to this cell's projected path"
+                    >
+                      <Send size={11} /> Draft alert · projected path
+                    </a>
                     <div className="text-[9px] text-wx-mute">NOAA/CIMSS ProbSevere 3.0</div>
                   </div>
                 );
@@ -5103,6 +5150,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                             topType: c.topType, topProb: c.topProb,
                             severe: c.severe, tor: c.tor, hail: c.hail, wind: c.wind,
                             readout: c.readout,
+                            me: c.me, ms: c.ms,
                           });
                         }}
                         className={`flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1 text-left hover:border-wx-accent ${hot ? 'border-yellow-400/70 bg-yellow-400/10' : 'border-wx-line bg-wx-ink'}`}
