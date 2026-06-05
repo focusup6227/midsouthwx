@@ -4,11 +4,23 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Columns2, Pause, Play, RefreshCw } from 'lucide-react';
 import {
   MODEL_CATALOG,
+  FIELD_GROUPS,
   modelDef,
   modelField,
   type ModelDef,
   type ModelFieldDef,
 } from '@/lib/forecast/model-charts';
+
+// One-tap jumps to the fields a forecaster reads first, top-down.
+const QUICK_FIELDS = [
+  { key: 'jet250', label: 'Jet' },
+  { key: 'vort500', label: 'Vort/Hgt' },
+  { key: 'omega700', label: 'Omega' },
+  { key: 'thetae850', label: 'θe' },
+  { key: 'pwat', label: 'PWAT' },
+  { key: 'cape', label: 'CAPE' },
+  { key: 'li', label: 'LI' },
+];
 
 type ModelResult = {
   image_url: string;
@@ -161,9 +173,14 @@ export default function ModelsPanel() {
           <span className="font-semibold uppercase tracking-wider text-wx-mute">Field</span>
           <select value={fieldKey} onChange={(e) => setFieldKey(e.target.value)}
             className="rounded-md border border-wx-line bg-wx-ink px-2 py-1.5 text-xs text-wx-fg outline-none focus:border-wx-accent">
-            {(compare ? MODEL_CATALOG.models[0].fields : model.fields).map((f) => (
-              <option key={f.key} value={f.key}>{f.label} ({f.unit})</option>
-            ))}
+            {FIELD_GROUPS.map((g) => {
+              const fs = (compare ? MODEL_CATALOG.models[0].fields : model.fields).filter((f) => f.group === g);
+              return fs.length ? (
+                <optgroup key={g} label={g}>
+                  {fs.map((f) => <option key={f.key} value={f.key}>{f.label} ({f.unit})</option>)}
+                </optgroup>
+              ) : null;
+            })}
           </select>
         </label>
 
@@ -187,6 +204,24 @@ export default function ModelsPanel() {
           <input type="range" min={minFhr} max={maxFhr} step={step} value={fhr}
             onChange={(e) => setFhr(parseInt(e.target.value, 10))} className="w-full accent-wx-accent" />
         </label>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1 text-[11px]">
+        <span className="font-semibold uppercase tracking-wider text-wx-mute">Quick</span>
+        {QUICK_FIELDS.map((q) => (modelField(modelKey, q.key) ? (
+          <button
+            key={q.key}
+            type="button"
+            onClick={() => setFieldKey(q.key)}
+            className={`rounded-md border px-2 py-1 ${
+              fieldKey === q.key
+                ? 'border-wx-accent text-wx-accent'
+                : 'border-wx-line bg-wx-ink text-wx-mute hover:text-wx-fg hover:border-wx-accent'
+            }`}
+          >
+            {q.label}
+          </button>
+        ) : null))}
       </div>
 
       {compare ? (
