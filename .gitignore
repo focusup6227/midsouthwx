@@ -28,3 +28,4 @@ skills-lock.json
 
 # Python test venvs in the renderer
 _renderer/.venv*
+__pycache__/
