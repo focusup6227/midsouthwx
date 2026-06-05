@@ -934,6 +934,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           wind: Number(p.ProbWind ?? 0),
           readout: String(p.readout ?? ''),
           center: geometryCentroid(geom),
+          // ProbSevere storm motion components (m/s). East = +x, South = +y.
+          me: Number(p.MOTION_EAST ?? 0),
+          ms: Number(p.MOTION_SOUTH ?? 0),
         };
       })
       .filter((r): r is NonNullable<typeof r> => !!r && r.topProb >= 1)
@@ -941,6 +944,46 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       .slice(0, 8);
     return rows;
   }, [probSevereGeo]);
+
+  // Projected motion for the ranked cells — the heart of nowcasting. ProbSevere
+  // ships each cell's motion (m/s east/south); we extrapolate the centroid out
+  // to +15/+30/+45 min and draw a vector + tick marks, so the operator sees
+  // *where a cell is going*, not just where it is. Lines + ticks in separate
+  // FeatureCollections (Mapbox layers filter by geometry type).
+  const probSevereMotion = useMemo(() => {
+    const lines: GeoJSON.Feature[] = [];
+    const ticks: GeoJSON.Feature[] = [];
+    const STEPS = [15, 30, 45];
+    for (const c of probSevereTop) {
+      const speed = Math.hypot(c.me, c.ms); // m/s
+      if (speed < 0.5) continue; // ~1 kt floor — skip near-stationary cells
+      const [lon, lat] = c.center;
+      const cosLat = Math.cos((lat * Math.PI) / 180) || 1e-6;
+      const project = (min: number): [number, number] => {
+        const dt = min * 60; // s
+        const dxM = c.me * dt; // east meters
+        const dyM = -c.ms * dt; // north meters (south is +y, so north is −)
+        return [lon + dxM / (111320 * cosLat), lat + dyM / 111320];
+      };
+      const speedKt = Math.round(speed * 1.94384);
+      lines.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [c.center, ...STEPS.map(project)] },
+        properties: { topType: c.topType, speedKt },
+      });
+      for (const min of STEPS) {
+        ticks.push({
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: project(min) },
+          properties: { topType: c.topType, min, label: min === 45 ? `+45m · ${speedKt}kt` : `+${min}` },
+        });
+      }
+    }
+    return {
+      lines: { type: 'FeatureCollection' as const, features: lines },
+      ticks: { type: 'FeatureCollection' as const, features: ticks },
+    };
+  }, [probSevereTop]);
 
   // F10: MRMS MESH (Max Estimated Size of Hail) overlay. Translucent raster
   // layered on top of whatever the operator's looking at — keeps the
@@ -3822,6 +3865,67 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 'text-color': '#f8fafc',
                 'text-halo-color': '#0b1220',
                 'text-halo-width': 1.8,
+              }}
+            />
+          </Source>
+
+          {/* ProbSevere projected motion — extrapolated centroid path (+15/30/45
+              min) for the ranked cells. The nowcasting "where is it going"
+              layer; colored to match each cell's dominant hazard. */}
+          <Source id="probsevere-motion-line-source" type="geojson" data={probSevereMotion.lines as any}>
+            <Layer
+              id="probsevere-motion-line"
+              {...overlayAnchor}
+              type="line"
+              layout={{
+                visibility: showProbSevere ? 'visible' : 'none',
+                'line-cap': 'round',
+                'line-join': 'round',
+              }}
+              paint={{
+                'line-color': [
+                  'match', ['get', 'topType'],
+                  'tor', '#ef4444', 'hail', '#22d3ee', 'wind', '#3b82f6', '#f59e0b',
+                ] as any,
+                'line-width': ['interpolate', ['linear'], ['zoom'], 4, 1, 8, 2, 12, 3] as any,
+                'line-opacity': 0.85,
+                'line-dasharray': [1.5, 1] as any,
+              }}
+            />
+          </Source>
+          <Source id="probsevere-motion-tick-source" type="geojson" data={probSevereMotion.ticks as any}>
+            <Layer
+              id="probsevere-motion-tick"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showProbSevere ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 2, 8, 3, 12, 4.5] as any,
+                'circle-color': [
+                  'match', ['get', 'topType'],
+                  'tor', '#ef4444', 'hail', '#22d3ee', 'wind', '#3b82f6', '#f59e0b',
+                ] as any,
+                'circle-stroke-color': '#0b1220',
+                'circle-stroke-width': 1,
+              }}
+            />
+            <Layer
+              id="probsevere-motion-label"
+              {...overlayAnchor}
+              type="symbol"
+              filter={['==', ['get', 'min'], 45] as any}
+              layout={{
+                visibility: showProbSevere ? 'visible' : 'none',
+                'text-field': ['get', 'label'] as any,
+                'text-size': ['interpolate', ['linear'], ['zoom'], 4, 9, 8, 10.5, 12, 12] as any,
+                'text-anchor': 'left',
+                'text-offset': [0.6, 0],
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+              }}
+              paint={{
+                'text-color': '#cbd5e1',
+                'text-halo-color': '#0b1220',
+                'text-halo-width': 1.4,
               }}
             />
           </Source>
