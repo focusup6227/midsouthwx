@@ -18,7 +18,7 @@ import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 import {
   CloudLightning, Radio, Wind, Atom, RotateCw, Satellite,
   Play, Pause, Trash2, Send, Target, Search, X,
-  ChevronLeft, ChevronRight, ChevronDown, Eye, EyeOff, MousePointer2,
+  ChevronLeft, ChevronRight, ChevronDown, Eye, EyeOff, MousePointer2, Zap,
 } from 'lucide-react';
 import {
   NEXRAD_SITES,
@@ -28,7 +28,7 @@ import {
   distanceKm,
   type RadarSite,
 } from '@/lib/radar/sites';
-import { alertTint, categoryBadge, shortNwsLocation, type NwsRadarAlert } from '@/lib/nws/radar';
+import { alertTint, categoryBadge, geometryCentroid, shortNwsLocation, type NwsRadarAlert } from '@/lib/nws/radar';
 import { STORM_TRACK_LINE_COLOR } from '@/lib/nws/storm-tracks';
 import {
   useWarnings,
@@ -872,6 +872,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // feed, most useful during active convection); the headline nowcasting aid.
   const [showProbSevere, setShowProbSevere] = useState(urlInitial.showProbSevere ?? false);
   const probSevereSwr = useProbSevere(showProbSevere);
+  // Nowcast mode — one tap to the storm-scale decision layout (warnings +
+  // ProbSevere + rotation IDs + lightning + storm reports). Tapping again clears
+  // the noisy convective overlays back to a clean map (warnings/LSR stay — they
+  // matter regardless). Not URL-persisted: it's an action, not a saved view.
+  const [nowcastOn, setNowcastOn] = useState(false);
   const probSevereGeo = (probSevereSwr.data ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   // Cells actually drawn (≥1% severe signal) — what the map shows, so the
   // toggle count never claims more than is visible. The highest prob in view
@@ -885,6 +890,34 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       if (p > max) max = p;
     }
     return { count, max };
+  }, [probSevereGeo]);
+
+  // Ranked threat list — the highest-probability cells, so the operator triages
+  // top-down instead of hunting polygons on the map. Each row flies the map to
+  // the cell and opens its readout popup. Mirrors the toggle's "N cells" count
+  // (≥1% drawn signal), sorted by probability, capped at 8 to stay compact.
+  const probSevereTop = useMemo(() => {
+    const rows = probSevereGeo.features
+      .map((f) => {
+        const p = (f.properties ?? {}) as Record<string, number | string>;
+        const geom = f.geometry as GeoJSON.Polygon | GeoJSON.MultiPolygon | null;
+        if (!geom || (geom.type !== 'Polygon' && geom.type !== 'MultiPolygon')) return null;
+        return {
+          id: String(p.ID ?? ''),
+          topType: String(p.topType ?? 'severe'),
+          topProb: Number(p.topProb ?? 0),
+          severe: Number(p.ProbSevere ?? 0),
+          tor: Number(p.ProbTor ?? 0),
+          hail: Number(p.ProbHail ?? 0),
+          wind: Number(p.ProbWind ?? 0),
+          readout: String(p.readout ?? ''),
+          center: geometryCentroid(geom),
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => !!r && r.topProb >= 1)
+      .sort((a, b) => b.topProb - a.topProb)
+      .slice(0, 8);
+    return rows;
   }, [probSevereGeo]);
 
   // F10: MRMS MESH (Max Estimated Size of Hail) overlay. Translucent raster
@@ -4099,6 +4132,28 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               <MousePointer2 size={14} className="hidden md:inline" />
               <span className="hidden md:inline">Adopt alert</span>
             </button>
+            <button
+              onClick={() => {
+                const next = !nowcastOn;
+                setNowcastOn(next);
+                // Decision context that's always useful stays on either way.
+                setShowNws(true);
+                setShowStormReports(true);
+                setShowLsr(true);
+                // The storm-scale convective overlays toggle with the preset.
+                setShowProbSevere(next);
+                setShowCouplets(next);
+                setShowLightning(next);
+              }}
+              className={`px-2.5 md:px-3 py-2.5 md:py-2 border rounded-lg text-sm flex items-center gap-1.5 ${nowcastOn ? 'bg-rose-500 text-white border-rose-400' : 'bg-wx-card border-wx-line'}`}
+              aria-label="Nowcast mode"
+              aria-pressed={nowcastOn}
+              title={nowcastOn ? 'Exit nowcast mode (clear storm-scale overlays)' : 'Nowcast mode — warnings + ProbSevere + rotation + lightning + reports'}
+            >
+              <Zap size={16} className="md:hidden" />
+              <Zap size={14} className="hidden md:inline" />
+              <span className="hidden md:inline">Nowcast</span>
+            </button>
             {drawMode === 'polygon' && (
               <button onClick={completePolygon} disabled={polygonPoints.length < 3} className="px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm disabled:opacity-50">Complete ({polygonPoints.length})</button>
             )}
@@ -4764,6 +4819,42 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showProbSevere ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
+              {/* Ranked ProbSevere threats — tap a row to fly to the cell + open
+                  its ML readout. Top-down triage instead of hunting polygons. */}
+              {showProbSevere && probSevereTop.length > 0 && (
+                <div className="mb-2 ml-0.5 space-y-1">
+                  {probSevereTop.map((c) => {
+                    const dot =
+                      c.topType === 'tor' ? 'bg-red-500'
+                      : c.topType === 'hail' ? 'bg-cyan-400'
+                      : c.topType === 'wind' ? 'bg-blue-400'
+                      : 'bg-amber-400';
+                    return (
+                      <button
+                        key={c.id || `${c.center[0]},${c.center[1]}`}
+                        type="button"
+                        onClick={() => {
+                          mapRef.current?.flyTo({ center: c.center, zoom: 8, duration: 700 });
+                          setProbSeverePopup({
+                            lng: c.center[0], lat: c.center[1],
+                            topType: c.topType, topProb: c.topProb,
+                            severe: c.severe, tor: c.tor, hail: c.hail, wind: c.wind,
+                            readout: c.readout,
+                          });
+                        }}
+                        className="flex w-full items-center justify-between gap-2 rounded-md border border-wx-line bg-wx-ink px-2 py-1 text-left hover:border-wx-accent"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+                          <span className="font-mono text-[10.5px] font-semibold text-wx-fg">{c.topProb}%</span>
+                          <span className="text-[9px] uppercase tracking-wider text-wx-mute">{c.topType}</span>
+                        </span>
+                        {c.id ? <span className="font-mono text-[9px] text-wx-mute">#{c.id.slice(-4)}</span> : null}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               {/* F13: mPING crowdsource reports overlay. */}
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] text-wx-mute">
