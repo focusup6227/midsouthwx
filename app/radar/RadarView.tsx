@@ -1066,17 +1066,14 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showMping, setShowMping] = useState(urlInitial.showMping ?? false);
   const mpingSwr = useMping(showMping);
   const mpingGeo = (mpingSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
-  type InspectorSectionKey = 'threats' | 'source' | 'overlays' | 'alerts' | 'forecasts';
-  const [inspectorSections, setInspectorSections] = useState<Record<InspectorSectionKey, boolean>>({
-    threats: true,
-    source: true,
-    overlays: true,
-    alerts: true,
-    forecasts: false,
-  });
-  const toggleInspectorSection = useCallback((key: InspectorSectionKey) => {
-    setInspectorSections((s) => ({ ...s, [key]: !s[key] }));
-  }, []);
+  // Inspector is organized into tabs (one group visible at a time) rather than a
+  // long scroll of collapsible sections — far less scrolling, clearer IA:
+  //   Threats → threat board + active alerts (the triage/decision surface)
+  //   Layers  → all overlay toggles
+  //   Source  → radar source / site / product settings
+  //   Models  → models & discussion
+  type InspectorTab = 'threats' | 'layers' | 'source' | 'models';
+  const [inspectorTab, setInspectorTab] = useState<InspectorTab>('threats');
 
   // Split view (Phase 4 v1). When non-null, the map area splits horizontally
   // and renders a second NCEP raster source for the chosen product on the
@@ -4492,9 +4489,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               const allowed = selectedSite ? p.modes.site : p.modes.composite;
               const disabled = !allowed;
               const active = effectiveProduct === k;
+              // Thin divider before each product group: Reflectivity (CREF/BREF)
+              // | Velocity (SRV) | Dual-pol (CC/ZDR/KDP) | Satellite (SAT).
+              const startsGroup = k === 'velocity' || k === 'correlation' || k === 'satellite';
               return (
+                <React.Fragment key={k}>
+                  {startsGroup && <div className="h-px bg-wx-line/40 mx-1.5 my-1" />}
                 <button
-                  key={k}
                   onClick={() => !disabled && selectProduct(k)}
                   disabled={disabled}
                   title={disabled ? (selectedSite ? 'Not available in single-site mode' : 'Pick a radar site to use this product') : p.label}
@@ -4510,6 +4511,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   <Icon size={20} className={`hidden md:block ${active ? 'text-wx-accent' : ''}`} />
                   <span className="text-[9px] md:text-[10px]">{p.short}</span>
                 </button>
+                </React.Fragment>
               );
             })}
           </div>
@@ -4779,17 +4781,27 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               })()}
             </div>
 
+            {/* Inspector tab bar — one group at a time instead of a long scroll. */}
+            <div className="flex gap-1">
+              {([['threats', 'Threats'], ['layers', 'Layers'], ['source', 'Source'], ['models', 'Models']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setInspectorTab(key)}
+                  aria-pressed={inspectorTab === key}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold tracking-wide transition ${inspectorTab === key ? 'bg-wx-accent/15 text-wx-fg ring-1 ring-wx-accent' : 'text-wx-mute hover:text-wx-fg hover:bg-wx-ink'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {inspectorTab === 'threats' && (
             <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => toggleInspectorSection('threats')}
-                className="flex items-center justify-between w-full text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold hover:text-wx-fg"
-                aria-expanded={inspectorSections.threats}
-              >
-                <span>Threat board · {threatBoard.length}</span>
-                <ChevronDown size={12} className={`transition ${inspectorSections.threats ? '' : '-rotate-90'}`} />
-              </button>
-              {inspectorSections.threats && (
+              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
+                Threat board · {threatBoard.length}
+              </div>
+              {(
                 threatBoard.length === 0 ? (
                   <p className="text-[10px] text-wx-mute">No active threats — quiet right now.</p>
                 ) : (
@@ -4827,18 +4839,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 )
               )}
             </div>
+            )}
 
-            <div className="border-t border-wx-line/40 -mt-2 pt-3 flex flex-col gap-[18px]">
-              <button
-                type="button"
-                onClick={() => toggleInspectorSection('source')}
-                className="flex items-center justify-between w-full text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold hover:text-wx-fg"
-                aria-expanded={inspectorSections.source}
-              >
-                <span>Source</span>
-                <ChevronDown size={12} className={`transition ${inspectorSections.source ? '' : '-rotate-90'}`} />
-              </button>
-              {inspectorSections.source && (<>
+            {inspectorTab === 'source' && (
+            <div className="flex flex-col gap-[18px]">
+              {(<>
 
             {effectiveProduct === 'satellite' && (
               <div>
@@ -5126,20 +5131,16 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
               </>)}
             </div>
+            )}
 
-            <div className="border-t border-wx-line/40 -mt-2 pt-3 flex flex-col gap-[18px]">
-              <button
-                type="button"
-                onClick={() => toggleInspectorSection('overlays')}
-                className="flex items-center justify-between w-full text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold hover:text-wx-fg"
-                aria-expanded={inspectorSections.overlays}
-              >
-                <span>Overlays</span>
-                <ChevronDown size={12} className={`transition ${inspectorSections.overlays ? '' : '-rotate-90'}`} />
-              </button>
-              {inspectorSections.overlays && (<>
+            {inspectorTab === 'layers' && (
+            <div className="flex flex-col gap-[18px]">
+              {(<>
 
             <div>
+              <div className="-mb-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-wx-mute/70">
+                Audience &amp; coverage
+              </div>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
                   Subscribers · {subsCount}
@@ -5173,6 +5174,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 </button>
               </div>
 
+              <div className="-mb-1 border-t border-wx-line/30 pt-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-wx-mute/70">
+                Alerts &amp; storm-scale
+              </div>
               <div className="flex items-center justify-between mb-1">
                 <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
                   NWS alerts · {displayWarnings.length}
@@ -5328,6 +5332,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   })}
                 </div>
               )}
+              <div className="-mb-1 border-t border-wx-line/30 pt-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-wx-mute/70">
+                Observations &amp; base
+              </div>
               {/* F13: mPING crowdsource reports overlay. */}
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] text-wx-mute">
@@ -5455,18 +5462,12 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
               </>)}
             </div>
+            )}
 
-            <div className="border-t border-wx-line/40 -mt-2 pt-3 flex flex-col gap-[18px]">
-              <button
-                type="button"
-                onClick={() => toggleInspectorSection('alerts')}
-                className="flex items-center justify-between w-full text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold hover:text-wx-fg"
-                aria-expanded={inspectorSections.alerts}
-              >
-                <span>Active alerts</span>
-                <ChevronDown size={12} className={`transition ${inspectorSections.alerts ? '' : '-rotate-90'}`} />
-              </button>
-              {inspectorSections.alerts && (<>
+            {inspectorTab === 'threats' && (
+            <div className="border-t border-wx-line/40 pt-3 flex flex-col gap-[18px]">
+              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Active alerts</div>
+              {(<>
 
             <div>
               {selectedWarning && (() => {
@@ -5644,18 +5645,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
               </>)}
             </div>
+            )}
 
-            <div className="border-t border-wx-line/40 -mt-2 pt-3 flex flex-col gap-[18px]">
-              <button
-                type="button"
-                onClick={() => toggleInspectorSection('forecasts')}
-                className="flex items-center justify-between w-full text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold hover:text-wx-fg"
-                aria-expanded={inspectorSections.forecasts}
-              >
-                <span>Models & discussion</span>
-                <ChevronDown size={12} className={`transition ${inspectorSections.forecasts ? '' : '-rotate-90'}`} />
-              </button>
-              {inspectorSections.forecasts && (<>
+            {inspectorTab === 'models' && (
+            <div className="flex flex-col gap-[18px]">
+              {(<>
 
             <div>
               <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">
@@ -5754,8 +5748,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
               </>)}
             </div>
+            )}
 
-            <div>
+            <div className="border-t border-wx-line/40 pt-3">
               <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">Pointer</div>
               <div className="space-y-0.5 text-[11px] font-mono">
                 <div className="flex justify-between"><span className="text-wx-mute">Lat</span><span>{hoverPixel ? hoverPixel.lat.toFixed(4) : '—'}</span></div>
