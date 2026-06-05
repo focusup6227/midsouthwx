@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'react';
 // other rarely-changed bits are intentionally NOT here.
 export type RadarUrlState = {
   site: string | null;          // NEXRAD code, e.g. KNQA
-  product: string;              // 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'rotation' | 'satellite'
+  product: string;              // 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'zdr' | 'rotation' | 'satellite'
   hiRes: boolean;
   opacity: number;              // 20..100
   showNws: boolean;
@@ -64,7 +64,7 @@ const KEY_MAP = {
   showCoverage:       'cov',
 } as const satisfies Record<keyof RadarUrlState, string>;
 
-const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'rotation', 'satellite']);
+const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'zdr', 'rotation', 'satellite']);
 const VALID_SAT_SOURCES = new Set([
   'lwxr', 'goes-cleanir', 'goes-geocolor', 'goes-visible', 'goes-airmass', 'goes-dust', 'goes-firetemp',
 ]);
