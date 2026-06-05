@@ -12,10 +12,17 @@ export type SevereSample = {
   point: { lat: number; lon: number };
   sbcape: number | null;
   sbcin: number | null;
+  mlcape: number | null;
+  mlcin: number | null;
+  mucape: number | null;
+  lcl_m: number | null;
   srh_0_1km: number | null;
   srh_0_3km: number | null;
   shear_0_1km_kt: number | null;
   shear_0_6km_kt: number | null;
+  // Fixed-layer (approximate) composite parameters.
+  stp_fixed: number | null;
+  scp_fixed: number | null;
 };
 
 export async function sampleSevereParams(lat: number, lon: number): Promise<SevereSample | null> {

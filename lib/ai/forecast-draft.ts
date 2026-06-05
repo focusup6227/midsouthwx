@@ -202,10 +202,11 @@ function buildPrompt(input: ForecastDraftInput): string {
     const s = context.severe;
     const fmt = (v: number | null, u: string) => (v == null ? 'n/a' : `${v}${u}`);
     lines.push(`Source: ${s.model}${s.valid_time ? ` valid ${s.valid_time}` : ''}.`);
-    lines.push(`- SBCAPE ${fmt(s.sbcape, ' J/kg')} · SBCIN ${fmt(s.sbcin, ' J/kg')}`);
-    lines.push(`- 0-1 km SRH ${fmt(s.srh_0_1km, ' m2/s2')} · 0-3 km SRH ${fmt(s.srh_0_3km, ' m2/s2')}`);
+    lines.push(`- SBCAPE ${fmt(s.sbcape, ' J/kg')} · MLCAPE ${fmt(s.mlcape, ' J/kg')} · MUCAPE ${fmt(s.mucape, ' J/kg')} · SBCIN ${fmt(s.sbcin, ' J/kg')}`);
+    lines.push(`- 0-1 km SRH ${fmt(s.srh_0_1km, ' m2/s2')} · 0-3 km SRH ${fmt(s.srh_0_3km, ' m2/s2')} · LCL ${fmt(s.lcl_m, ' m AGL')}`);
     lines.push(`- 0-1 km bulk shear ${fmt(s.shear_0_1km_kt, ' kt')} · 0-6 km bulk shear ${fmt(s.shear_0_6km_kt, ' kt')}`);
-    lines.push('Use these to calibrate organized-severe / tornado wording: meaningful 0-6km shear (>=35 kt) with adequate CAPE supports organized/supercell potential; strong 0-1km SRH (>=150 m2/s2) raises low-level rotation/tornado concern. Low values argue against organized severe regardless of outlook tone.');
+    lines.push(`- Fixed-layer STP ${fmt(s.stp_fixed, '')} · fixed-layer SCP ${fmt(s.scp_fixed, '')} (approximate, not SPC effective-layer)`);
+    lines.push('Use these to calibrate organized-severe / tornado wording: meaningful 0-6km shear (>=35 kt) with adequate CAPE supports organized/supercell potential; strong 0-1km SRH (>=150 m2/s2), low LCL, and STP>=1 raise low-level rotation/tornado concern; SCP>=2 supports supercells. Low values argue against organized severe regardless of outlook tone. Treat STP/SCP as fixed-layer approximations.');
   } else {
     lines.push('- No HRRR kinematic sample available; hedge organized-severe/tornado wording on the SPC outlook + AFD rather than asserting shear/SRH-driven potential.');
   }

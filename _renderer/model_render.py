@@ -442,13 +442,16 @@ def render_to_png(model: str, field: str, fhr: int, region: str,
 # fetch a multi-field GRIB subset and read the value nearest a point with
 # eccodes' find_nearest — far simpler than xarray for scattered point reads.
 
-SAMPLE_VARS = ["CAPE", "CIN", "HLCY", "VUCSH", "VVCSH"]
+SAMPLE_VARS = ["CAPE", "CIN", "HLCY", "VUCSH", "VVCSH", "TMP", "DPT"]
 SAMPLE_LEVS = [
     "surface",
+    "2_m_above_ground",
     "3000-0_m_above_ground",
     "1000-0_m_above_ground",
     "0-6000_m_above_ground",
     "0-1000_m_above_ground",
+    "180-0_mb_above_ground",   # MLCAPE/MLCIN (key 18000 Pa)
+    "255-0_mb_above_ground",   # MUCAPE/MUCIN (key 25500 Pa)
 ]
 
 
@@ -520,6 +523,21 @@ def sample_point(lat: float, lon: float, ymd: str, hh: str, fhr: int = 0) -> dic
 
     sbcape = g("cape", 0)
     sbcin = g("cin", 0)
+    mlcape = g("cape", 18000)
+    mlcin = g("cin", 18000)
+    mucape = g("cape", 25500)
+    srh01 = g("hlcy", 1000)
+    srh03 = g("hlcy", 3000)
+    sh06_kt = shear_kt(6000)
+    sh06_mps = None if sh06_kt is None else sh06_kt / MS_TO_KT
+
+    # LCL height (m AGL) via Espy: ~125 m per °C of surface T-Td spread.
+    t2, td2 = g("2t", 2), g("2d", 2)
+    lcl_m = None if (t2 is None or td2 is None) else max(0.0, 125.0 * (t2 - td2))
+
+    stp = _fixed_stp(sbcape, sbcin, srh01, sh06_mps, lcl_m)
+    scp = _fixed_scp(mucape if mucape is not None else sbcape, srh03, sh06_mps)
+
     return {
         "model": "HRRR 3 km",
         "cycle": f"{ymd}{hh}",
@@ -528,11 +546,52 @@ def sample_point(lat: float, lon: float, ymd: str, hh: str, fhr: int = 0) -> dic
         "point": {"lat": round(lat, 3), "lon": round(lon, 3)},
         "sbcape": None if sbcape is None else round(sbcape),
         "sbcin": None if sbcin is None else round(sbcin),
-        "srh_0_1km": _r(g("hlcy", 1000)),
-        "srh_0_3km": _r(g("hlcy", 3000)),
+        "mlcape": None if mlcape is None else round(mlcape),
+        "mlcin": None if mlcin is None else round(mlcin),
+        "mucape": None if mucape is None else round(mucape),
+        "lcl_m": _r(lcl_m),
+        "srh_0_1km": _r(srh01),
+        "srh_0_3km": _r(srh03),
         "shear_0_1km_kt": shear_kt(1000),
-        "shear_0_6km_kt": shear_kt(6000),
+        "shear_0_6km_kt": sh06_kt,
+        # Fixed-layer (approximate) composite parameters. Not SPC's effective-
+        # layer STP/SCP — SBCAPE/0-1 SRH/0-6 shear/Espy-LCL ingredients.
+        "stp_fixed": stp,
+        "scp_fixed": scp,
     }
+
+
+def _fixed_stp(sbcape, sbcin, srh01, sh06_mps, lcl_m):
+    """SPC fixed-layer significant tornado parameter (approximate)."""
+    if None in (sbcape, srh01, sh06_mps, lcl_m):
+        return None
+    cape_t = sbcape / 1500.0
+    lcl_t = 1.0 if lcl_m < 1000 else (0.0 if lcl_m > 2000 else (2000.0 - lcl_m) / 1000.0)
+    srh_t = srh01 / 150.0
+    if sh06_mps < 12.5:
+        shr_t = 0.0
+    elif sh06_mps > 30.0:
+        shr_t = 1.5
+    else:
+        shr_t = sh06_mps / 20.0
+    cin = sbcin if sbcin is not None else 0.0
+    cin_t = 1.0 if cin > -50 else (0.0 if cin < -200 else (200.0 + cin) / 150.0)
+    return round(max(0.0, cape_t * lcl_t * srh_t * shr_t * cin_t), 1)
+
+
+def _fixed_scp(cape, srh03, sh06_mps):
+    """SPC fixed-layer supercell composite parameter (approximate)."""
+    if None in (cape, srh03, sh06_mps):
+        return None
+    cape_t = cape / 1000.0
+    srh_t = srh03 / 50.0
+    if sh06_mps < 10.0:
+        shr_t = 0.0
+    elif sh06_mps > 20.0:
+        shr_t = 1.0
+    else:
+        shr_t = sh06_mps / 20.0
+    return round(max(0.0, cape_t * srh_t * shr_t), 1)
 
 
 def _r(v: float | None) -> float | None:

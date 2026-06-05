@@ -26,6 +26,41 @@ function Metric({ label, value, unit, color }: { label: string; value: number | 
   );
 }
 
+// One-line severe-favorability read from the ingredients. Deliberately
+// conservative — a quick gut-check, not a substitute for the full picture.
+function Verdict({ data }: { data: SevereSample }) {
+  const cape = Math.max(data.sbcape ?? 0, data.mucape ?? 0);
+  const shr = data.shear_0_6km_kt ?? 0;
+  const srh1 = data.srh_0_1km ?? 0;
+  const stp = data.stp_fixed ?? 0;
+  const scp = data.scp_fixed ?? 0;
+
+  let label: string;
+  let cls: string;
+  if (cape < 250) {
+    label = 'Negligible — no meaningful instability';
+    cls = 'text-wx-mute';
+  } else if (stp >= 3 || (scp >= 4 && srh1 >= 150)) {
+    label = 'Significant — supercell/tornado ingredients present';
+    cls = 'text-wx-danger';
+  } else if (scp >= 2 || (shr >= 35 && cape >= 1000)) {
+    label = 'Organized severe possible — supercell shear over CAPE';
+    cls = 'text-orange-400';
+  } else if (cape >= 1000) {
+    label = 'Marginal — instability present, limited shear';
+    cls = 'text-yellow-400';
+  } else {
+    label = 'Low-end — weak instability';
+    cls = 'text-wx-mute';
+  }
+  return (
+    <div className="rounded-md border border-wx-line bg-wx-ink px-3 py-2 text-[12px]">
+      <span className="text-wx-mute">Read: </span>
+      <span className={`font-semibold ${cls}`}>{label}</span>
+    </div>
+  );
+}
+
 export default function SevereParamsPanel() {
   const [pt, setPt] = useState<ForecastPoint>(DEFAULT_POINT);
   const [data, setData] = useState<SevereSample | null>(null);
@@ -93,17 +128,22 @@ export default function SevereParamsPanel() {
       {err && !data ? (
         <p className="py-6 text-center text-[12px] text-wx-mute">Couldn’t sample ({err}).</p>
       ) : (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          <Metric label="SBCAPE" value={data?.sbcape ?? null} unit="J/kg" color={tone(data?.sbcape ?? null, [500, 1500, 2500])} />
-          <Metric label="SBCIN" value={data?.sbcin ?? null} unit="J/kg" color="text-wx-fg" />
-          <Metric label="0-1 SRH" value={data?.srh_0_1km ?? null} unit="m²/s²" color={tone(data?.srh_0_1km ?? null, [100, 150, 300])} />
-          <Metric label="0-3 SRH" value={data?.srh_0_3km ?? null} unit="m²/s²" color={tone(data?.srh_0_3km ?? null, [150, 250, 400])} />
-          <Metric label="0-1 shear" value={data?.shear_0_1km_kt ?? null} unit="kt" color={tone(data?.shear_0_1km_kt ?? null, [15, 25, 35])} />
-          <Metric label="0-6 shear" value={data?.shear_0_6km_kt ?? null} unit="kt" color={tone(data?.shear_0_6km_kt ?? null, [25, 35, 50])} />
-        </div>
+        <>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
+            <Metric label="SBCAPE" value={data?.sbcape ?? null} unit="J/kg" color={tone(data?.sbcape ?? null, [500, 1500, 2500])} />
+            <Metric label="MUCAPE" value={data?.mucape ?? null} unit="J/kg" color={tone(data?.mucape ?? null, [500, 1500, 2500])} />
+            <Metric label="0-1 SRH" value={data?.srh_0_1km ?? null} unit="m²/s²" color={tone(data?.srh_0_1km ?? null, [100, 150, 300])} />
+            <Metric label="0-3 SRH" value={data?.srh_0_3km ?? null} unit="m²/s²" color={tone(data?.srh_0_3km ?? null, [150, 250, 400])} />
+            <Metric label="0-1 shear" value={data?.shear_0_1km_kt ?? null} unit="kt" color={tone(data?.shear_0_1km_kt ?? null, [15, 25, 35])} />
+            <Metric label="0-6 shear" value={data?.shear_0_6km_kt ?? null} unit="kt" color={tone(data?.shear_0_6km_kt ?? null, [25, 35, 50])} />
+            <Metric label="STP (fix)" value={data?.stp_fixed ?? null} unit="" color={tone(data?.stp_fixed ?? null, [1, 3, 6])} />
+            <Metric label="SCP (fix)" value={data?.scp_fixed ?? null} unit="" color={tone(data?.scp_fixed ?? null, [2, 4, 10])} />
+          </div>
+          {data ? <Verdict data={data} /> : null}
+        </>
       )}
       <p className="text-[10px] text-wx-mute">
-        Color scales with severe-storm support (muted → yellow → orange → red). HRRR analysis nearest the city; for a drawn area the AI draft samples the centroid.
+        Color scales with severe-storm support (muted → yellow → orange → red). HRRR analysis nearest the city; for a drawn area the AI draft samples the centroid. STP/SCP are fixed-layer approximations.
       </p>
     </section>
   );
