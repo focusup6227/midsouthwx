@@ -75,7 +75,7 @@ function Plume({ members, time, unit }: { members: number[][]; time: string[]; u
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) ticks.push(v);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Ensemble plume">
+    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full min-w-[560px]" role="img" aria-label="Ensemble plume">
       {ticks.map((v) => (
         <g key={v}>
           <line x1={padL} x2={W - padR} y1={y(v)} y2={y(v)} stroke={C_GRID} strokeWidth={1} />
@@ -196,7 +196,7 @@ export default function EnsemblePlumePanel() {
         ) : !data ? (
           <p className="py-8 text-center text-[12px] text-wx-mute">Loading…</p>
         ) : (
-          <Plume members={members} time={data.time} unit={v.unit} />
+          <div className="overflow-x-auto"><Plume members={members} time={data.time} unit={v.unit} /></div>
         )}
       </div>
     </section>

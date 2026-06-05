@@ -136,7 +136,7 @@ export default async function DashShell({
       {bare ? (
         <main className="w-full">{children}</main>
       ) : (
-      <main className={`mx-auto ${WIDTHS[width]} space-y-6 p-6`}>
+      <main className={`mx-auto ${WIDTHS[width]} space-y-4 p-3 sm:space-y-6 sm:p-6`}>
         {(title || actions || backHref) && (
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>

@@ -50,13 +50,13 @@ export default function DraftDataPanel() {
 
       {open ? (
         <div className="space-y-3 border-t border-wx-line p-4">
-          <div className="flex gap-1">
+          <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1">
             {TABS.map((t) => (
               <button
                 key={t.key}
                 type="button"
                 onClick={() => setTab(t.key)}
-                className={`rounded-md px-3 py-1.5 text-xs ${
+                className={`shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-xs ${
                   tab === t.key
                     ? 'bg-wx-accent/15 text-wx-fg ring-1 ring-wx-accent'
                     : 'text-wx-mute hover:text-wx-fg hover:bg-wx-ink'

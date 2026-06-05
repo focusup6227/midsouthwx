@@ -188,7 +188,7 @@ export default function ForecastSoundingPanel() {
         <div className="relative flex items-center justify-center rounded-md border border-wx-line bg-[#0b1220]">
           {res?.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={res.image_url} alt={`${model.label} sounding ${pt.city} F${fhr}`} className="block max-h-[560px] w-auto" />
+            <img src={res.image_url} alt={`${model.label} sounding ${pt.city} F${fhr}`} className="block w-full sm:max-h-[560px] sm:w-auto" />
           ) : (
             <div className="flex h-80 items-center justify-center text-[12px] text-wx-mute">
               {errMsg ?? (loading ? 'Rendering sounding…' : 'Select a point')}

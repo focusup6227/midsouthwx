@@ -34,8 +34,8 @@ export default function ForecastFunnel() {
 
   return (
     <div className="space-y-4">
-      {/* Stage stepper */}
-      <nav className="flex flex-wrap gap-1.5">
+      {/* Stage stepper — single scrollable row on phones, wraps on desktop. */}
+      <nav className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1 sm:flex-wrap sm:overflow-visible">
         {STAGES.map((s, i) => {
           const on = s.key === stage;
           const Icon = s.icon;
@@ -44,7 +44,7 @@ export default function ForecastFunnel() {
               key={s.key}
               type="button"
               onClick={() => setStage(s.key)}
-              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+              className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm ${
                 on
                   ? 'border-wx-accent bg-wx-accent/15 text-wx-fg'
                   : 'border-wx-line bg-wx-card text-wx-mute hover:text-wx-fg hover:border-wx-accent'

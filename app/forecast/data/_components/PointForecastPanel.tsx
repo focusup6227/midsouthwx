@@ -76,7 +76,7 @@ function Meteogram({ hourly, tz }: { hourly: HourPoint[]; tz: string | null }) {
   const bw = Math.max(2, (W - padL - padR) / n - 1.5);
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Hourly forecast meteogram">
+    <svg viewBox={`0 0 ${W} ${H}`} className="block w-full min-w-[560px]" role="img" aria-label="Hourly forecast meteogram">
       {/* temp gridlines + axis labels */}
       {ticks.map((v) => (
         <g key={v}>
@@ -269,7 +269,7 @@ export default function PointForecastPanel() {
                 <span className="inline-flex items-center gap-1"><span className="inline-block h-0.5 w-3" style={{ background: C_DEWP }} /> Dewpoint °F</span>
                 <span className="inline-flex items-center gap-1"><span className="inline-block h-2 w-2" style={{ background: C_POP, opacity: 0.55 }} /> PoP %</span>
               </div>
-              <Meteogram hourly={data.hourly} tz={loc?.timeZone ?? null} />
+              <div className="-mx-1 overflow-x-auto"><Meteogram hourly={data.hourly} tz={loc?.timeZone ?? null} /></div>
             </>
           )}
         </div>

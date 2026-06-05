@@ -105,7 +105,7 @@ export default function SatellitePanel() {
 
       <div className="overflow-hidden rounded-md border border-wx-line bg-black">
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img key={src} src={src} alt={`GOES-East ${band} ${sector}`} className="mx-auto block max-h-[620px] w-auto" loading="lazy" />
+        <img key={src} src={src} alt={`GOES-East ${band} ${sector}`} className="mx-auto block w-full sm:max-h-[620px] sm:w-auto" loading="lazy" />
       </div>
     </section>
   );

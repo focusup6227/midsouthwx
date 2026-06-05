@@ -92,7 +92,7 @@ export default function HydroPanel() {
         </div>
         <div className="overflow-hidden rounded-md border border-wx-line bg-white">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={`${WPC_QPF_5DAY}?_t=${cacheKey}`} alt="WPC 5-day QPF" className="mx-auto block max-h-[520px] w-auto" loading="lazy" />
+          <img src={`${WPC_QPF_5DAY}?_t=${cacheKey}`} alt="WPC 5-day QPF" className="mx-auto block w-full sm:max-h-[520px] sm:w-auto" loading="lazy" />
         </div>
       </div>
     </section>
