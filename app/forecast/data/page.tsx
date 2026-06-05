@@ -4,6 +4,7 @@ import MesoanalysisPanel from './_components/MesoanalysisPanel';
 import ModelsPanel from './_components/ModelsPanel';
 import PointForecastPanel from './_components/PointForecastPanel';
 import SevereParamsPanel from './_components/SevereParamsPanel';
+import SatellitePanel from './_components/SatellitePanel';
 import ForecastSoundingPanel from './_components/ForecastSoundingPanel';
 
 export const dynamic = 'force-dynamic';
@@ -42,6 +43,7 @@ export default function ForecastDataPage() {
         <PointForecastPanel />
         <SevereParamsPanel />
         <ModelsPanel />
+        <SatellitePanel />
         <MesoanalysisPanel />
         <ForecastSoundingPanel />
       </div>

@@ -7,12 +7,14 @@ import MesoanalysisPanel from '../data/_components/MesoanalysisPanel';
 import PointForecastPanel from '../data/_components/PointForecastPanel';
 import SevereParamsPanel from '../data/_components/SevereParamsPanel';
 import ForecastSoundingPanel from '../data/_components/ForecastSoundingPanel';
+import SatellitePanel from '../data/_components/SatellitePanel';
 
-type Tab = 'severe' | 'models' | 'meso' | 'point' | 'sounding';
+type Tab = 'severe' | 'models' | 'satellite' | 'meso' | 'point' | 'sounding';
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'severe', label: 'Severe' },
   { key: 'models', label: 'Models' },
+  { key: 'satellite', label: 'Satellite' },
   { key: 'meso', label: 'Mesoanalysis' },
   { key: 'point', label: 'Point forecast' },
   { key: 'sounding', label: 'Sounding' },
@@ -63,6 +65,7 @@ export default function DraftDataPanel() {
           {/* Mount only the active tab so we don't fire every viewer's fetches. */}
           {tab === 'severe' ? <SevereParamsPanel /> : null}
           {tab === 'models' ? <ModelsPanel /> : null}
+          {tab === 'satellite' ? <SatellitePanel /> : null}
           {tab === 'meso' ? <MesoanalysisPanel /> : null}
           {tab === 'point' ? <PointForecastPanel /> : null}
           {tab === 'sounding' ? <ForecastSoundingPanel /> : null}
