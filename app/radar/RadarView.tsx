@@ -35,8 +35,6 @@ import {
   useLsr,
   useSpc,
   useSubs,
-  useMrmsLatest,
-  useMrmsMesh,
   useCapWarnings,
   useLightning,
   useCouplets,
@@ -655,8 +653,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const stormReportClustersSwr = useStormReportClusters();
   const stormReportClustersGeo = (stormReportClustersSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   const spcSwr = useSpc(initialSpcDays);
-  const mrmsSwr = useMrmsLatest();
-  const mrmsUrlPath = mrmsSwr.data?.urlPath ?? null;
+  // MRMS rotation (Az-Shear) overlay retired: UCAR THREDDS decommissioned its
+  // MRMS GRIB collection (the latest.xml 404s), and no free source serves the
+  // convective MRMS grids as web tiles anymore. Rotation decisions now come from
+  // ProbSevere (per-cell az-shear + the full readout) and the velocity-couplet
+  // "Rotation IDs" overlay (renderer-based, still live). Kept as a null constant
+  // so the now-hidden rotation product's code paths stay inert.
+  const mrmsUrlPath: string | null = null;
   const { mutate: swrMutate } = useSWRConfig();
 
   // Hydrate from URL once. RadarView is dynamic(ssr:false) so `window` is
@@ -888,10 +891,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // layered on top of whatever the operator's looking at — keeps the
   // reflectivity context while showing where hail has actually fallen in
   // the last 30/60/120 min. 30 min is the operational default.
-  const [showMesh, setShowMesh] = useState(urlInitial.showMesh ?? false);
-  const [meshWindow, setMeshWindow] = useState<30 | 60 | 120>(urlInitial.meshWindow ?? 30);
-  const meshSwr = useMrmsMesh(showMesh, meshWindow);
-  const meshUrlPath = meshSwr.data?.urlPath ?? null;
+  // MESH (MRMS Max Estimated Size of Hail) overlay retired alongside rotation —
+  // same dead THREDDS source. Per-cell hail size now lives in the ProbSevere
+  // readout (MESH in inches). State kept (read-only) for URL back-compat; the
+  // hook is hard-gated off so it never polls the decommissioned endpoint.
+  const [showMesh] = useState(urlInitial.showMesh ?? false);
+  const [meshWindow] = useState<30 | 60 | 120>(urlInitial.meshWindow ?? 30);
+  const meshUrlPath: string | null = null;
 
   // F12: METAR surface obs. Compact "station plot lite" — temp-colored pin,
   // wind arrow (rotated to direction wind is going TOWARD), and a text
@@ -4036,11 +4042,15 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             draw toolbar to its right has room to breathe on a 375px viewport. */}
         {!uiHidden && (
           <div className="products-rail absolute top-3 left-3 md:top-4 md:left-4 w-[52px] md:w-[68px] bg-wx-card border border-wx-line rounded-xl p-1 md:p-1.5 flex flex-col gap-0.5 z-20">
-            {(Object.keys(PRODUCTS) as ProductKey[]).map((k) => {
+            {(Object.keys(PRODUCTS) as ProductKey[])
+              // 'rotation' (MRMS Az-Shear) retired — dead THREDDS source. Hidden
+              // from the rail; use ProbSevere + Rotation IDs for rotation.
+              .filter((k) => k !== 'rotation')
+              .map((k) => {
               const p = PRODUCTS[k];
               const Icon = p.icon;
               const allowed = selectedSite ? p.modes.site : p.modes.composite;
-              const disabled = !allowed || (k === 'rotation' && !mrmsUrlPath);
+              const disabled = !allowed;
               const active = effectiveProduct === k;
               return (
                 <button
@@ -4784,41 +4794,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showMetar ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
-              {/* F10: MRMS MESH (Max Estimated Size of Hail) overlay. */}
-              <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[10px] text-wx-mute">
-                  Hail tracks (MESH) · last {meshWindow} min
-                  {showMesh && meshSwr.isLoading ? ' · updating' : ''}
-                  {showMesh && meshUrlPath === null && !meshSwr.isLoading ? ' · no data' : ''}
-                </span>
-                <button
-                  onClick={() => setShowMesh((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showMesh ? 'bg-emerald-400' : 'bg-wx-line'}`}
-                  aria-pressed={showMesh}
-                  title={showMesh ? 'Hide MRMS MESH hail overlay' : 'Show MRMS MESH hail overlay'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showMesh ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              {showMesh && (
-                <div className="flex items-center gap-1 mb-2 ml-0.5">
-                  {([30, 60, 120] as const).map((w) => (
-                    <button
-                      key={w}
-                      type="button"
-                      onClick={() => setMeshWindow(w)}
-                      className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono border transition ${
-                        meshWindow === w
-                          ? 'bg-emerald-500/20 border-emerald-400/70 text-emerald-200'
-                          : 'bg-wx-card border-wx-line text-wx-mute hover:text-wx-fg'
-                      }`}
-                    >
-                      {w}m
-                    </button>
-                  ))}
-                  <span className="text-[9px] text-wx-mute ml-1">accumulation</span>
-                </div>
-              )}
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[10px] text-wx-mute">
                   NWS zones · forecast + fire
