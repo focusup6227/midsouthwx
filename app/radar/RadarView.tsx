@@ -28,7 +28,7 @@ import {
   distanceKm,
   type RadarSite,
 } from '@/lib/radar/sites';
-import { alertTint, categoryBadge, geometryCentroid, shortNwsLocation, type NwsRadarAlert } from '@/lib/nws/radar';
+import { alertTint, categoryBadge, geometryCentroid, nwsAlertPriority, shortNwsLocation, type NwsRadarAlert } from '@/lib/nws/radar';
 import { STORM_TRACK_LINE_COLOR } from '@/lib/nws/storm-tracks';
 import {
   useWarnings,
@@ -3001,13 +3001,24 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   );
   const displayWarnings = useMemo<NwsWarning[]>(() => {
     const t = scrubTimeMs;
-    return warnings.filter((w) => {
-      if (!isCategoryVisible(w.category)) return false;
-      if (t == null) return true;
-      const eff = w.effective ? new Date(w.effective).getTime() : -Infinity;
-      const exp = w.expires_at ? new Date(w.expires_at).getTime() : Infinity;
-      return eff <= t && exp > t;
-    });
+    return warnings
+      .filter((w) => {
+        if (!isCategoryVisible(w.category)) return false;
+        if (t == null) return true;
+        const eff = w.effective ? new Date(w.effective).getTime() : -Infinity;
+        const exp = w.expires_at ? new Date(w.expires_at).getTime() : Infinity;
+        return eff <= t && exp > t;
+      })
+      // Triage order: scariest first (Tornado/Severe Warnings) so the chip row
+      // and inspector list — both sliced to the first N — never bury an active
+      // warning behind a flood/winter watch. Tie-break on soonest expiry.
+      .sort((a, b) => {
+        const d = nwsAlertPriority(b) - nwsAlertPriority(a);
+        if (d !== 0) return d;
+        const ea = a.expires_at ? new Date(a.expires_at).getTime() : Infinity;
+        const eb = b.expires_at ? new Date(b.expires_at).getTime() : Infinity;
+        return ea - eb;
+      });
   }, [warnings, scrubTimeMs, isCategoryVisible]);
 
   // Unified Threat Board — one prioritized triage list merging the three threat

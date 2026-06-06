@@ -1,5 +1,7 @@
 /** NWS event classification for radar map styling. */
 
+import type { ConcernType } from './concern';
+
 export type NwsAlertCategory =
   | 'warning'
   | 'watch'
@@ -47,6 +49,37 @@ export type NwsRadarAlert = {
   in_path_count: number | null;
   in_path_corridor_km: number | null;
 };
+
+// Triage priority for ordering alerts in the radar UI — higher = more urgent.
+// Category dominates (a warning always outranks a watch), then the hazard
+// concern within that category. So a Tornado/Severe Thunderstorm Warning sorts
+// to the very top while a Flood/Winter Watch sinks. Used to order the
+// top-of-screen warning chips and the inspector list so the operator's scariest
+// threats are never pushed off the visible (sliced) set by lower-tier alerts.
+const CATEGORY_RANK: Record<NwsAlertCategory, number> = {
+  warning: 1000,
+  watch: 400,
+  advisory: 200,
+  statement: 120,
+  discussion: 100,
+  other: 50,
+};
+
+const CONCERN_RANK: Record<ConcernType, number> = {
+  tornado: 320,
+  severe: 220,
+  flood: 120,
+  wind: 110,
+  winter: 80,
+  fire: 70,
+  other: 60,
+};
+
+export function nwsAlertPriority(
+  a: Pick<NwsRadarAlert, 'category' | 'concern_type'>,
+): number {
+  return (CATEGORY_RANK[a.category] ?? 50) + (CONCERN_RANK[a.concern_type] ?? 60);
+}
 
 export function classifyNwsEvent(event: string): {
   category: NwsAlertCategory;
