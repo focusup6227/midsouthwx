@@ -19,6 +19,7 @@ import {
   CloudLightning, Radio, Wind, Atom, RotateCw, Satellite,
   Play, Pause, Trash2, Send, Target, Search, X,
   ChevronLeft, ChevronRight, ChevronDown, Eye, EyeOff, MousePointer2, Zap, Droplets, CloudRain,
+  PenTool, AlertTriangle,
 } from 'lucide-react';
 import {
   NEXRAD_SITES,
@@ -890,6 +891,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     return false;
   });
   const [uiHidden, setUiHidden] = useState(urlInitial.uiHidden ?? false);
+  // Mobile-only: the draw tools collapse into a popover menu and the warning
+  // chips collapse into a single "N alerts" button that opens a bottom sheet.
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [alertsSheetOpen, setAlertsSheetOpen] = useState(false);
   const [showSitePills, setShowSitePills] = useState(urlInitial.showSitePills ?? true);
   const [showLightning, setShowLightning] = useState(urlInitial.showLightning ?? false);
   // F9: NEXRAD velocity-couplet rotation IDs. Default off — these are noisy
@@ -2614,6 +2619,20 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
   const startPolygonDraw = () => { cancelDraw(); setDrawMode('polygon'); setPolygonPoints([]); };
   const startSnapMode = () => { cancelDraw(); setDrawMode('snap'); };
+
+  // Nowcast preset: warnings + reports stay on either way; the storm-scale
+  // convective overlays (ProbSevere / rotation / lightning) toggle with it.
+  // Shared by the desktop toolbar button and the mobile Tools menu item.
+  const toggleNowcast = () => {
+    const next = !nowcastOn;
+    setNowcastOn(next);
+    setShowNws(true);
+    setShowStormReports(true);
+    setShowLsr(true);
+    setShowProbSevere(next);
+    setShowCouplets(next);
+    setShowLightning(next);
+  };
 
   // Extract a single outer ring from a warning's GeoJSON geometry for use as
   // a Selection. MultiPolygon warnings (split alerts) lose their other parts —
@@ -4528,52 +4547,100 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
-        {/* Draw toolbar. Icon-only on mobile so the row fits beside the
-            narrowed products rail; full labels return at md+. */}
+        {/* Draw toolbar. Desktop: inline labelled buttons. Mobile: the three
+            primary tools collapse into a single Tools popover (+ a compact
+            "N alerts" button) so the top of the map isn't a wall of chrome. */}
         {!uiHidden && (
-          <div className="absolute top-3 left-[72px] md:top-4 md:left-[100px] flex gap-1.5 md:gap-2 items-center z-20">
-            <button
-              onClick={startPolygonDraw}
-              className={`px-2.5 md:px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'polygon' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
-              aria-label="Draw polygon"
-              title="Draw polygon"
-            >
-              <Target size={16} className="md:hidden" />
-              <Target size={14} className="hidden md:inline" />
-              <span className="hidden md:inline">Polygon</span>
-            </button>
-            <button
-              onClick={startSnapMode}
-              className={`px-2.5 md:px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'snap' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
-              aria-label="Adopt alert"
-              title="Adopt alert"
-            >
-              <MousePointer2 size={16} className="md:hidden" />
-              <MousePointer2 size={14} className="hidden md:inline" />
-              <span className="hidden md:inline">Adopt alert</span>
-            </button>
-            <button
-              onClick={() => {
-                const next = !nowcastOn;
-                setNowcastOn(next);
-                // Decision context that's always useful stays on either way.
-                setShowNws(true);
-                setShowStormReports(true);
-                setShowLsr(true);
-                // The storm-scale convective overlays toggle with the preset.
-                setShowProbSevere(next);
-                setShowCouplets(next);
-                setShowLightning(next);
-              }}
-              className={`px-2.5 md:px-3 py-2.5 md:py-2 border rounded-lg text-sm flex items-center gap-1.5 ${nowcastOn ? 'bg-rose-500 text-white border-rose-400' : 'bg-wx-card border-wx-line'}`}
-              aria-label="Nowcast mode"
-              aria-pressed={nowcastOn}
-              title={nowcastOn ? 'Exit nowcast mode (clear storm-scale overlays)' : 'Nowcast mode — warnings + ProbSevere + rotation + lightning + reports'}
-            >
-              <Zap size={16} className="md:hidden" />
-              <Zap size={14} className="hidden md:inline" />
-              <span className="hidden md:inline">Nowcast</span>
-            </button>
+          <div className="absolute top-3 left-[72px] md:top-4 md:left-[100px] flex gap-1.5 md:gap-2 items-center z-30">
+            {/* Mobile: Tools menu trigger + popover */}
+            <div className="md:hidden relative">
+              <button
+                onClick={() => setToolsMenuOpen((v) => !v)}
+                className={`px-2.5 py-2.5 bg-wx-card border rounded-lg text-sm flex items-center gap-1 ${drawMode !== 'none' || nowcastOn ? 'border-wx-accent text-wx-accent' : 'border-wx-line text-wx-fg'}`}
+                aria-label="Drawing tools"
+                aria-expanded={toolsMenuOpen}
+                title="Tools"
+              >
+                <PenTool size={16} />
+                <ChevronDown size={12} className={`transition-transform ${toolsMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {toolsMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setToolsMenuOpen(false)} />
+                  <div className="absolute top-full left-0 mt-1.5 w-48 bg-wx-card border border-wx-line rounded-xl p-1 flex flex-col gap-0.5 shadow-xl z-20">
+                    <button
+                      onClick={() => { startPolygonDraw(); setToolsMenuOpen(false); }}
+                      className={`flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm text-left ${drawMode === 'polygon' ? 'bg-wx-accent text-black' : 'text-wx-fg hover:bg-wx-ink'}`}
+                    >
+                      <Target size={15} /> Draw polygon
+                    </button>
+                    <button
+                      onClick={() => { startSnapMode(); setToolsMenuOpen(false); }}
+                      className={`flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm text-left ${drawMode === 'snap' ? 'bg-wx-accent text-black' : 'text-wx-fg hover:bg-wx-ink'}`}
+                    >
+                      <MousePointer2 size={15} /> Adopt alert
+                    </button>
+                    <button
+                      onClick={() => { toggleNowcast(); setToolsMenuOpen(false); }}
+                      aria-pressed={nowcastOn}
+                      className={`flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm text-left ${nowcastOn ? 'bg-rose-500 text-white' : 'text-wx-fg hover:bg-wx-ink'}`}
+                    >
+                      <Zap size={15} /> {nowcastOn ? 'Exit nowcast' : 'Nowcast mode'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Mobile: compact alerts button — opens the alerts sheet. */}
+            {showNws && displayWarnings.length > 0 && (
+              <button
+                onClick={() => setAlertsSheetOpen(true)}
+                className={`md:hidden px-2.5 py-2.5 bg-wx-card/95 backdrop-blur-sm border rounded-lg text-sm font-semibold flex items-center gap-1.5 ${
+                  displayWarnings.some((w) => w.category === 'warning' && w.hazard === 'tornado')
+                    ? 'border-red-500/60 text-red-300'
+                    : displayWarnings.some((w) => w.category === 'warning' && w.hazard === 'severe')
+                      ? 'border-orange-500/60 text-orange-300'
+                      : displayWarnings.some((w) => w.category === 'warning')
+                        ? 'border-emerald-500/60 text-emerald-300'
+                        : 'border-wx-line text-wx-fg'
+                }`}
+                aria-label={`${displayWarnings.length} active alerts`}
+                title="Active alerts"
+              >
+                <AlertTriangle size={15} />
+                {displayWarnings.length}
+              </button>
+            )}
+
+            {/* Desktop: inline labelled toolbar */}
+            <div className="hidden md:flex gap-2 items-center">
+              <button
+                onClick={startPolygonDraw}
+                className={`px-3 py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'polygon' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
+                aria-label="Draw polygon"
+                title="Draw polygon"
+              >
+                <Target size={14} /> Polygon
+              </button>
+              <button
+                onClick={startSnapMode}
+                className={`px-3 py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'snap' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
+                aria-label="Adopt alert"
+                title="Adopt alert"
+              >
+                <MousePointer2 size={14} /> Adopt alert
+              </button>
+              <button
+                onClick={toggleNowcast}
+                className={`px-3 py-2 border rounded-lg text-sm flex items-center gap-1.5 ${nowcastOn ? 'bg-rose-500 text-white border-rose-400' : 'bg-wx-card border-wx-line'}`}
+                aria-label="Nowcast mode"
+                aria-pressed={nowcastOn}
+                title={nowcastOn ? 'Exit nowcast mode (clear storm-scale overlays)' : 'Nowcast mode — warnings + ProbSevere + rotation + lightning + reports'}
+              >
+                <Zap size={14} /> Nowcast
+              </button>
+            </div>
             {drawMode === 'polygon' && (
               <button onClick={completePolygon} disabled={polygonPoints.length < 3} className="px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm disabled:opacity-50">Complete ({polygonPoints.length})</button>
             )}
@@ -4618,9 +4685,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
+        {/* Desktop alert chips. On mobile these collapse into the compact
+            "N alerts" button (in the toolbar row) → alerts sheet. */}
         {!uiHidden && showNws && displayWarnings.length > 0 && (
           <div
-            className="wx-scroll absolute top-[64px] left-[72px] right-3 md:top-[68px] md:left-[100px] md:right-[340px] z-20 flex flex-wrap md:flex-nowrap items-center gap-1.5 md:gap-2 md:overflow-x-auto md:whitespace-nowrap max-h-[88px] md:max-h-none overflow-y-auto pr-2"
+            className="wx-scroll absolute md:top-[68px] md:left-[100px] md:right-[340px] z-20 hidden md:flex md:flex-nowrap items-center md:gap-2 md:overflow-x-auto md:whitespace-nowrap md:max-h-none"
           >
             {displayWarnings.slice(0, 12).map((w) => (
               <button
@@ -4662,6 +4731,53 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 <span className="hidden md:inline">{w.label}</span>
               </button>
             ))}
+          </div>
+        )}
+
+        {/* Mobile alerts sheet — the list behind the compact "N alerts" button.
+            Same tap target as a desktop chip: selects + flies to the warning. */}
+        {!uiHidden && alertsSheetOpen && showNws && displayWarnings.length > 0 && (
+          <div className="md:hidden absolute inset-0 z-40">
+            <div
+              className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+              onClick={() => setAlertsSheetOpen(false)}
+            />
+            <div className="absolute bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 flex flex-col gap-2 wx-scroll">
+              <button
+                onClick={() => setAlertsSheetOpen(false)}
+                className="absolute top-1.5 right-1.5 w-7 h-7 inline-flex items-center justify-center rounded-md text-wx-mute hover:text-wx-fg hover:bg-wx-ink"
+                aria-label="Close alerts"
+              >
+                <X size={15} />
+              </button>
+              <div className="text-[11px] uppercase tracking-[0.06em] text-wx-mute font-semibold">
+                {displayWarnings.length} active alert{displayWarnings.length === 1 ? '' : 's'}
+              </div>
+              {displayWarnings.map((w) => (
+                <button
+                  key={w.id}
+                  onClick={() => { setSelectedWarning(w); focusWarning(w); setAlertsSheetOpen(false); }}
+                  className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border bg-wx-ink/60 text-left text-sm font-medium ${
+                    selectedWarning?.id === w.id ? 'border-wx-accent bg-wx-accent/10' : ''
+                  } ${
+                    w.category === 'warning' && w.hazard === 'tornado'
+                      ? 'border-red-500/50 text-red-300'
+                      : w.category === 'warning' && w.hazard === 'severe'
+                        ? 'border-orange-500/50 text-orange-300'
+                        : w.category === 'warning' && w.hazard === 'flood'
+                          ? 'border-emerald-500/50 text-emerald-300'
+                          : w.category === 'watch'
+                            ? 'border-yellow-500/50 text-yellow-200'
+                            : w.category === 'advisory'
+                              ? 'border-violet-500/50 text-violet-200'
+                              : 'border-slate-500/50 text-slate-300'
+                  }`}
+                >
+                  <span className="text-[9px] font-bold opacity-80 shrink-0">{categoryBadge(w.category)}</span>
+                  <span className="truncate">{w.label}</span>
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
