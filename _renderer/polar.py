@@ -45,7 +45,7 @@ COLOR_RANGES = {
 # rely on Py-ART's own field mask (gates below SNR are already masked out). KDP
 # (retrieved from PHIDP) is only defined where there's echo, so None too.
 MASK_THRESHOLDS = {
-    "refl": -10.0,
+    "refl": 5.0,
     "vel": None,
     "cc": 0.2,
     "zdr": None,
