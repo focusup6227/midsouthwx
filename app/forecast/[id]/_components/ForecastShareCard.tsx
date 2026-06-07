@@ -67,6 +67,26 @@ export default function ForecastShareCard({
               Set <code>NEXT_PUBLIC_SITE_URL</code> to surface the share URL here.
             </div>
           )}
+          <div className="flex items-center gap-3 pt-0.5">
+            <a
+              href={`/f/${publicToken}/card?download=1`}
+              className="text-[11px] text-wx-accent hover:underline"
+            >
+              ↓ Download graphic
+            </a>
+            <a
+              href={`/f/${publicToken}/card`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-wx-mute hover:text-wx-fg"
+            >
+              Preview
+            </a>
+          </div>
+          <div className="text-[10px] text-wx-mute leading-snug">
+            1080×1350 PNG for Facebook — upload it natively to a post (more reach
+            than sharing the link). Pasting the link shows the same card.
+          </div>
           <button
             type="button"
             disabled={pending}

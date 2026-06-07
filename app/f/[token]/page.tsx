@@ -1,8 +1,38 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { supabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
+
+// Rich link preview: point og:image at the generated forecast graphic so a
+// pasted /f/<token> link renders the same card the operator can download.
+export async function generateMetadata({ params }: { params: { token: string } }): Promise<Metadata> {
+  const admin = supabaseAdmin();
+  const { data } = await admin
+    .from('forecasts')
+    .select('title, hazards, status')
+    .eq('public_token', params.token)
+    .in('status', ['issued', 'closed'])
+    .maybeSingle();
+  if (!data) return { title: 'Forecast · MidSouthWX' };
+
+  const base = (process.env.NEXT_PUBLIC_SITE_URL ?? '').replace(/\/$/, '');
+  const cardUrl = `${base}/f/${params.token}/card`;
+  const title = `${data.title} · MidSouthWX`;
+  const hazards = Array.isArray(data.hazards) ? (data.hazards as string[]) : [];
+  const description = hazards.length
+    ? `Mid-South WX forecast — ${hazards.join(', ')}.`
+    : 'Mid-South WX operator forecast.';
+  const images = base ? [{ url: cardUrl, width: 1080, height: 1350, alt: data.title }] : undefined;
+
+  return {
+    title,
+    description,
+    openGraph: { title: data.title, description, images, type: 'article' },
+    twitter: { card: 'summary_large_image', title: data.title, description, images: images?.map((i) => i.url) },
+  };
+}
 
 type Forecast = {
   id: string;
