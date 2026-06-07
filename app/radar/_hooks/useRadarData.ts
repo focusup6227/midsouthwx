@@ -71,7 +71,9 @@ export const STORM_REPORTS_KEY = '/api/radar/storm-reports';
 export function useStormReports() {
   return useSWR<StormReportsResponse>(STORM_REPORTS_KEY, jsonFetcher, {
     ...BASE_OPTS,
-    refreshInterval: 60_000,
+    // Subscriber-submitted reports trickle in; a 2-min refresh is plenty
+    // and halves the standing egress from this operator-only feed.
+    refreshInterval: 120_000,
     fallbackData: EMPTY_STORM_REPORTS,
   });
 }
@@ -82,7 +84,9 @@ export const STORM_REPORT_CLUSTERS_KEY = '/api/radar/storm-report-clusters';
 export function useStormReportClusters() {
   return useSWR<StormReportClustersResponse>(STORM_REPORT_CLUSTERS_KEY, jsonFetcher, {
     ...BASE_OPTS,
-    refreshInterval: 60_000,
+    // Clusters form over a 10-min window, so 2-min polling keeps the pulsing
+    // overlay current while cutting this feed's request volume in half.
+    refreshInterval: 120_000,
     fallbackData: EMPTY_STORM_REPORT_CLUSTERS,
   });
 }
@@ -153,9 +157,9 @@ export function useCouplets(enabled: boolean) {
     jsonFetcher,
     {
       ...BASE_OPTS,
-      // Couplet-poll edge function fires every 60 s; 30 s client refresh
-      // keeps the display within a single poll cycle of fresh.
-      refreshInterval: 30_000,
+      // Couplet-poll edge function fires every 60 s, so polling faster than
+      // that only re-fetches identical data. Match the 60 s source cadence.
+      refreshInterval: 60_000,
       fallbackData: EMPTY_COUPLETS,
     },
   );
@@ -176,7 +180,10 @@ export function useLightning(
   const key = enabled && bbox ? `${LIGHTNING_KEY_BASE}?bbox=${bbox.join(',')}` : null;
   return useSWR<LightningResponse>(key, jsonFetcher, {
     ...BASE_OPTS,
-    refreshInterval: 15_000,
+    // Upstream NetCDF lands ~once a minute; 30 s keeps strikes responsive
+    // while quartering the egress of the old 15 s cadence (this feed also
+    // re-fetches whenever the map bbox changes).
+    refreshInterval: 30_000,
     fallbackData: EMPTY_LIGHTNING,
   });
 }

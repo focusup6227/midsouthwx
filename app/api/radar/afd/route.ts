@@ -41,7 +41,10 @@ export async function GET() {
 
   const items = Array.from(latestPerWfo.values()).sort((a, b) => a.wfo.localeCompare(b.wfo));
 
+  // AFDs are public NWS products that publish ~4×/day per office and the
+  // poller only refreshes them every 30 min, so let the CDN absorb the
+  // operator's 10-min polls instead of hitting Postgres each time.
   return NextResponse.json({ items }, {
-    headers: { 'Cache-Control': 'private, max-age=60' },
+    headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=900' },
   });
 }

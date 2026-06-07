@@ -63,10 +63,11 @@ export async function GET(req: Request) {
       minutes,
     },
     {
-      // Edge function polls every 60 s; 20 s edge cache absorbs jitter
-      // without staling the live display. SWR refreshes every 30 s on the
-      // client, so this cache mostly de-duplicates parallel page loads.
-      headers: { 'Cache-Control': 'public, s-maxage=20, stale-while-revalidate=60' },
+      // Edge function polls every 60 s, so the underlying data can't change
+      // faster than that — match the edge cache to the source cadence so
+      // repeat/parallel loads within a poll cycle are served from the CDN
+      // instead of re-querying Postgres. SWR also refreshes every 60 s.
+      headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' },
     },
   );
 }

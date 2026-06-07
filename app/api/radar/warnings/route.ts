@@ -214,6 +214,9 @@ export async function GET() {
 
   return NextResponse.json(
     { warnings, geojson, tracks },
-    { headers: { 'Cache-Control': 'public, s-maxage=30, stale-while-revalidate=120' } },
+    // nws-poll refreshes the underlying alerts every 60 s, so a 60 s edge
+    // cache serves repeat/parallel loads from the CDN without staling the
+    // display or re-running the (audience-counting) query per request.
+    { headers: { 'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120' } },
   );
 }

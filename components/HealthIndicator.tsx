@@ -13,7 +13,7 @@ import { supabaseBrowser } from '@/lib/supabase/client';
 //   Queue — count of pending outbound rows (zero = caught up).
 //
 // Read via the existing function_health() + outbound_queue_depth() RPCs
-// so we don't introduce new permissions. Polls every 15 s when visible;
+// so we don't introduce new permissions. Polls every 30 s when visible;
 // updates "ago" labels every second locally so the strip ticks live
 // without hammering the database.
 
@@ -69,7 +69,10 @@ function tone(seconds: number | null, kind: 'recent' | 'stale'): string {
 
 export default function HealthIndicator() {
   const { data } = useSWR('health-indicator', fetchHealth, {
-    refreshInterval: 15_000,
+    // Staleness thresholds are 180 s+, so a 30 s poll is ample. The "ago"
+    // labels still tick every second locally, so the strip stays live while
+    // this halves the standing browser→Postgres egress from two RPCs.
+    refreshInterval: 30_000,
     revalidateOnFocus: true,
   });
   // Local re-render every second so the "Ns ago" labels tick smoothly
