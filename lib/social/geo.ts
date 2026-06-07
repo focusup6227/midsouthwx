@@ -87,3 +87,42 @@ export function geometryIntersectsBbox(geom: PolyGeom, bbox: Bbox): boolean {
   }
   return false;
 }
+
+/** Even-odd ray cast against a single polygon's rings (holes included). */
+function pointInPolygon(rings: number[][][], lng: number, lat: number): boolean {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i];
+      const [xj, yj] = ring[j];
+      const crosses = yi > lat !== yj > lat &&
+        lng < ((xj - xi) * (lat - yi)) / (yj - yi || Number.EPSILON) + xi;
+      if (crosses) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * True overlap test between a (Multi)Polygon and a bbox. Unlike
+ * `geometryIntersectsBbox` (vertex-in-bbox only), this also catches the case
+ * where a large risk band fully encloses the framed area — important when we
+ * headline the highest SPC category over the Mid-South: a SLGT/ENH band that
+ * wraps the whole region has no vertices inside the small AOR box, but still
+ * covers it. Checks polygon vertices in the box plus box corners/center in the
+ * polygon, which together cover every realistic outlook shape.
+ */
+export function bboxOverlapsGeometry(geom: PolyGeom, bbox: Bbox): boolean {
+  if (geometryIntersectsBbox(geom, bbox)) return true;
+  const [w, s, e, n] = bbox;
+  const probes: [number, number][] = [
+    [w, s], [e, s], [e, n], [w, n], [(w + e) / 2, (s + n) / 2],
+  ];
+  const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+  for (const poly of polys) {
+    for (const [lng, lat] of probes) {
+      if (pointInPolygon(poly, lng, lat)) return true;
+    }
+  }
+  return false;
+}

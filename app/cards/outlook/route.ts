@@ -7,7 +7,7 @@ import { ImageResponse } from 'next/og';
 import { createClient } from '@supabase/supabase-js';
 import { outlookCardElement, type OverlayPath, type OutlookCardData } from '@/lib/social/outlook-card';
 import { loadCardFonts } from '@/lib/social/og-fonts';
-import { planViewport, makeProjector, geometryToPath, type Bbox } from '@/lib/social/geo';
+import { planViewport, makeProjector, geometryToPath, bboxOverlapsGeometry, type Bbox } from '@/lib/social/geo';
 
 export const runtime = 'edge';
 
@@ -111,7 +111,18 @@ export async function GET(req: Request) {
     }
   }
 
-  const highest = asCat(spc?.highest_label);
+  // Headline the highest risk that actually covers the Mid-South area we frame —
+  // NOT spc.highest_label, which is the worst band anywhere in the national
+  // outlook (an ENH in the Plains shouldn't headline a Mid-South SLGT day).
+  let highest: Cat | null = null;
+  let highestRank = 0;
+  for (const f of spcFeatures) {
+    const cat = asCat(f.properties?.LABEL ?? f.properties?.label);
+    if (!cat || CAT_RANK[cat] <= highestRank) continue;
+    if (!bboxOverlapsGeometry(f.geometry, AOR_BBOX)) continue;
+    highest = cat;
+    highestRank = CAT_RANK[cat];
+  }
   const risk = highest ? RISK_DISPLAY[highest] : { label: 'No Severe Outlook', color: '#64748b' };
 
   let warningSummary: string;

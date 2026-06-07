@@ -70,6 +70,9 @@ export default async function BriefingPage() {
 
       <h2 className="text-xs uppercase tracking-wider text-wx-mute font-semibold mt-5 mb-2">
         SPC convective outlook
+        <span className="ml-2 normal-case tracking-normal text-[10px] text-wx-mute/70 font-normal">
+          highest risk over the Mid-South
+        </span>
       </h2>
       <div className="grid grid-cols-3 gap-2">
         {(['1', '2', '3'] as const).map((d) => {
