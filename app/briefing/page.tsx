@@ -107,6 +107,31 @@ export default async function BriefingPage() {
         </div>
       </div>
 
+      <h2 className="text-xs uppercase tracking-wider text-wx-mute font-semibold mb-2">
+        Shareable graphics
+      </h2>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="card p-3 space-y-1">
+          <div className="text-sm font-semibold">Severe outlook</div>
+          <div className="text-[11px] text-wx-mute">SPC risk + active warnings over the Mid-South map.</div>
+          <div className="flex items-center gap-3 pt-1">
+            <a href="/cards/outlook?download=1" className="text-[11px] text-wx-accent hover:underline">↓ Download</a>
+            <a href="/cards/outlook" target="_blank" rel="noreferrer" className="text-[11px] text-wx-mute hover:text-wx-fg">Preview</a>
+          </div>
+        </div>
+        <div className="card p-3 space-y-1">
+          <div className="text-sm font-semibold">Daily forecast</div>
+          <div className="text-[11px] text-wx-mute">Today / tonight / next days for Memphis.</div>
+          <div className="flex items-center gap-3 pt-1">
+            <a href="/cards/daily?download=1" className="text-[11px] text-wx-accent hover:underline">↓ Download</a>
+            <a href="/cards/daily" target="_blank" rel="noreferrer" className="text-[11px] text-wx-mute hover:text-wx-fg">Preview</a>
+          </div>
+        </div>
+      </div>
+      <div className="text-[10px] text-wx-mute mt-1 mb-5">
+        1080×1350 PNGs — upload natively to Facebook for best reach.
+      </div>
+
       {snap.hwos.length > 0 ? (
         <>
           <h2 className="text-xs uppercase tracking-wider text-wx-mute font-semibold mb-2">

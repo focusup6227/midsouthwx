@@ -9,6 +9,7 @@
 import { ImageResponse } from 'next/og';
 import { createClient } from '@supabase/supabase-js';
 import { forecastCardElement, type ForecastCardData } from '@/lib/social/forecast-card';
+import { loadCardFonts } from '@/lib/social/og-fonts';
 
 export const runtime = 'edge';
 
@@ -33,12 +34,6 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     return new Response('Not found', { status: 404 });
   }
 
-  const [regular, semibold, bold] = await Promise.all([
-    fetch(new URL('./Inter-Regular.woff', import.meta.url)).then((r) => r.arrayBuffer()),
-    fetch(new URL('./Inter-SemiBold.woff', import.meta.url)).then((r) => r.arrayBuffer()),
-    fetch(new URL('./Inter-Bold.woff', import.meta.url)).then((r) => r.arrayBuffer()),
-  ]);
-
   const cardData: ForecastCardData = {
     title: data.title,
     hazards: Array.isArray(data.hazards) ? (data.hazards as string[]) : [],
@@ -53,11 +48,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
   const res = new ImageResponse(forecastCardElement(cardData), {
     width: WIDTH,
     height: HEIGHT,
-    fonts: [
-      { name: 'Inter', data: regular, weight: 400, style: 'normal' },
-      { name: 'Inter', data: semibold, weight: 600, style: 'normal' },
-      { name: 'Inter', data: bold, weight: 700, style: 'normal' },
-    ],
+    fonts: await loadCardFonts(),
   });
 
   if (new URL(req.url).searchParams.has('download')) {
