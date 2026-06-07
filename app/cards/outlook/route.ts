@@ -15,8 +15,17 @@ const WIDTH = 1080;
 const HEIGHT = 1350;
 const HERO_W = 1080;
 const HERO_H = 700;
-// Mid-South area of responsibility: roughly the Memphis CWA plus neighbors.
-const AOR_BBOX: Bbox = [-94.3, 32.2, -84.6, 38.6];
+// Default focus area when app_settings is unreadable: Memphis (KNQA), ~200 mi.
+const DEFAULT_FOCUS = { lat: 35.34, lon: -89.87, radius_mi: 200 };
+
+// Square (in real miles) `radius` on each side of the center; lon scaled by
+// cos(lat). Mirrors public.briefing_focus_geom() so the card and the briefing
+// page clip to the same box.
+function focusBbox(lat: number, lon: number, radiusMi: number): Bbox {
+  const dLat = radiusMi / 69;
+  const dLon = radiusMi / (69 * Math.cos((lat * Math.PI) / 180));
+  return [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
+}
 
 type Cat = 'TSTM' | 'MRGL' | 'SLGT' | 'ENH' | 'MDT' | 'HIGH';
 const CAT_RANK: Record<Cat, number> = { TSTM: 1, MRGL: 2, SLGT: 3, ENH: 4, MDT: 5, HIGH: 6 };
@@ -72,6 +81,19 @@ export async function GET(req: Request) {
 
   // Active warnings/watches (public NWS alerts).
   const { data: alertsFc } = await supabase.rpc('nws_alerts_radar_geojson');
+
+  // Operator-configurable focus area (Settings → Briefing focus area).
+  const { data: focusRow } = await supabase
+    .from('app_settings')
+    .select('briefing_focus_lat, briefing_focus_lon, briefing_focus_radius_mi')
+    .eq('id', true)
+    .maybeSingle();
+  const focus = {
+    lat: focusRow?.briefing_focus_lat ?? DEFAULT_FOCUS.lat,
+    lon: focusRow?.briefing_focus_lon ?? DEFAULT_FOCUS.lon,
+    radius_mi: focusRow?.briefing_focus_radius_mi ?? DEFAULT_FOCUS.radius_mi,
+  };
+  const AOR_BBOX = focusBbox(focus.lat, focus.lon, focus.radius_mi);
 
   const vp = planViewport(AOR_BBOX, HERO_W, HERO_H);
   const project = makeProjector(vp, HERO_W, HERO_H);

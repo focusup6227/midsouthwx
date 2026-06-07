@@ -1,5 +1,5 @@
 import { supabaseServer } from '@/lib/supabase/server';
-import { updateOperator } from './actions';
+import { updateOperator, updateBriefingFocus } from './actions';
 import PasswordForm from './PasswordForm';
 import IntegrationEndpoints from './IntegrationEndpoints';
 import TemplateEditor from './TemplateEditor';
@@ -27,6 +27,12 @@ export default async function SettingsPage() {
     .from('integration_endpoints')
     .select('id, name, url, severity_threshold, enabled, created_at')
     .order('name');
+
+  const { data: focus } = await supa
+    .from('app_settings')
+    .select('briefing_focus_label, briefing_focus_lat, briefing_focus_lon, briefing_focus_radius_mi')
+    .eq('id', true)
+    .maybeSingle();
 
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
 
@@ -93,6 +99,76 @@ export default async function SettingsPage() {
             Set <code>NEXT_PUBLIC_TELEGRAM_BOT_USERNAME</code> in <code>.env.local</code>.
           </p>
         )}
+      </section>
+
+      <section className="card p-5 space-y-3">
+        <h2 className="font-semibold">Briefing focus area</h2>
+        <p className="text-xs text-wx-mute">
+          Centers the daily-briefing map and sets which area the SPC risk
+          headline reflects — the &ldquo;highest risk&rdquo; badge uses the
+          worst categorical band that touches this box, not the national peak.
+          Defaults to Memphis. Tip: the Memphis (KNQA) radar is
+          <span className="font-mono"> 35.34, -89.87</span>.
+        </p>
+        <form action={updateBriefingFocus} className="space-y-3">
+          <label className="block">
+            <span className="block text-xs uppercase tracking-wide text-wx-mute mb-1">
+              Label
+            </span>
+            <input
+              className="input"
+              name="focus_label"
+              defaultValue={focus?.briefing_focus_label ?? 'Memphis'}
+              placeholder="Memphis"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wide text-wx-mute mb-1">
+                Center latitude
+              </span>
+              <input
+                className="input"
+                name="focus_lat"
+                type="number"
+                step="0.01"
+                defaultValue={focus?.briefing_focus_lat ?? 35.34}
+              />
+            </label>
+            <label className="block">
+              <span className="block text-xs uppercase tracking-wide text-wx-mute mb-1">
+                Center longitude
+              </span>
+              <input
+                className="input"
+                name="focus_lon"
+                type="number"
+                step="0.01"
+                defaultValue={focus?.briefing_focus_lon ?? -89.87}
+              />
+            </label>
+          </div>
+          <label className="block">
+            <span className="block text-xs uppercase tracking-wide text-wx-mute mb-1">
+              Radius (miles)
+            </span>
+            <input
+              className="input"
+              name="focus_radius_mi"
+              type="number"
+              step="10"
+              min={10}
+              max={1000}
+              defaultValue={focus?.briefing_focus_radius_mi ?? 200}
+            />
+            <span className="block text-[11px] text-wx-mute mt-1">
+              Half-width of the square framed around the center (10–1000 mi).
+            </span>
+          </label>
+          <div className="flex justify-end">
+            <button className="btn" type="submit">Save focus area</button>
+          </div>
+        </form>
       </section>
 
       <section className="card p-5 space-y-3">

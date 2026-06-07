@@ -7,12 +7,14 @@ export const dynamic = 'force-dynamic';
 type SpcDay = { highest_label: string | null; issued_at: string | null; valid_from: string | null; valid_until: string | null };
 type Afd = { wfo: string; product_id: string; issued_at: string; synopsis: string | null };
 type Hwo = { id: string; event: string; headline: string | null; area_desc: string | null; effective: string | null; expires_at: string | null };
+type Focus = { label: string | null; lat: number; lon: number; radius_mi: number };
 type Snapshot = {
   spc: Record<string, SpcDay>;
   afds: Afd[];
   hwos: Hwo[];
   warnings_count: number;
   watches_count: number;
+  focus: Focus | null;
   generated_at: string;
 };
 
@@ -40,8 +42,12 @@ export default async function BriefingPage() {
   const snap = (data as Snapshot | null) ?? {
     spc: {}, afds: [], hwos: [],
     warnings_count: 0, watches_count: 0,
+    focus: null,
     generated_at: new Date().toISOString(),
   };
+  const focusText = snap.focus
+    ? `highest risk within ${Math.round(snap.focus.radius_mi)} mi of ${snap.focus.label ?? 'the focus area'}`
+    : 'highest risk over the focus area';
 
   return (
     <DashShell
@@ -71,7 +77,8 @@ export default async function BriefingPage() {
       <h2 className="text-xs uppercase tracking-wider text-wx-mute font-semibold mt-5 mb-2">
         SPC convective outlook
         <span className="ml-2 normal-case tracking-normal text-[10px] text-wx-mute/70 font-normal">
-          highest risk over the Mid-South
+          {focusText} ·{' '}
+          <Link href="/settings" className="hover:text-wx-fg underline">change</Link>
         </span>
       </h2>
       <div className="grid grid-cols-3 gap-2">

@@ -39,3 +39,39 @@ export async function updateOperator(formData: FormData) {
 
   revalidatePath('/settings');
 }
+
+export async function updateBriefingFocus(formData: FormData) {
+  const label = String(formData.get('focus_label') ?? '').trim() || 'Focus area';
+  const lat = Number(String(formData.get('focus_lat') ?? '').trim());
+  const lon = Number(String(formData.get('focus_lon') ?? '').trim());
+  const radius = Number(String(formData.get('focus_radius_mi') ?? '').trim());
+
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+    throw new Error('Center latitude must be between -90 and 90');
+  }
+  if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+    throw new Error('Center longitude must be between -180 and 180');
+  }
+  if (!Number.isFinite(radius) || radius < 10 || radius > 1000) {
+    throw new Error('Radius must be between 10 and 1000 miles');
+  }
+
+  const supa = supabaseServer();
+  const { data: userRes } = await supa.auth.getUser();
+  if (!userRes.user) throw new Error('not authenticated');
+
+  const { error } = await supa
+    .from('app_settings')
+    .update({
+      briefing_focus_label: label,
+      briefing_focus_lat: lat,
+      briefing_focus_lon: lon,
+      briefing_focus_radius_mi: radius,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', true);
+  if (error) throw new Error(error.message);
+
+  revalidatePath('/settings');
+  revalidatePath('/briefing');
+}
