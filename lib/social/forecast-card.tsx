@@ -8,6 +8,7 @@
 
 export type ForecastCardData = {
   title: string;
+  areaLabel: string | null;
   hazards: string[];
   confidence: string | null;
   status: string;
@@ -145,9 +146,22 @@ export function forecastCardElement(d: ForecastCardData) {
         {title}
       </div>
 
+      {/* Coverage area (inline pin avoids an emoji-font dependency) */}
+      {d.areaLabel ? (
+        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', marginTop: 18 }}>
+          <svg width={32} height={32} viewBox="0 0 24 24" style={{ marginRight: 10 }}>
+            <path
+              d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 010-5 2.5 2.5 0 010 5z"
+              fill={ACCENT}
+            />
+          </svg>
+          <div style={{ display: 'flex', fontSize: 32, fontWeight: 600, color: FG }}>{d.areaLabel}</div>
+        </div>
+      ) : null}
+
       {/* Hazard chips */}
       {hazards.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', marginTop: 30 }}>
+        <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', marginTop: 24 }}>
           {hazards.map((h) => {
             const c = HAZARD_COLOR[h] ?? { bg: 'rgba(100,116,139,0.16)', fg: MUTE, border: LINE };
             return (
