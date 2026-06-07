@@ -23,11 +23,14 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
 
+  // The secret public_token is the access gate. Unlike the public page (which
+  // only shows issued/closed forecasts), the graphic renders at any stage so
+  // operators can preview/download before broadcasting — a draft with a share
+  // link should not 404 the Download button.
   const { data } = await supabase
     .from('forecasts')
     .select('title, hazards, confidence, status, valid_from, valid_until, discussion, verification')
     .eq('public_token', params.token)
-    .in('status', ['issued', 'closed'])
     .maybeSingle();
 
   if (!data) {
