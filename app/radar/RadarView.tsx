@@ -598,6 +598,22 @@ const WARNING_LINE_EXPR: any = [
 // drives line-width imperatively via setPaintProperty in an effect below so
 // react-map-gl doesn't re-diff the whole paint object every time a different
 // warning is clicked.
+
+// Draw order for overlapping warning polygons: higher key = painted on top.
+// Mirrors nwsAlertPriority (category dominates, then hazard concern), so a
+// Tornado / Severe Thunderstorm Warning fill is never buried under a flood or
+// winter polygon that merely arrived later in the feed. concern_type (present
+// after the client refetch) wins over hazard; falls back to hazard for the SSR
+// payload, then to a constant.
+const WARNING_SORT_KEY_EXPR: any = [
+  '+',
+  ['match', ['get', 'category'],
+    'warning', 1000, 'watch', 400, 'advisory', 200, 'statement', 120, 'discussion', 100,
+    50],
+  ['match', ['coalesce', ['get', 'concern_type'], ['get', 'hazard'], 'other'],
+    'tornado', 320, 'severe', 220, 'flood', 120, 'wind', 110, 'winter', 80, 'heat', 70, 'fire', 70,
+    60],
+];
 const WARNING_FILL_PAINT: any = {
   'fill-color': WARNING_FILL_EXPR,
   'fill-opacity': 0.9,
@@ -3857,7 +3873,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               id="warning-fill"
               {...overlayAnchor}
               type="fill"
-              layout={{ visibility: nwsLayerVis }}
+              layout={{ visibility: nwsLayerVis, 'fill-sort-key': WARNING_SORT_KEY_EXPR }}
               paint={WARNING_FILL_PAINT}
             />
             <Layer
@@ -3868,7 +3884,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 ['!=', ['get', 'category'], 'watch'],
                 ['!=', ['get', 'category'], 'discussion'],
               ]}
-              layout={{ visibility: nwsLayerVis }}
+              layout={{ visibility: nwsLayerVis, 'line-sort-key': WARNING_SORT_KEY_EXPR }}
               paint={WARNING_LINE_PAINT}
             />
             <Layer
@@ -3876,7 +3892,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               {...overlayAnchor}
               type="line"
               filter={['==', ['get', 'category'], 'watch']}
-              layout={{ visibility: nwsLayerVis }}
+              layout={{ visibility: nwsLayerVis, 'line-sort-key': WARNING_SORT_KEY_EXPR }}
               paint={WARNING_LINE_WATCH_PAINT}
             />
             <Layer
