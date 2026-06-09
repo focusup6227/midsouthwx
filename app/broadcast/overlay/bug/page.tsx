@@ -28,11 +28,16 @@ function useClock(): string {
 
 function Bug() {
   const q = useSearchParams();
-  const brand = q.get('brand') ?? 'MID-SOUTH WX';
-  const accent = q.get('accent') ?? '#fbbf24';
+  const live = q.get('live') === '1';
   const pos = q.get('pos') ?? 'top-right';
-  const state = useBroadcastState(30000);
+  const state = useBroadcastState(live ? 5000 : 30000);
   const clock = useClock();
+  const ctl = live ? state?.control ?? null : null;
+  const brand = ctl?.brand?.trim() || q.get('brand') || 'MID-SOUTH WX';
+  const accent = ctl?.accent?.trim() || q.get('accent') || '#fbbf24';
+
+  // In live mode the console can hide the bug entirely.
+  if (live && ctl && !ctl.bug_visible) return null;
 
   const corner =
     pos === 'top-left' ? 'top-0 left-0 items-start'

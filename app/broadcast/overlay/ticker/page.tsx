@@ -18,10 +18,12 @@ function tone(event: string): string {
 
 function Ticker() {
   const q = useSearchParams();
+  const live = q.get('live') === '1';
   const label = q.get('label') ?? 'ACTIVE ALERTS';
-  const accent = q.get('accent') ?? '#fbbf24';
   const speed = Math.max(15, Math.min(180, Number(q.get('speed')) || 45));
-  const state = useBroadcastState(30000);
+  const state = useBroadcastState(live ? 5000 : 30000);
+  const ctl = live ? state?.control ?? null : null;
+  const accent = ctl?.accent?.trim() || q.get('accent') || '#fbbf24';
 
   const segments = useMemo(() => {
     const items = state?.items ?? [];
@@ -34,6 +36,9 @@ function Ticker() {
       color: tone(it.event),
     }));
   }, [state]);
+
+  // In live mode the console can hide the ticker entirely.
+  if (live && ctl && !ctl.ticker_visible) return null;
 
   // Duplicate the run so the marquee loops seamlessly.
   const run = [...segments, ...segments];

@@ -23,6 +23,18 @@ export type TickerItem = {
   expires_at: string | null;
 };
 
+// Operator-authored live overlay control (public.broadcast_control singleton).
+// Drives the overlays when they are opened in ?live=1 mode.
+export type OverlayControl = {
+  brand: string;
+  accent: string;
+  lower_third_title: string;
+  lower_third_subtitle: string;
+  lower_third_visible: boolean;
+  bug_visible: boolean;
+  ticker_visible: boolean;
+};
+
 export type BroadcastState = {
   generated_at: string;
   day1_label: string | null;
@@ -31,7 +43,26 @@ export type BroadcastState = {
   warnings_count: number;
   watches_count: number;
   items: TickerItem[];
+  /** Live overlay control, or null when the singleton row is unavailable. */
+  control: OverlayControl | null;
 };
+
+// Reads the broadcast_control singleton. Resilient: returns null if the table
+// is missing (migration not yet applied) or the read errors, so overlays fall
+// back to their query-param defaults rather than breaking.
+async function readControl(client: SupabaseClient): Promise<OverlayControl | null> {
+  try {
+    const { data, error } = await client
+      .from('broadcast_control')
+      .select('brand, accent, lower_third_title, lower_third_subtitle, lower_third_visible, bug_visible, ticker_visible')
+      .eq('id', true)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as OverlayControl;
+  } catch {
+    return null;
+  }
+}
 
 // Active warnings/watches, freshest first — used for both the AI script
 // context and the on-air ticker. ['new','dispatched'] is the live set the NWS
@@ -60,9 +91,10 @@ async function activeAlerts(client: SupabaseClient): Promise<TickerItem[]> {
 // Lightweight state for the OBS overlays (ticker, bug, counts). Cheap enough
 // to poll every ~30s without a full briefing snapshot.
 export async function gatherBroadcastState(client: SupabaseClient): Promise<BroadcastState> {
-  const [{ data: snap }, items] = await Promise.all([
+  const [{ data: snap }, items, control] = await Promise.all([
     client.rpc('daily_briefing_snapshot'),
     activeAlerts(client),
+    readControl(client),
   ]);
   const s = (snap as SnapRow | null) ?? {};
   return {
@@ -72,6 +104,7 @@ export async function gatherBroadcastState(client: SupabaseClient): Promise<Broa
     warnings_count: s.warnings_count ?? 0,
     watches_count: s.watches_count ?? 0,
     items,
+    control,
   };
 }
 

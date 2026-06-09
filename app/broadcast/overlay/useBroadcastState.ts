@@ -5,11 +5,13 @@ import type { BroadcastState } from '@/lib/broadcast/data';
 
 // Polls the public overlay state feed. Used by the ticker and corner bug so
 // they stay current while live without a page reload. Refreshes on a timer
-// and again whenever the tab/source regains focus.
-export function useBroadcastState(pollMs = 30000): BroadcastState | null {
+// and again whenever the tab/source regains focus. Pass enabled=false to skip
+// fetching entirely (e.g. a static lower-third that isn't in live mode).
+export function useBroadcastState(pollMs = 30000, enabled = true): BroadcastState | null {
   const [state, setState] = useState<BroadcastState | null>(null);
 
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     const load = async () => {
       try {
@@ -30,7 +32,7 @@ export function useBroadcastState(pollMs = 30000): BroadcastState | null {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [pollMs]);
+  }, [pollMs, enabled]);
 
   return state;
 }

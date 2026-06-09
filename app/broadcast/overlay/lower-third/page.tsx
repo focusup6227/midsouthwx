@@ -2,17 +2,27 @@
 
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
+import { useBroadcastState } from '../useBroadcastState';
 
-// Branded lower-third name/title plate. All text comes from query params set
-// by the operator in the broadcast console, so nothing is read from the DB —
-// safe to serve to a cookieless OBS browser source.
+// Branded lower-third name/title plate. Static mode reads everything from query
+// params (cookieless-safe). In ?live=1 mode it follows the console: text and
+// visibility come from the broadcast_control row via /api/broadcast/state, so
+// the operator can change it on air without touching the OBS URL.
 //   ?title=Tyler Dixon&subtitle=Mid-South WX&brand=MID-SOUTH WX&accent=%23fbbf24&pos=left
+//   ?live=1   (follow the console)
 function LowerThird() {
   const q = useSearchParams();
-  const title = q.get('title') ?? 'Mid-South WX';
-  const subtitle = q.get('subtitle') ?? 'Severe Weather Briefing';
-  const brand = q.get('brand') ?? 'MID-SOUTH WX';
-  const accent = q.get('accent') ?? '#fbbf24';
+  const live = q.get('live') === '1';
+  const state = useBroadcastState(5000, live);
+  const ctl = live ? state?.control ?? null : null;
+
+  // In live mode the control row drives visibility; hide when toggled off.
+  if (live && ctl && !ctl.lower_third_visible) return null;
+
+  const title = ctl?.lower_third_title?.trim() || q.get('title') || 'Mid-South WX';
+  const subtitle = ctl?.lower_third_subtitle?.trim() || q.get('subtitle') || 'Severe Weather Briefing';
+  const brand = ctl?.brand?.trim() || q.get('brand') || 'MID-SOUTH WX';
+  const accent = ctl?.accent?.trim() || q.get('accent') || '#fbbf24';
   const pos = q.get('pos') === 'right' ? 'items-end' : 'items-start';
 
   return (
