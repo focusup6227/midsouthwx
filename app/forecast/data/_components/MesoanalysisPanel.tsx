@@ -169,7 +169,9 @@ export default function MesoanalysisPanel() {
                   <ExternalLink size={11} /> SPC
                 </a>
               </div>
-              <div className="relative rounded-md border border-wx-line bg-black">
+              {/* SPC gifs are transparent contour overlays meant for a light
+                  base — a light fill keeps them readable while the card stays dark. */}
+              <div className="relative rounded-md border border-wx-line bg-white">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   key={imgSrc}
