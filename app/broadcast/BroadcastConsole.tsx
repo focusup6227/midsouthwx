@@ -51,6 +51,7 @@ export default function BroadcastConsole() {
   });
   const [thumbHeadline, setThumbHeadline] = useState('');
   const [thumbBust, setThumbBust] = useState(0);
+  const [standbyMins, setStandbyMins] = useState(5);
 
   useEffect(() => setOrigin(window.location.origin), []);
 
@@ -78,11 +79,26 @@ export default function BroadcastConsole() {
     return `${origin}/broadcast/overlay/${path}${qs ? `?${qs}` : ''}`;
   };
 
+  const sceneUrl = (path: string, params: Record<string, string>) => {
+    const qs = new URLSearchParams(params).toString();
+    return `${origin}/broadcast/scene/${path}${qs ? `?${qs}` : ''}`;
+  };
+
   const lowerThirdUrl = overlayUrl('lower-third', {
     title: cfg.title, subtitle: cfg.subtitle, brand: cfg.brand, accent: cfg.accent,
   });
   const tickerUrl = overlayUrl('ticker', { accent: cfg.accent });
   const bugUrl = overlayUrl('bug', { brand: cfg.brand, accent: cfg.accent, pos: 'top-right' });
+
+  const scenes = [
+    {
+      name: 'Standby', desc: 'Full-frame “Starting soon” with a countdown.',
+      url: sceneUrl('standby', { brand: cfg.brand, accent: cfg.accent, in: String(standbyMins) }),
+    },
+    { name: 'Be right back', desc: 'Intermission card.', url: sceneUrl('brb', { brand: cfg.brand, accent: cfg.accent }) },
+    { name: 'Outro', desc: 'Sign-off / thanks-for-watching card.', url: sceneUrl('outro', { brand: cfg.brand, accent: cfg.accent }) },
+    { name: 'Headlines board', desc: 'Live SPC Day 1-3, watch/warning counts + alert list.', url: sceneUrl('headlines', { brand: cfg.brand, accent: cfg.accent }) },
+  ];
 
   const thumbUrl = useMemo(() => {
     const qs = new URLSearchParams();
@@ -268,9 +284,45 @@ export default function BroadcastConsole() {
         ))}
       </section>
 
-      {/* ───────────── 3. Thumbnail ───────────── */}
+      {/* ───────────── 3. Full-frame scenes ───────────── */}
       <section className="card p-4 space-y-3">
-        <h2 className="text-sm font-semibold">3 · YouTube thumbnail</h2>
+        <h2 className="text-sm font-semibold">3 · Full-frame scenes</h2>
+        <p className="text-[12px] text-wx-mute">
+          Opaque, full-screen pages to use as a dedicated OBS scene or to screen-record directly —
+          standby, intermission, sign-off, and a live headlines board. They share the brand and
+          accent set above and auto-update from public NWS data.
+        </p>
+
+        <label className="flex items-center gap-2 text-[11px] text-wx-mute">
+          Standby countdown
+          <input
+            type="number" min={0} max={120} value={standbyMins}
+            onChange={(e) => setStandbyMins(Number(e.target.value))}
+            className="input w-20"
+          />
+          minutes from open
+        </label>
+
+        {scenes.map((o) => (
+          <div key={o.name} className="rounded-lg border border-wx-line p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold">{o.name}</div>
+                <div className="text-[11px] text-wx-mute">{o.desc}</div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <a href={o.url} target="_blank" rel="noreferrer" className="btn-ghost text-[11px] px-2 py-1">Preview</a>
+                <CopyButton text={o.url} label="Copy URL" />
+              </div>
+            </div>
+            <code className="mt-2 block break-all rounded bg-wx-ink/60 px-2 py-1 text-[10px] text-wx-mute">{o.url || '…'}</code>
+          </div>
+        ))}
+      </section>
+
+      {/* ───────────── 4. Thumbnail ───────────── */}
+      <section className="card p-4 space-y-3">
+        <h2 className="text-sm font-semibold">4 · YouTube thumbnail</h2>
         <div className="flex flex-wrap items-end gap-2">
           <div className="flex-1 min-w-[220px]">
             <label className="block text-[11px] text-wx-mute mb-1">Headline (big text)</label>

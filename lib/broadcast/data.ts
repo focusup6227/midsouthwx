@@ -26,6 +26,8 @@ export type TickerItem = {
 export type BroadcastState = {
   generated_at: string;
   day1_label: string | null;
+  /** SPC Day 1-3 highest categorical labels (null when no outlook on file). */
+  spc_days: { day: number; label: string | null }[];
   warnings_count: number;
   watches_count: number;
   items: TickerItem[];
@@ -66,6 +68,7 @@ export async function gatherBroadcastState(client: SupabaseClient): Promise<Broa
   return {
     generated_at: s.generated_at ?? new Date().toISOString(),
     day1_label: s.spc?.['1']?.highest_label ?? null,
+    spc_days: [1, 2, 3].map((d) => ({ day: d, label: s.spc?.[String(d)]?.highest_label ?? null })),
     warnings_count: s.warnings_count ?? 0,
     watches_count: s.watches_count ?? 0,
     items,

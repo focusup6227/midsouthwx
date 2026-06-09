@@ -43,6 +43,7 @@ export async function middleware(req: NextRequest) {
     // OBS browser sources (overlays) run in cookieless Chromium and pull only
     // public NWS data — see app/broadcast/overlay and app/api/broadcast/state.
     path.startsWith('/broadcast/overlay') ||
+    path.startsWith('/broadcast/scene') ||
     path.startsWith('/api/broadcast') ||
     path === '/' ||
     path.startsWith('/_next') ||
