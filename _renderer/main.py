@@ -34,7 +34,7 @@ from glm import router as glm_router
 from model_render import router as model_router
 from sounding import router as sounding_router
 from polar import build_geojson
-from png_render import build_png
+from raster_render import build_raster
 from radar_io import download_volume, find_latest_volume, read_volume
 from storage import fetch_metadata, upload, upload_metadata, public_url
 
@@ -99,6 +99,12 @@ class RenderResponse(BaseModel):
     scan_time: str
     image_url: Optional[str] = None
     geojson_url: Optional[str] = None
+    # Quantized value-grid sidecar for PNG renders (gzipped uint8; 0 = no
+    # data, 1..255 spans vmin..vmax on the same bounds). Lets the dashboard
+    # keep the pointer readout in PNG mode.
+    values_url: Optional[str] = None
+    values_w: Optional[int] = None
+    values_h: Optional[int] = None
     bounds: dict
     cached: bool
     render_ms: int
@@ -184,6 +190,7 @@ async def render(req: RenderRequest, authorization: str = Header(default="")) ->
                     os.remove(local_path)
                 raise HTTPException(status_code=502, detail=f"kdp_failed: {e}")
 
+        values_body: bytes | None = None
         try:
             async with _render_semaphore:
                 if req.format == "geojson":
@@ -197,8 +204,8 @@ async def render(req: RenderRequest, authorization: str = Header(default="")) ->
                     # so the upstream Content-Type is irrelevant to clients.
                     content_type = "application/gzip"
                 else:
-                    body, meta = await asyncio.to_thread(
-                        build_png, radar, req.product, build_sweep_index, req.composite,
+                    body, values_body, meta = await asyncio.to_thread(
+                        build_raster, radar, req.product, build_sweep_index, req.composite,
                     )
                     content_type = "image/png"
                     meta["count"] = None
@@ -206,9 +213,15 @@ async def render(req: RenderRequest, authorization: str = Header(default="")) ->
             with suppress(OSError):
                 os.remove(local_path)
 
-        # 5. Upload asset + metadata.
+        # 5. Upload asset (+ value-grid sidecar for PNG) + metadata. Metadata
+        # goes last — its presence is what makes a cache hit, so the assets it
+        # points at must already exist.
         try:
             await upload(asset_path, body, content_type)
+            if values_body is not None:
+                values_path = f"{cache_id}.values.gz"
+                await upload(values_path, values_body, "application/gzip")
+                meta["values_path"] = values_path
             await upload_metadata(meta_path, meta)
         except Exception as e:
             log.exception("upload failed")
@@ -247,12 +260,16 @@ def _ensure_kdp(radar, sweep_index: int):
 def _response(req: RenderRequest, scan_time, meta: dict, asset_path: str,
               *, cached: bool, started: float) -> RenderResponse:
     url = public_url(asset_path)
+    values_path = meta.get("values_path")
     return RenderResponse(
         site=req.site.upper(),
         product=req.product,
         scan_time=scan_time.isoformat() if not isinstance(scan_time, str) else scan_time,
         image_url=url if req.format == "png" else None,
         geojson_url=url if req.format == "geojson" else None,
+        values_url=public_url(values_path) if values_path else None,
+        values_w=meta.get("values_w"),
+        values_h=meta.get("values_h"),
         bounds=meta.get("bounds", {}),
         cached=cached,
         render_ms=int((time.time() - started) * 1000),

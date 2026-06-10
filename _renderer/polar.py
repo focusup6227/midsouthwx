@@ -274,7 +274,9 @@ def _composite_max(radar: Any, field: str):
 
     For each ray in the lowest sweep we find the nearest-azimuth ray in every
     other sweep and take the per-gate max. Higher tilts have fewer ranges, so
-    we trim to the lowest tilt's gate count.
+    we trim to the lowest tilt's gate count. Nearest-ray matching is done with
+    one searchsorted per sweep instead of an O(rays²) argmin loop — the old
+    per-ray loop dominated composite render time.
     """
     lowest = 0
     base_sl = radar.get_slice(lowest)
@@ -288,11 +290,22 @@ def _composite_max(radar: Any, field: str):
         sl = radar.get_slice(s)
         az = np.asarray(radar.azimuth["data"][sl], dtype=np.float64)
         data = np.ma.asarray(radar.fields[field]["data"][sl, :])
-        for i, a in enumerate(base_az):
-            diff = np.abs(((az - a + 180) % 360) - 180)
-            j = int(np.argmin(diff))
-            row = data[j, :n_gates]
-            out[i, :n_gates] = np.ma.maximum(out[i, :n_gates], row)
+        n = len(az)
+        if n == 0:
+            continue
+        order = np.argsort(az)
+        az_sorted = az[order]
+        # Wrap-aware nearest neighbor: candidates are the insertion point's
+        # left/right rays (mod n); pick whichever is angularly closer.
+        pos = np.searchsorted(az_sorted, base_az)
+        left = (pos - 1) % n
+        right = pos % n
+        d_left = np.abs(((az_sorted[left] - base_az + 180) % 360) - 180)
+        d_right = np.abs(((az_sorted[right] - base_az + 180) % 360) - 180)
+        j = np.where(d_right < d_left, right, left)
+        rows = data[order[j], :n_gates]
+        g = rows.shape[1]
+        out[:, :g] = np.ma.maximum(out[:, :g], rows)
     return out, base_az
 
 

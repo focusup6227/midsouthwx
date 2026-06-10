@@ -87,17 +87,26 @@ LOOP_FPS = 4
 MAX_FRAMES = 6
 WINDOW_MINUTES_DEFAULT = 30
 
-# Reflectivity colormap mirrors png_render.py so the loop frames look like the
-# live radar page the operator already trusts.
+# Reflectivity colormap mirrors raster_render.py's Baron256 palette so the
+# loop frames look like the live radar page the operator already trusts.
+# Positions are (dBZ + 32) / 127 — the Normalize below spans COLOR_RANGES
+# (-32..95) — and the paired stops (14.99/15 etc.) keep Baron's hard 5-dBZ
+# band edges.
 _REFL_CMAP = LinearSegmentedColormap.from_list("refl", [
-    (0.00, "#3b82f6"),
-    (0.20, "#22d3ee"),
-    (0.35, "#10b981"),
-    (0.50, "#84cc16"),
-    (0.65, "#facc15"),
-    (0.80, "#f97316"),
-    (0.92, "#ef4444"),
-    (1.00, "#d946ef"),
+    (0.0, "#105F90"),  # < 5 dBZ is masked out before plotting; pad to 0
+    ((5 + 32) / 127, "#105F90"),
+    ((14.99 + 32) / 127, "#1FBFFF"),
+    ((15 + 32) / 127, "#1FDF70"),
+    ((34.99 + 32) / 127, "#005000"),
+    ((35 + 32) / 127, "#FFFF1F"),
+    ((44.99 + 32) / 127, "#FFAF00"),
+    ((45 + 32) / 127, "#FF0000"),
+    ((54.99 + 32) / 127, "#C00000"),
+    ((55 + 32) / 127, "#DF00DF"),
+    ((64.99 + 32) / 127, "#AF00AF"),
+    ((65 + 32) / 127, "#000000"),
+    ((80 + 32) / 127, "#FFFFFF"),
+    (1.0, "#FFFFFF"),  # clamp 80–95 dBZ to white; pad to 1
 ])
 
 # Only one loop renders at a time. Each holds 6 radar volumes in memory before
