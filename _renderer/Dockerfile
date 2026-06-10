@@ -41,7 +41,7 @@ COPY geo /app/geo
 # discovering it at the first /render-model or /render-sounding request.
 RUN python -m cfgrib selfcheck \
     && python -c "import metpy.calc; from metpy.plots import SkewT, Hodograph; print('metpy ok')" \
-    && python -c "import polar, png_render; assert {'zdr','kdp'} <= set(polar.PYART_FIELDS) and {'zdr','kdp'} <= set(png_render._CMAPS); print('render modules ok')" \
+    && python -c "import polar, raster_render; assert {'zdr','kdp'} <= set(polar.PYART_FIELDS) and {'zdr','kdp'} <= set(raster_render._PALETTES); print('render modules ok')" \
     && python -c "import pyart; assert hasattr(pyart.retrieve, 'kdp_maesaka'); print('pyart kdp ok')"
 
 # Fly health-check expects the app on 0.0.0.0:8080 — this was the binding bug
