@@ -13,9 +13,11 @@ export const BTN_SHARE_LIVE = '📡 Share live location';
 export const SUBSCRIBER_BOT_COMMANDS = [
   { command: 'status', description: 'See your current settings' },
   { command: 'prefs', description: 'Alert types and quiet hours' },
+  { command: 'test', description: 'Send a sample alert to check your notifications' },
   { command: 'where', description: 'Set a temporary location' },
   { command: 'home', description: 'Revert to your home address' },
   { command: 'report', description: 'Report severe weather with a photo' },
+  { command: 'share', description: 'Invite family & friends to get alerts' },
   { command: 'help', description: 'Show menu and commands' },
   { command: 'unsubscribe', description: 'Stop receiving alerts' },
   { command: 'resume', description: 'Re-enable alerts after /unsubscribe' },
@@ -71,6 +73,8 @@ export function commandsHelpText(): string {
     '📡 Share live location — attach your current pin in Telegram\n\n' +
     'Power-user shortcuts (slash commands still work):\n' +
     '• /status, /prefs, /where <address>, /home, /report\n' +
+    '• /test — sample alert + how to make sure your phone rings\n' +
+    '• /share — invite family & friends to get alerts\n' +
     '• /unsubscribe or STOP — opt out\n' +
     '• /start <link> — finish sign-up from the website link\n\n' +
     'Reply to any alert in Telegram to message the operator. They will see ' +

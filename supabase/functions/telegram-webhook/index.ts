@@ -27,6 +27,7 @@ import {
 } from './bot-commands.ts';
 import { clearAwaiting, getAwaiting, setAwaiting } from './state.ts';
 import {
+  mdToTelegramHtml,
   tgAnswerCallbackQuery,
   tgFetchFile,
   tgSendMessage,
@@ -1346,6 +1347,68 @@ Deno.serve(async (req) => {
     // /home — clear current-address override (back at home)
     if (text === '/prefs' || text?.startsWith('/prefs ')) {
       await showPrefsForChat(supa, token, chatId);
+      return json({ ok: true });
+    }
+
+    // /test — sample alert so the subscriber can verify their phone actually
+    // rings, followed by a platform-specific guide for making Telegram loud.
+    // The honest disclaimer matters: nothing third-party can break through
+    // iOS's mute switch — WEA and weather radios remain the only guaranteed
+    // wake-up channels, and we should never let anyone believe otherwise.
+    if (text === '/test' || text?.startsWith('/test@')) {
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text: mdToTelegramHtml(
+          '🔔 **TEST ALERT — Mid-South WX**\n\n' +
+          'This is a sample of how a real warning will arrive. If you heard a ' +
+          'sound just now, you’re set. If it came in silently, see the next message.',
+        ),
+        parse_mode: 'HTML',
+      });
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text: mdToTelegramHtml(
+          '**Make sure alerts can wake you:**\n\n' +
+          '📱 **Android** — Settings → Apps → Telegram → Notifications: turn the ' +
+          'chat’s notifications to **Alerting** and enable **Override Do Not ' +
+          'Disturb**. You can also long-press this chat → Mute → Customize for a ' +
+          'louder sound.\n\n' +
+          '🍎 **iPhone** — Settings → Focus: add **Telegram** to the Allowed Apps ' +
+          'of any Focus/Do Not Disturb modes you use. Note: the orange **mute ' +
+          'switch** on the side silences all app sounds — no app can override it.\n\n' +
+          '⚠️ **Important:** this service supplements official channels — it can ' +
+          'never replace them. Keep **Wireless Emergency Alerts** enabled on your ' +
+          'phone and consider a NOAA weather radio; those are the only alerts ' +
+          'that break through silent mode.',
+        ),
+        parse_mode: 'HTML',
+        disable_web_page_preview: true,
+      });
+      return json({ ok: true });
+    }
+
+    // /share — forwardable invite. Growth is word-of-mouth only; make the
+    // ask copy-paste simple.
+    if (text === '/share' || text?.startsWith('/share@')) {
+      const site = (Deno.env.get('NEXT_PUBLIC_SITE_URL') ?? 'https://midsouthwx.app').replace(/\/$/, '');
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text: mdToTelegramHtml(
+          '💛 Know someone who should get these alerts? Forward them the message below ⬇️',
+        ),
+        parse_mode: 'HTML',
+      });
+      await tgSendMessage(token, {
+        chat_id: chatId,
+        text: mdToTelegramHtml(
+          '🌩 I get free severe-weather alerts for the Mid-South on Telegram — ' +
+          'tornado and storm warnings for your exact location, sent the moment ' +
+          'they’re issued, plus an all-clear when the threat passes.\n\n' +
+          `Sign up free here: ${site}/signup`,
+        ),
+        parse_mode: 'HTML',
+        disable_web_page_preview: false,
+      });
       return json({ ok: true });
     }
 
