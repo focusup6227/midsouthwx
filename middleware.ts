@@ -38,6 +38,7 @@ export async function middleware(req: NextRequest) {
     path.startsWith('/auth/') ||
     path.startsWith('/alert/') ||
     path.startsWith('/m/') ||
+    path === '/f' ||
     path.startsWith('/f/') ||
     path.startsWith('/cards/') ||
     // OBS browser sources (overlays) run in cookieless Chromium and pull only

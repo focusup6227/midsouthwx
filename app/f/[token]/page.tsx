@@ -154,6 +154,8 @@ export default async function PublicForecastPage({ params }: { params: { token: 
 
         <footer className="text-[11px] text-wx-mute pt-3">
           Operator forecast. Authoritative warnings come from your local NWS WFO. In an emergency, call 911.{' '}
+          <Link href="/f" className="hover:text-wx-fg">All forecasts</Link>
+          {' · '}
           <Link href="/" className="hover:text-wx-fg">midsouthwx.app</Link>
         </footer>
       </div>
