@@ -47,7 +47,13 @@
       "Bash(git -c commit.gpgsign=false commit -m ' *)",
       "Bash(git push *)",
       "Bash(fly logs *)",
-      "mcp__resend__list-emails"
+      "mcp__resend__list-emails",
+      "Bash(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"Screen Recording 2026-06-05 at 10.36.45 PM.mov\")",
+      "Bash(python3 -c \"import cv2; print\\('cv2', cv2.__version__\\)\")",
+      "Bash(python3 -c \"import AVFoundation; print\\('pyobjc-av ok'\\)\")",
+      "WebFetch(domain:www.trafficland.com)",
+      "WebFetch(domain:trafficland.docs.apiary.io)",
+      "WebFetch(domain:smartway.tn.gov)"
     ]
   },
   "enableAllProjectMcpServers": true,
