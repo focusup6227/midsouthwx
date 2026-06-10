@@ -23,6 +23,9 @@ type RendererResponse = {
   scan_time: string;
   image_url?: string | null;
   geojson_url?: string | null;
+  values_url?: string | null;
+  values_w?: number | null;
+  values_h?: number | null;
   bounds: { north: number; south: number; east: number; west: number };
   cached: boolean;
   render_ms: number;

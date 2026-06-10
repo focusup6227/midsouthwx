@@ -8,6 +8,7 @@ import '@/lib/mapbox/patch-remove-source';
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import Map, { Source, Layer, Popup, type MapMouseEvent, type MapRef } from 'react-map-gl';
 import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import {
   AnnotationLayer,
   AnnotationToolbar,
@@ -16,9 +17,9 @@ import {
 import { supabaseBrowser } from '@/lib/supabase/client';
 import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 import {
-  CloudLightning, Radio, Wind, Atom, RotateCw, Satellite,
-  Play, Pause, Trash2, Send, Target, Search, X,
-  ChevronLeft, ChevronRight, ChevronDown, Eye, EyeOff, MousePointer2, Zap, Droplets, CloudRain,
+  Wind, Satellite,
+  Play, Pause, Trash2, Send, Target, X,
+  ChevronLeft, ChevronDown, Eye, EyeOff, MousePointer2, Zap,
   PenTool, AlertTriangle,
 } from 'lucide-react';
 import {
@@ -49,104 +50,51 @@ import {
   STORM_REPORT_CLUSTERS_KEY,
 } from './_hooks/useRadarData';
 import { useSWRConfig } from 'swr';
-import AfdPanel from './_components/AfdPanel';
-import StormReportPopupActions from './_components/StormReportPopupActions';
+import RadarInspector, { type InspectorTab } from './_components/RadarInspector';
+import {
+  PRODUCTS,
+  GOES_SOURCES,
+  satTileUrl,
+  DEFAULT_SITE_CODE,
+  type GoesSourceId,
+  type ProductKey,
+  type SatSourceId,
+} from './_components/radar-products';
+import {
+  LsrCard,
+  StormReportCard,
+  MpingCard,
+  MetarCard,
+  CoupletCard,
+  type SelectedLsr,
+  type SelectedStormReport,
+  type SelectedMping,
+  type SelectedMetar,
+  type SelectedCouplet,
+} from './_components/SelectedEntityCards';
 import { parseRadarUrl, useRadarUrlSync } from './_hooks/useRadarUrlState';
-import { MODEL_OVERLAYS, DISABLED_MODELS, type ModelOverlayKey } from '@/lib/radar/models';
+import { useLevel2Data } from './_hooks/useLevel2Data';
+import { useLwxrTimeline, type LibreWxRFrame } from './_hooks/useLwxrTimeline';
+import { MODEL_OVERLAYS, type ModelOverlayKey } from '@/lib/radar/models';
+import {
+  buildFillColorExpr,
+  buildFillOpacityExpr,
+  SEL_POLY_FILL_PAINT,
+  SEL_POLY_LINE_PAINT,
+  SPC_FILL_EXPR,
+  SPC_LINE_EXPR,
+  LSR_FILL_EXPR,
+  STORM_REPORT_FILL_EXPR,
+  LWXR_FRAME_PAINT,
+  WARNING_FILL_PAINT,
+  WARNING_LINE_PAINT,
+  WARNING_LINE_WATCH_PAINT,
+  WARNING_LINE_DISCUSSION_PAINT,
+} from '@/lib/radar/layer-styles';
 
-// Three providers, picked per product based on which one actually publishes that
-// product as a public tile feed:
-//   - LibreWxR (api.librewxr.net) — RainViewer-compatible v2 API. CONUS composite
-//     reflectivity with real past frames (2h history at 10 min intervals + nowcast).
-//     Drives the timeline. Data CC-BY-4.0 LibreWxR.
-//   - NOAA NCEP GeoServer (opengeo.ncep.noaa.gov) — per-site reflectivity / velocity.
-//     Single-frame ("NOW") because NCEP doesn't expose history.
-//   - UCAR THREDDS ncWMS (thredds.ucar.edu) — MRMS Az-Shear 0-2km AGL rotation.
-//     Composite-only; resolves the latest dataset URL through /api/radar/mrms-latest.
-//   - Fly.io Level II renderer — single-site Correlation Coefficient (ρhv) and the
-//     Hi-Res reflectivity/velocity options.
-type ProductKey = 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'zdr' | 'kdp' | 'rotation' | 'satellite';
-
-type ProductMeta = {
-  label: string;
-  short: string;
-  modes: { composite: boolean; site: boolean };
-  icon: React.ComponentType<{ size?: number | string; className?: string }>;
-};
-
-const PRODUCTS: Record<ProductKey, ProductMeta> = {
-  composite:    { label: 'Composite Reflectivity', short: 'CREF', modes: { composite: true,  site: false }, icon: CloudLightning },
-  reflectivity: { label: 'Base Reflectivity',      short: 'BREF', modes: { composite: true,  site: true  }, icon: Radio },
-  velocity:     { label: 'Storm-Rel Velocity',     short: 'SRV',  modes: { composite: false, site: true  }, icon: Wind },
-  correlation:  { label: 'Correlation Coeff',      short: 'CC',   modes: { composite: false, site: true  }, icon: Atom },
-  zdr:          { label: 'Differential Refl (ZDR)', short: 'ZDR', modes: { composite: false, site: true  }, icon: Droplets },
-  kdp:          { label: 'Specific Diff Phase (KDP)', short: 'KDP', modes: { composite: false, site: true }, icon: CloudRain },
-  rotation:     { label: 'Rotation (Az-Shear)',    short: 'ROT',  modes: { composite: true,  site: false }, icon: RotateCw },
-  satellite:    { label: 'Satellite (IR cloud)',   short: 'SAT',  modes: { composite: true,  site: false }, icon: Satellite },
-};
-
-// LibreWxR color schemes (color path param 1..9). Default 8 matches radar.weather.gov.
-const LIBREWXR_COLOR_SCHEMES: { id: number; name: string }[] = [
-  { id: 1, name: 'Black and White' },
-  { id: 2, name: 'Original' },
-  { id: 3, name: 'Universal Blue' },
-  { id: 4, name: 'TITAN' },
-  { id: 5, name: 'The Weather Channel' },
-  { id: 6, name: 'Meteored' },
-  { id: 7, name: 'NEXRAD Level III' },
-  { id: 8, name: 'Dark Sky' },
-  { id: 9, name: 'NWS Reflectivity' },
-];
-
-// Live GOES-East ABI tile sources from two upstream providers:
-//
-//   - NASA GIBS (gibs.earthdata.nasa.gov) — WMTS. Six layers verified against
-//     GetCapabilities: Band13 IR · GeoColor · Band2 Red Vis · Air Mass · Dust
-//     · FireTemp. Tile path /{Identifier}/default/default/{TileMatrixSet}/
-//     {z}/{y}/{x}.png — note WMTS uses {z}/{y}/{x}, inverse of slippy maps.
-//     maxzoom matches the matrix set level; Mapbox overzooms past that.
-//   - Iowa State Mesonet (mesonet.agron.iastate.edu) — slippy TMS. Fills the
-//     GIBS gap with all three Water Vapor bands. Tile path
-//     /cache/tile.py/1.0.0/{channel}/{z}/{x}/{y}.png. Always "latest" frame,
-//     ~10-15 min cadence.
-const GIBS_BASE = 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best';
-const IEM_BASE = 'https://mesonet.agron.iastate.edu/cache/tile.py/1.0.0';
-type GoesSourceId =
-  | 'goes-cleanir'
-  | 'goes-geocolor'
-  | 'goes-visible'
-  | 'goes-airmass'
-  | 'goes-dust'
-  | 'goes-firetemp'
-  | 'iem-wv-upper'
-  | 'iem-wv-mid'
-  | 'iem-wv-lower';
-type SatSourceId = 'lwxr' | GoesSourceId;
-type GoesLegend = 'ir' | 'wv' | 'rgb';
-type SatProvider = 'gibs' | 'iem';
-const GOES_SOURCES: Record<GoesSourceId, {
-  label: string;
-  short: string;
-  provider: SatProvider;
-  layer: string;       // GIBS layer Identifier OR IEM channel name
-  matrix: string;      // GIBS matrix set; '' for IEM
-  maxzoom: number;
-  legend: GoesLegend;
-}> = {
-  'goes-cleanir':  { label: 'GOES Clean IR (B13)',          short: 'IR',    provider: 'gibs', layer: 'GOES-East_ABI_Band13_Clean_Infrared',  matrix: 'GoogleMapsCompatible_Level6', maxzoom: 6, legend: 'ir'  },
-  'goes-geocolor': { label: 'GOES GeoColor',                short: 'COLOR', provider: 'gibs', layer: 'GOES-East_ABI_GeoColor',               matrix: 'GoogleMapsCompatible_Level7', maxzoom: 7, legend: 'rgb' },
-  'goes-visible':  { label: 'GOES Red Visible (B2)',        short: 'VIS',   provider: 'gibs', layer: 'GOES-East_ABI_Band2_Red_Visible_1km',  matrix: 'GoogleMapsCompatible_Level7', maxzoom: 7, legend: 'ir'  },
-  'goes-airmass':  { label: 'GOES Air Mass RGB',            short: 'AIR',   provider: 'gibs', layer: 'GOES-East_ABI_Air_Mass',               matrix: 'GoogleMapsCompatible_Level6', maxzoom: 6, legend: 'rgb' },
-  'goes-dust':     { label: 'GOES Dust RGB',                short: 'DUST',  provider: 'gibs', layer: 'GOES-East_ABI_Dust',                   matrix: 'GoogleMapsCompatible_Level7', maxzoom: 7, legend: 'rgb' },
-  'goes-firetemp': { label: 'GOES Fire Temperature',        short: 'FIRE',  provider: 'gibs', layer: 'GOES-East_ABI_FireTemp',               matrix: 'GoogleMapsCompatible_Level7', maxzoom: 7, legend: 'rgb' },
-  'iem-wv-upper':  { label: 'GOES Upper-Level WV (B8)',     short: 'WV8',   provider: 'iem',  layer: 'goes_east_conus_ch08',                 matrix: '',                            maxzoom: 8, legend: 'wv'  },
-  'iem-wv-mid':    { label: 'GOES Mid-Level WV (B9, SPC)',  short: 'WV9',   provider: 'iem',  layer: 'goes_east_conus_ch09',                 matrix: '',                            maxzoom: 8, legend: 'wv'  },
-  'iem-wv-lower':  { label: 'GOES Lower-Level WV (B10)',    short: 'WV10',  provider: 'iem',  layer: 'goes_east_conus_ch10',                 matrix: '',                            maxzoom: 8, legend: 'wv'  },
-};
-const satTileUrl = (cfg: typeof GOES_SOURCES[GoesSourceId], cacheKey: number) =>
-  cfg.provider === 'iem'
-    ? `${IEM_BASE}/${cfg.layer}/{z}/{x}/{y}.png?_t=${cacheKey}`
-    : `${GIBS_BASE}/${cfg.layer}/default/default/${cfg.matrix}/{z}/{y}/{x}.png?_t=${cacheKey}`;
+// PRODUCTS / GOES_SOURCES / satTileUrl / DEFAULT_SITE_CODE moved to
+// ./_components/radar-products so RadarInspector can share them without a
+// circular import.
 
 const NCEP_WMS_URL = (workspace: string, layer: string, cacheKey: number) =>
   `https://opengeo.ncep.noaa.gov/geoserver/${workspace}/ows` +
@@ -190,18 +138,15 @@ const THREDDS_WMS_URL = (urlPath: string, layer: string, cacheKey: number) =>
 // LibreWxR Weather Maps API (drop-in for RainViewer v2). Returns 2h of past
 // frames + nowcast. Default color scheme 9 = NWS Reflectivity (matches
 // radar.weather.gov); 8 = Dark Sky. Operator picks via the dropdown — see
-// LIBREWXR_COLOR_SCHEMES above. Options "1_1" = smoothed + snow-aware. 512px
+// LIBREWXR_COLOR_SCHEMES in ./_components/RadarInspector. Options "1_1" =
+// smoothed + snow-aware. 512px
 // tiles double the spatial resolution at the same z (max zoom 7), so imagery
-// stays readable down to the city block at z~11.
-const LIBREWXR_INDEX_URL = 'https://api.librewxr.net/public/weather-maps.json';
+// stays readable down to the city block at z~11. (The index URL itself lives
+// in _hooks/useLwxrTimeline.)
 const LIBREWXR_COLOR = 9;
 const LIBREWXR_OPTS = '1_1';
 const LIBREWXR_TILE_SIZE = 512;
 const LIBREWXR_MAX_ZOOM = 7;
-
-// Default fly-to when the operator first switches from CONUS → single site
-// (and no site has been chosen yet). KNQA = Memphis, the home office.
-const DEFAULT_SITE_CODE = 'KNQA';
 
 // Cap geographic map pills by zoom — kept aggressive so dense areas (TX, OK)
 // don't carpet the map. Past z8 every site in view shows.
@@ -235,174 +180,14 @@ type Selection = {
   coordinates: number[][];
 };
 
-type SweepInfo = { index: number; elevation_deg: number };
-
-type Level2Overlay = {
-  geojson_url?: string | null;
-  image_url?: string | null;
-  bounds: { north: number; south: number; east: number; west: number };
-  scan_time: string;
-  cached: boolean;
-  render_ms?: number;
-  available_sweeps: SweepInfo[];
-  sweep_index: number | null;
-  feature_count: number | null;
-  vmin: number;
-  vmax: number;
-};
-
-// Baron256 reflectivity palette (~/Downloads/Baron256.pal). Each pair of
-// (val, color) stops below is a *boundary* between Baron's hardcoded gradient
-// bands — the e.g. 14.99/15 pair forces a hard color jump from the end of one
-// band (light blue) to the start of the next (light green), matching how
-// Baron's display steps colors at every 5 dBZ band.
-const REFL_STOPS: [number, string][] = [
-  [5,     '#105F90'], [14.99, '#1FBFFF'],
-  [15,    '#1FDF70'], [34.99, '#005000'],
-  [35,    '#FFFF1F'], [44.99, '#FFAF00'],
-  [45,    '#FF0000'], [54.99, '#C00000'],
-  [55,    '#DF00DF'], [64.99, '#AF00AF'],
-  [65,    '#000000'], [80,    '#FFFFFF'],
-];
-// ALPHA-Velo palette (~/Downloads/ALPHA-Velo.pal). Original is in knots with
-// scale=1.9426 m/s per knot; converted here to m/s so the stops compare
-// directly against the renderer's raw velocity values (Py-ART m/s).
-//   -120 kts → -61.78 m/s   #00009B   deep blue (strongest inbound)
-//    -50 kts → -25.74 m/s   #00FFFF   cyan
-//    -10 kts →  -5.15 m/s   #006600   dark green (slow inbound)
-//      0 kts →   0.00 m/s   #808080   gray (zero / clutter)
-//     10 kts →   5.15 m/s   #600D17   dark red-brown (slow outbound)
-//     30 kts →  15.44 m/s   #C80000   red
-//     60 kts →  30.89 m/s   #FFFF00   yellow
-//    120 kts →  61.78 m/s   #783C00   brown (strongest outbound)
-const VEL_STOPS: [number, string][] = [
-  [-61.78, '#00009B'],
-  [-25.74, '#00FFFF'],
-  [ -5.15, '#006600'],
-  [  0.00, '#808080'],
-  [  5.15, '#600D17'],
-  [ 15.44, '#C80000'],
-  [ 30.89, '#FFFF00'],
-  [ 61.78, '#783C00'],
-];
-// kk.pal correlation coefficient (~/Downloads/kk.pal). Smooth interpolation
-// between solid stops; the renderer masks gates with v < 0.2 so the lower
-// end (white→black) only kicks in for low-quality gates that scraped past
-// the mask. Note: at 0.99 the file specifies the same color for both ends
-// of the gradient pair, i.e. a solid #8B1E4D band — Mapbox's linear lerp
-// renders that as a brief plateau between 0.97 (red) and 1.00 (pink).
-const CC_STOPS: [number, string][] = [
-  [0.00, '#FFFFFF'],
-  [0.45, '#000000'],
-  [0.60, '#0A0ABE'],
-  [0.75, '#7878FF'],
-  [0.80, '#5FF564'],
-  [0.85, '#87D70A'],
-  [0.90, '#FFFF00'],
-  [0.95, '#FF8C00'],
-  [0.97, '#E10300'],
-  [0.99, '#8B1E4D'],
-  [1.00, '#FFB4D7'],
-  [1.05, '#A43696'],
-];
-
-// ZDR is rendered via the PNG path (useL2Png), so these GeoJSON paint helpers
-// never actually run for 'zdr' — the union just keeps the types aligned with
-// level2Product. (ZDR falls through to the CC stops here but is unreachable.)
-function buildFillColorExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp', _vmin: number, _vmax: number): any {
-  // The renderer stores raw values in properties.v (dBZ for refl, m/s for vel,
-  // dimensionless for cc), so the interpolate stops compare against raw scale
-  // too. (Earlier code normalized to a 0–255 byte scale to match the original
-  // PNG renderer's quantization — no longer applicable now that we use
-  // GeoJSON polygons with real values.)
-  const stops = product === 'refl' ? REFL_STOPS : product === 'vel' ? VEL_STOPS : CC_STOPS;
-  const out: any[] = ['interpolate', ['linear'], ['get', 'v']];
-  let lastQ = -Infinity;
-  for (const [val, hex] of stops) {
-    let q = val;
-    if (q <= lastQ) q = lastQ + 0.0001;
-    out.push(q, hex);
-    lastQ = q;
-  }
-  return out;
-}
-
-function buildFillOpacityExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp', userOpacity: number,
-                              _vmin: number, _vmax: number): any {
-  if (product !== 'refl') return userOpacity;
-  // Light rain (5 dBZ) shows at half opacity; full opacity by 20 dBZ. Below
-  // 5 dBZ the renderer already masks gates out, so this ramp only affects the
-  // 5–20 fade-in band.
-  return [
-    'interpolate', ['linear'], ['get', 'v'],
-    5,  0.5 * userOpacity,
-    20, userOpacity,
-  ];
-}
-
-function formatElev(deg: number): string {
-  return `${deg.toFixed(deg < 10 ? 1 : 0)}°`;
-}
-
 type NwsWarning = NwsRadarAlert;
 
 type AudienceBreakdown = { total: number; tn: number; ms: number; ar: number; other: number };
-
-type LibreWxRFrame = { time: number; path: string };
-type LibreWxRIndex = {
-  host: string;
-  radar: { past: LibreWxRFrame[]; nowcast: LibreWxRFrame[] };
-  satellite: { infrared: LibreWxRFrame[] };
-};
-
-// Stable paint objects for the selection / draw layers — these never change,
-// so hoisting them out of render eliminates a fresh paint diff on every render.
-const SEL_POLY_FILL_PAINT: any = { 'fill-color': '#fbbf24', 'fill-opacity': 0.12 };
-const SEL_POLY_LINE_PAINT: any = { 'line-color': '#fbbf24', 'line-width': 2, 'line-dasharray': [2, 1] };
 
 // GLM lightning: each flash lives 2 min on screen. Opacity 1 at strike time,
 // linearly to 0 at fadeMs. nowMs is rebound imperatively at 1 Hz below.
 const LIGHTNING_FADE_MS = 120_000;
 const LIGHTNING_BOLT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="48" height="72"><path d="M14 0 L0 22 L9 22 L7 36 L24 12 L13 12 L18 0 Z" fill="#fde047" stroke="#0b1220" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
-
-// F2: preferred order for the compose body seed when launching from a
-// warning: AI summary → headline → truncated description → null. The radar
-// warnings endpoint doesn't return description today, so headline is the
-// realistic last resort.
-function CategoryCheckbox({
-  label,
-  tint,
-  on,
-  toggle,
-  count,
-}: {
-  label: string;
-  tint: string;
-  on: boolean;
-  toggle: () => void;
-  count: number;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      className="flex items-center justify-between gap-1.5 text-left"
-      aria-pressed={on}
-    >
-      <span className="flex items-center gap-1.5 min-w-0">
-        <span
-          className={`inline-flex h-3 w-3 items-center justify-center rounded border ${
-            on ? 'border-wx-accent bg-wx-accent/20 text-wx-accent' : 'border-wx-line text-transparent'
-          }`}
-        >
-          {on ? '✓' : ''}
-        </span>
-        <span className={on ? tint : 'text-wx-mute'}>{label}</span>
-      </span>
-      <span className="text-wx-mute font-mono">{count}</span>
-    </button>
-  );
-}
 
 // Small top-of-map banner shown on first load if any required env var is
 // missing. Listed by name + short rationale so the operator knows what's
@@ -434,195 +219,15 @@ function EnvPreflightBanner({ items }: { items: string[] }) {
   );
 }
 
+// F2: preferred order for the compose body seed when launching from a
+// warning: AI summary → headline → truncated description → null. The radar
+// warnings endpoint doesn't return description today, so headline is the
+// realistic last resort.
 function warningBodySeed(w: NwsRadarAlert): string | null {
   if (w.ai_summary && w.ai_summary.trim()) return w.ai_summary.trim();
   if (w.headline && w.headline.trim()) return w.headline.trim();
   return null;
 }
-
-// F7: SPC categorical-outlook palette. The convention (and SPC's own map)
-// goes light-green → green → yellow → orange → red → magenta as risk
-// escalates from general thunderstorms to a HIGH risk day. Each feature's
-// `properties.LABEL` is the short code (TSTM / MRGL / SLGT / ENH / MDT / HIGH).
-const SPC_FILL_EXPR: any = [
-  'match',
-  ['get', 'LABEL'],
-  'TSTM', '#bbf7d0', // light green — general thunder
-  'MRGL', '#86efac', // green — marginal
-  'SLGT', '#fde047', // yellow — slight
-  'ENH',  '#fb923c', // orange — enhanced
-  'MDT',  '#ef4444', // red — moderate
-  'HIGH', '#e879f9', // magenta — high
-  '#94a3b8',
-];
-const SPC_LINE_EXPR: any = [
-  'match',
-  ['get', 'LABEL'],
-  'TSTM', '#22c55e',
-  'MRGL', '#16a34a',
-  'SLGT', '#ca8a04',
-  'ENH',  '#ea580c',
-  'MDT',  '#b91c1c',
-  'HIGH', '#a21caf',
-  '#64748b',
-];
-
-// F4: hazard-keyed fill for LSR pins. Matches the warning-polygon palette
-// so a tornado LSR reads the same color as a tornado warning, etc.
-const LSR_FILL_EXPR: any = [
-  'match',
-  ['get', 'hazard'],
-  'tornado', '#ef4444',
-  'severe',  '#f97316',
-  'flood',   '#10b981',
-  'winter',  '#38bdf8',
-  'wind',    '#a855f7',
-  'heat',    '#facc15',
-  '#94a3b8',
-];
-
-// Subscriber storm reports use a slightly different hazard taxonomy
-// (funnel/hail/other are distinct, mirroring the Telegram picker labels).
-const STORM_REPORT_FILL_EXPR: any = [
-  'match',
-  ['get', 'hazard'],
-  'tornado', '#ef4444',
-  'funnel',  '#fb7185',
-  'hail',    '#f97316',
-  'wind',    '#a855f7',
-  'flood',   '#10b981',
-  '#94a3b8',
-];
-
-// All LibreWxR frame layers mount opacity 0. The "current" frame is bumped
-// up imperatively in the playback effect; reusing this single paint object
-// across all 30+ frames means react-map-gl doesn't diff a new paint every
-// tick. 'linear' resampling smooths the over-scaled tiles past z7 instead of
-// showing crunchy nearest-neighbor squares.
-const LWXR_FRAME_PAINT: any = {
-  'raster-opacity': 0,
-  'raster-fade-duration': 0,
-  'raster-resampling': 'linear',
-  // LibreWxR composite tiles are pretty dim out of the box. Saturate +
-  // contrast so the green/yellow/red reads as bright as observed radar.
-  'raster-saturation': 0.35,
-  'raster-contrast': 0.2,
-};
-
-const WARNING_FILL_EXPR: any = [
-  'case',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'tornado']],
-  'rgba(239,68,68,0.28)',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'severe']],
-  'rgba(249,115,22,0.24)',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'flood']],
-  'rgba(16,185,129,0.22)',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'winter']],
-  'rgba(56,189,248,0.22)',
-  ['==', ['get', 'category'], 'warning'],
-  'rgba(251,191,36,0.20)',
-  // Watches tinted by concern type: tornado watch reads red, severe watch
-  // amber, anything else the legacy yellow.
-  ['all', ['==', ['get', 'category'], 'watch'], ['==', ['get', 'concern_type'], 'tornado']],
-  'rgba(239,68,68,0.15)',
-  ['all', ['==', ['get', 'category'], 'watch'], ['==', ['get', 'concern_type'], 'severe']],
-  'rgba(245,158,11,0.13)',
-  ['==', ['get', 'category'], 'watch'],
-  'rgba(250,204,21,0.10)',
-  ['==', ['get', 'category'], 'advisory'],
-  'rgba(167,139,250,0.16)',
-  // Mesoscale Discussions tinted by CONCERN TYPE (what they're about, parsed
-  // from the discussion body) so a tornado MD reads red, winter indigo, fire
-  // orange, flood green — not just one fuchsia blob.
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'tornado']],
-  'rgba(239,68,68,0.24)',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'severe']],
-  'rgba(245,158,11,0.20)',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'flood']],
-  'rgba(16,185,129,0.20)',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'winter']],
-  'rgba(129,140,248,0.20)',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'fire']],
-  'rgba(251,146,60,0.20)',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'wind']],
-  'rgba(56,189,248,0.18)',
-  ['==', ['get', 'category'], 'discussion'],
-  'rgba(217,70,239,0.18)',
-  // Statements (incl. Special Weather Statements for hail) at higher opacity
-  // than before — they used to nearly disappear over bright radar pixels.
-  ['==', ['get', 'category'], 'statement'],
-  'rgba(148,163,184,0.22)',
-  'rgba(148,163,184,0.12)',
-];
-
-const WARNING_LINE_EXPR: any = [
-  'case',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'tornado']],
-  '#ef4444',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'severe']],
-  '#f97316',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'flood']],
-  '#10b981',
-  ['all', ['==', ['get', 'category'], 'warning'], ['==', ['get', 'hazard'], 'winter']],
-  '#38bdf8',
-  ['==', ['get', 'category'], 'warning'],
-  '#fbbf24',
-  ['all', ['==', ['get', 'category'], 'watch'], ['==', ['get', 'concern_type'], 'tornado']],
-  '#ef4444',
-  ['all', ['==', ['get', 'category'], 'watch'], ['==', ['get', 'concern_type'], 'severe']],
-  '#f59e0b',
-  ['==', ['get', 'category'], 'watch'],
-  '#eab308',
-  ['==', ['get', 'category'], 'advisory'],
-  '#a78bfa',
-  // MD outline keyed to concern type (see CONCERN_COLORS in lib/nws/concern).
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'tornado']],
-  '#ef4444',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'severe']],
-  '#f59e0b',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'flood']],
-  '#10b981',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'winter']],
-  '#818cf8',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'fire']],
-  '#fb923c',
-  ['all', ['==', ['get', 'category'], 'discussion'], ['==', ['get', 'concern_type'], 'wind']],
-  '#38bdf8',
-  ['==', ['get', 'category'], 'discussion'],
-  '#d946ef',
-  ['==', ['get', 'category'], 'statement'],
-  '#94a3b8',
-  '#64748b',
-];
-
-// Stable paint objects for the warning fill + line layers. selectedWarning
-// drives line-width imperatively via setPaintProperty in an effect below so
-// react-map-gl doesn't re-diff the whole paint object every time a different
-// warning is clicked.
-const WARNING_FILL_PAINT: any = {
-  'fill-color': WARNING_FILL_EXPR,
-  'fill-opacity': 0.9,
-};
-const WARNING_LINE_PAINT: any = {
-  'line-color': WARNING_LINE_EXPR,
-  'line-width': 2,
-  'line-opacity': 0.9,
-};
-const WARNING_LINE_WATCH_PAINT: any = {
-  'line-color': WARNING_LINE_EXPR,
-  'line-width': 2,
-  'line-opacity': 0.85,
-  'line-dasharray': [2, 1.5],
-};
-// SPC Mesoscale Discussions: longer dash with smaller gap so MCDs read as
-// "concern outlook" outline rather than an active warning. Fuchsia hue comes
-// from WARNING_LINE_EXPR's discussion branch.
-const WARNING_LINE_DISCUSSION_PAINT: any = {
-  'line-color': WARNING_LINE_EXPR,
-  'line-width': 1.8,
-  'line-opacity': 0.9,
-  'line-dasharray': [4, 2],
-};
 
 type SpcDayInitial = {
   day_number: number;
@@ -684,17 +289,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // 30–90 s Py-ART Level II render is opt-in (toggle) for pinpoint single-site
   // detail + click-to-sample gate values. A shared ?hiRes=1 link still honors it.
   const [hiRes, setHiRes] = useState(urlInitial.hiRes ?? false);
-  const [pngFallback, setPngFallback] = useState(false);
+  // PNG is the default hi-res path: mercator-correct raster + value-grid
+  // sidecar for the pointer readout. Toggling this off falls back to the
+  // heavyweight GeoJSON polygon path (8–15 MB gzipped on super-res sweeps).
+  const [pngFallback, setPngFallback] = useState(true);
   const [selectedElevation, setSelectedElevation] = useState<number | 'composite'>(0.5);
-  const [level2Loading, setLevel2Loading] = useState(false);
-  const [level2Error, setLevel2Error] = useState<string | null>(null);
-  // Retry attempt number for the current Level II fetch (0 = first try). Lets
-  // the inspector show "Warming renderer · 2/3" during the 4s/8s/12s backoff
-  // schedule instead of going silent.
-  const [level2Attempt, setLevel2Attempt] = useState(0);
-  const level2MaxAttempts = 3;
-  const [level2Overlay, setLevel2Overlay] = useState<Level2Overlay | null>(null);
-  const [level2GeoJSON, setLevel2GeoJSON] = useState<any>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [drawMode, setDrawMode] = useState<'none' | 'polygon' | 'snap' | 'pick-site'>('none');
@@ -704,9 +303,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // identical imagery and tanks the buttery feel during pan/zoom.
   const [tileCacheKey, setTileCacheKey] = useState(() => Math.floor(Date.now() / 300_000));
 
-  // LibreWxR index drives the timeline for CONUS composite mode AND for the
-  // Satellite (IR) product.
-  const [lwxrIndex, setLwxrIndex] = useState<LibreWxRIndex | null>(null);
   // LibreWxR storm-motion arrow overlay (radar tiles only — satellite ignores).
   const [showArrows, setShowArrows] = useState(urlInitial.showArrows ?? true);
   // LibreWxR color scheme (1..9 — see LIBREWXR_COLOR_SCHEMES). Radar tiles only.
@@ -724,9 +320,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const capWarningsGeo = (capSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
 
   const [opacity, setOpacity] = useState(urlInitial.opacity ?? 100);
-  const [frame, setFrame] = useState(0);
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState<'0.5x' | '1x' | '2x' | '4x'>('1x');
   const [showNws, setShowNws] = useState(urlInitial.showNws ?? true);
   // Per-category gates under the master NWS toggle. All on by default. When
   // showNws is off the master overrides; when on, these whittle which polygon
@@ -746,72 +339,22 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // layer so the operator sees a slow heartbeat at active cluster centroids.
   // 2 s period, paused when no clusters are active to avoid wasted renders.
   const [clusterPulse, setClusterPulse] = useState(0);
-  const [selectedStormReport, setSelectedStormReport] = useState<{
-    id: string;
-    hazard: string;
-    description: string | null;
-    photo_url: string | null;
-    reported_at: string | null;
-    reporter: string | null;
-    place_name: string | null;
-    status: string | null;
-    lat: number;
-    lon: number;
-  } | null>(null);
+  const [selectedStormReport, setSelectedStormReport] = useState<SelectedStormReport | null>(null);
   // NWS forecast + fire zone outlines from /public/maps/nws-zones.geojson
   // (run `npm run gen:zones` to rebuild). Off by default — useful for
   // "which zone is this alert in" reference but visually busy when always
   // on.
   const [showZones, setShowZones] = useState(urlInitial.showZones ?? false);
-  const [selectedLsr, setSelectedLsr] = useState<{
-    id: string;
-    event: string;
-    hazard: string | null;
-    magnitude: string | null;
-    location: string | null;
-    occurred_at: string | null;
-    remark: string | null;
-    source: string | null;
-  } | null>(null);
+  const [selectedLsr, setSelectedLsr] = useState<SelectedLsr | null>(null);
   // F13: selected mPING report popover state.
-  const [selectedMping, setSelectedMping] = useState<{
-    id: number;
-    description: string;
-    hazard: string;
-    obtime: string;
-  } | null>(null);
+  const [selectedMping, setSelectedMping] = useState<SelectedMping | null>(null);
   // F12: selected METAR station popover state.
-  const [selectedMetar, setSelectedMetar] = useState<{
-    icaoId: string;
-    name: string | null;
-    obsTime: string | null;
-    temp: number | null;
-    dewp: number | null;
-    wdir: number | null;
-    wspd: number | null;
-    wgst: number | null;
-    altim: number | null;
-    wxString: string | null;
-    rawOb: string | null;
-  } | null>(null);
+  const [selectedMetar, setSelectedMetar] = useState<SelectedMetar | null>(null);
   // F9: selected NEXRAD velocity-couplet — popover shows shear, site, age,
   // and how many volume scans this rotation has been seen on. `lat`/`lon`
   // round-tripped from the GeoJSON so an "alert from this rotation" CTA
   // can pre-fill a compose with a tight circle around the point.
-  const [selectedCouplet, setSelectedCouplet] = useState<{
-    track_id: string;
-    site: string;
-    shear_kt: number;
-    max_shear_kt: number;
-    range_km: number;
-    azimuth_deg: number;
-    elevation_deg: number;
-    volume_time_utc: string | null;
-    first_seen_at: string | null;
-    volume_count: number;
-    lat: number;
-    lon: number;
-  } | null>(null);
+  const [selectedCouplet, setSelectedCouplet] = useState<SelectedCouplet | null>(null);
 
   // F7: SPC convective outlooks. One stored row per Day 1/2/3; client picks
   // which day to render. Off by default so the radar stays uncluttered
@@ -1077,7 +620,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   //   Layers  → all overlay toggles
   //   Source  → radar source / site / product settings
   //   Models  → models & discussion
-  type InspectorTab = 'threats' | 'layers' | 'source' | 'models';
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('threats');
 
   // Split view (Phase 4 v1). When non-null, the map area splits horizontally
@@ -1569,37 +1111,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     return () => clearInterval(id);
   }, []);
 
-  // Pull the LibreWxR index every 2 min so new past frames appear in the
-  // timeline as they're published.
-  const lwxrIndexLoadedRef = useRef(false);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const r = await fetch(LIBREWXR_INDEX_URL, { cache: 'no-store' });
-        const j = (await r.json()) as LibreWxRIndex;
-        if (cancelled) return;
-        if (j?.host && j?.radar) {
-          // On the first successful fetch, pin `frame` to the latest past
-          // frame in the SAME batched update as setLwxrIndex. Otherwise the
-          // first render mounts a lazy window around frame=0 (oldest), the
-          // pin effect then bumps frame to lwxrPastCount-1, and the window
-          // has to remount — racing tile loads and producing a blank map
-          // until the user advances the timeline.
-          if (!lwxrIndexLoadedRef.current) {
-            lwxrIndexLoadedRef.current = true;
-            const pastLen = j.radar.past?.length ?? 0;
-            if (pastLen > 0) setFrame(pastLen - 1);
-          }
-          setLwxrIndex(j);
-        }
-      } catch {/* ignore */}
-    };
-    load();
-    const id = setInterval(load, 120_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, []);
-
   // Realtime channel — any insert/update on nws_alerts triggers an immediate
   // SWR revalidation. SWR dedupes against in-flight requests so a burst of
   // postgres changes only kicks off one re-fetch.
@@ -1688,18 +1199,24 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     setProduct(k);
   }, [selectedSite, viewState.longitude, viewState.latitude]);
 
-  const availableSweeps = level2Overlay?.available_sweeps ?? [];
-  const isComposite = selectedElevation === 'composite';
-  const resolvedSweepIndex = useMemo(() => {
-    if (isComposite) return 0;
-    if (!availableSweeps.length) return 0;
-    let best = 0, bestDiff = Infinity;
-    for (const s of availableSweeps) {
-      const d = Math.abs(s.elevation_deg - (selectedElevation as number));
-      if (d < bestDiff) { bestDiff = d; best = s.index; }
-    }
-    return best;
-  }, [availableSweeps, selectedElevation, isComposite]);
+  const {
+    overlay: level2Overlay,
+    geojson: level2GeoJSON,
+    loading: level2Loading,
+    error: level2Error,
+    attempt: level2Attempt,
+    maxAttempts: level2MaxAttempts,
+    availableSweeps,
+    isComposite,
+    resolvedSweepIndex,
+    sampleValue: sampleLevel2Value,
+  } = useLevel2Data({
+    enabled: useLevel2,
+    site: selectedSite,
+    product: level2Product,
+    selectedElevation,
+    usePng: useL2Png,
+  });
 
   // ── Timeline frames ──────────────────────────────────────────────────
   // LibreWxR drives the timeline for two CONUS-only products: 'composite' (its
@@ -1712,19 +1229,23 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       : effectiveProduct === 'satellite' && satSource === 'lwxr' ? 'satellite'
       : null;
   const useLibreWxR = lwxrSubject !== null;
-  const lwxrAllFrames = useMemo<LibreWxRFrame[]>(() => {
-    if (!useLibreWxR || !lwxrIndex) return [];
-    if (lwxrSubject === 'satellite') return [...(lwxrIndex.satellite?.infrared ?? [])];
-    return [...(lwxrIndex.radar?.past ?? []), ...(lwxrIndex.radar?.nowcast ?? [])];
-  }, [useLibreWxR, lwxrSubject, lwxrIndex]);
-  // For satellite there is no nowcast — every frame is "past", so the live
-  // cursor sits at the final frame.
-  const lwxrPastCount = useMemo(() => {
-    if (!useLibreWxR || !lwxrIndex) return 0;
-    if (lwxrSubject === 'satellite') return lwxrIndex.satellite?.infrared?.length ?? 0;
-    return lwxrIndex.radar?.past?.length ?? 0;
-  }, [useLibreWxR, lwxrSubject, lwxrIndex]);
-  const totalFrames = useLibreWxR ? Math.max(1, lwxrAllFrames.length) : 1;
+  const {
+    lwxrIndex,
+    lwxrAllFrames,
+    lwxrPastCount,
+    totalFrames,
+    frame,
+    setFrame,
+    playing,
+    setPlaying,
+    speed,
+    setSpeed,
+    hoverFrame,
+    setHoverFrame,
+    trackRef,
+    draggingRef,
+    scrubAtClientX,
+  } = useLwxrTimeline(lwxrSubject);
 
   // Window mounted LibreWxR raster sources to ±LWXR_MOUNT_RADIUS around the
   // current frame so we never have more than ~7 sources alive at once instead
@@ -1793,181 +1314,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       map.off('idle', onIdle);
     };
   }, [effectiveProduct, selectedSite, satSource, mapReady]);
-
-  // Pin frame to the latest past frame whenever the frame list changes (e.g.
-  // a new past frame just arrived, or the user switched away from LibreWxR).
-  const prevTotal = useRef(0);
-  useEffect(() => {
-    if (!useLibreWxR) {
-      setFrame(0);
-      setPlaying(false);
-      return;
-    }
-    if (lwxrPastCount && prevTotal.current !== totalFrames) {
-      setFrame(Math.max(0, lwxrPastCount - 1));
-      prevTotal.current = totalFrames;
-    }
-  }, [useLibreWxR, lwxrPastCount, totalFrames]);
-
-  useEffect(() => {
-    if (!useLevel2 || !selectedSite) {
-      setLevel2Overlay(null);
-      setLevel2GeoJSON(null);
-      setLevel2Error(null);
-      setLevel2Loading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLevel2GeoJSON(null);
-    setLevel2Error(null);
-    setLevel2Attempt(0);
-
-    const RETRY_DELAYS = [4000, 8000, 12000];
-    const format = useL2Png ? 'png' : 'geojson';
-    // Track every pending retry timeout so a fast site/product switch cancels
-    // them instead of letting them fire and queue stale fetches at the
-    // renderer.
-    const pendingTimeouts = new Set<ReturnType<typeof setTimeout>>();
-    const abort = new AbortController();
-
-    // localStorage-cached pointer to the last successful render for this
-    // (site, product, sweep, composite, format) combo. The cached entry has
-    // the overlay metadata (bounds, vmin/vmax, sweeps, etc.) plus the
-    // geojson_url / image_url — content-addressed by scan_time so the URL
-    // always serves the exact bytes we rendered last time. Fetching it pulls
-    // straight from the browser's HTTP cache (immutable, never expires) so
-    // revisits paint in <1s while the fresh /api/radar/level2 call runs in
-    // parallel and replaces the data once the latest scan finishes rendering.
-    const cacheKey = `radar:l2:${selectedSite}:${level2Product}:${resolvedSweepIndex}:${isComposite ? 1 : 0}:${format}`;
-    try {
-      const raw = typeof window !== 'undefined' ? window.localStorage.getItem(cacheKey) : null;
-      if (raw) {
-        const cached = JSON.parse(raw) as { overlay?: Level2Overlay };
-        const ov = cached.overlay;
-        if (ov && (ov.image_url || ov.geojson_url)) {
-          setLevel2Overlay(ov);
-          if (format === 'geojson' && ov.geojson_url) {
-            (async () => {
-              try {
-                const r = await fetch(ov.geojson_url!, { cache: 'force-cache', signal: abort.signal });
-                if (cancelled || !r.ok || !r.body) return;
-                const decompressed = r.body.pipeThrough(new DecompressionStream('gzip'));
-                const text = await new Response(decompressed).text();
-                const gj = JSON.parse(text);
-                if (cancelled) return;
-                // Only apply the cached GeoJSON if a fresh fetch hasn't beat
-                // us to it — preserves the latest scan when both finish.
-                setLevel2GeoJSON((prev: any) => prev ?? gj);
-              } catch {
-                /* cache miss / parse failure / aborted — fall through to live fetch */
-              }
-            })();
-          }
-        }
-      }
-    } catch {
-      /* localStorage unavailable (private mode etc) — skip silently */
-    }
-
-    const schedule = (fn: () => void, ms: number) => {
-      const t = setTimeout(() => {
-        pendingTimeouts.delete(t);
-        if (!cancelled) fn();
-      }, ms);
-      pendingTimeouts.add(t);
-    };
-
-    const load = async (attempt = 0): Promise<void> => {
-      if (cancelled) return;
-      setLevel2Loading(true);
-
-      try {
-        const url = `/api/radar/level2/${selectedSite}`
-          + `?product=${level2Product}`
-          + `&format=${format}`
-          + `&sweep_index=${resolvedSweepIndex}`
-          + (isComposite ? '&composite=1' : '');
-        const res = await fetch(url, { cache: 'no-store', signal: abort.signal });
-        const data = await res.json();
-        if (cancelled) return;
-
-        if (data.error) {
-          // Only retry transient causes. renderer_not_configured (env vars
-          // missing) and renderer_unreachable (Fly down / DNS) won't fix
-          // themselves on the 4-8-12s schedule, and retrying them piles up
-          // open connections and starves /api/radar/warnings et al with
-          // ERR_INSUFFICIENT_RESOURCES.
-          const transient =
-            data.error === 'renderer_waking' || data.error === 'renderer_timeout';
-          if (transient && attempt < RETRY_DELAYS.length) {
-            setLevel2Error('renderer_waking');
-            setLevel2Attempt(attempt + 1);
-            schedule(() => load(attempt + 1), RETRY_DELAYS[attempt]);
-            return;
-          }
-          setLevel2Error(data.error);
-          setLevel2Overlay(null);
-          setLevel2GeoJSON(null);
-          return;
-        }
-
-        setLevel2Overlay(data as Level2Overlay);
-        setLevel2Error(null);
-        try {
-          // Persist the pointer (metadata + URL) so next visit can re-render
-          // instantly from the browser HTTP cache. Bytes themselves stay in
-          // the HTTP cache — only the small JSON metadata lives in localStorage.
-          window.localStorage.setItem(cacheKey, JSON.stringify({ overlay: data, savedAt: Date.now() }));
-        } catch {
-          /* over quota / private mode — best-effort */
-        }
-
-        if (format === 'png') {
-          // PNG path: nothing else to download — the renderer URL is a public
-          // PNG, Mapbox image source handles the rest.
-          setLevel2GeoJSON(null);
-          return;
-        }
-
-        if (!data.geojson_url) throw new Error('renderer returned no geojson_url');
-        const gjRes = await fetch(data.geojson_url, { cache: 'default', signal: abort.signal });
-        if (!gjRes.ok) throw new Error(`geojson fetch ${gjRes.status}`);
-        if (!gjRes.body) throw new Error('geojson response has no body');
-        const decompressed = gjRes.body.pipeThrough(new DecompressionStream('gzip'));
-        const text = await new Response(decompressed).text();
-        const gj = JSON.parse(text);
-        if (cancelled) return;
-        setLevel2GeoJSON(gj);
-      } catch (err: any) {
-        if (cancelled || err?.name === 'AbortError') return;
-        if (attempt < RETRY_DELAYS.length) {
-          setLevel2Error('renderer_waking');
-          schedule(() => load(attempt + 1), RETRY_DELAYS[attempt]);
-          return;
-        }
-        setLevel2Error('renderer_unreachable');
-        setLevel2GeoJSON(null);
-      } finally {
-        if (!cancelled) setLevel2Loading(false);
-      }
-    };
-
-    // Debounce the initial fetch by 150 ms so rapid product/sweep/site clicks
-    // collapse into a single request. The loading indicator is set on the
-    // leading edge so the UI still feels responsive while the timer is armed.
-    setLevel2Loading(true);
-    const debounceT = setTimeout(() => { void load(); }, 150);
-    const id = setInterval(() => load(0), 300_000);
-    return () => {
-      cancelled = true;
-      clearTimeout(debounceT);
-      clearInterval(id);
-      pendingTimeouts.forEach(clearTimeout);
-      pendingTimeouts.clear();
-      abort.abort();
-    };
-  }, [useLevel2, selectedSite, level2Product, resolvedSweepIndex, isComposite, useL2Png]);
 
   const radarSourceId = 'radar-source';
   const radarLayerId = 'radar-layer';
@@ -2168,9 +1514,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     paint: {
       'raster-opacity': opacity / 100,
       'raster-fade-duration': 0,
-      'raster-resampling': 'linear' as const,
-      'raster-saturation': 0.35,
-      'raster-contrast': 0.2,
+      // Nearest keeps gate edges crisp on overzoom — the renderer emits
+      // pixel-exact nearest-gate samples, and linear resampling smears the
+      // hard Baron band edges into mush.
+      'raster-resampling': 'nearest' as const,
+      // No saturation/contrast boost here (unlike the dim LibreWxR tiles) —
+      // the renderer's PNG carries the exact Baron/ALPHA-Velo palette and
+      // boosting would shift the band colors.
     },
     ...tileAnchor,
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2280,12 +1630,15 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (map && useLevel2 && !useL2Png && level2Overlay && map.getLayer('level2-fill')) {
       const hits = map.queryRenderedFeatures(e.point, { layers: ['level2-fill'] });
       if (hits.length > 0) {
-        const q = (hits[0].properties as any)?.v;
-        if (typeof q === 'number') {
-          const range = level2Overlay.vmax - level2Overlay.vmin || 1;
-          sample = level2Overlay.vmin + (q / 255) * range;
-        }
+        const v = (hits[0].properties as any)?.v;
+        // properties.v is the raw product value (dBZ / m/s / ρhv) — see
+        // polar.py. (An old byte-scale dequantization here used to garble
+        // the readout.)
+        if (typeof v === 'number') sample = v;
       }
+    } else if (useLevel2 && useL2Png) {
+      // PNG mode: sample the value-grid sidecar instead of map features.
+      sample = sampleLevel2Value(lng, lat);
     }
     setHoverPixel({ lng, lat, sample });
 
@@ -2300,7 +1653,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     } else {
       setHoverSub(null);
     }
-  }, [useLevel2, useL2Png, level2Overlay, showSubs]);
+  }, [useLevel2, useL2Png, level2Overlay, showSubs, sampleLevel2Value]);
 
   // F7: derived selectors for the currently-rendered SPC day.
   const activeSpc = useMemo(
@@ -2430,8 +1783,25 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     // (smaller targets win over the larger warning polygons underneath).
     const map = mapRef.current?.getMap();
     if (!map) return;
-    if (showSubs && map.getLayer('subs-pin')) {
-      const subHits = map.queryRenderedFeatures(e.point, { layers: ['subs-pin'] });
+    // One queryRenderedFeatures pass across every clickable layer, then
+    // dispatch by layer id in priority order below — instead of up to eight
+    // separate feature-index queries when the click lands on empty map.
+    const clickLayers = [
+      showSubs ? 'subs-pin' : null,
+      showLsr ? 'lsr-pin' : null,
+      showStormReports ? 'storm-report-pin' : null,
+      showMping ? 'mping-pin' : null,
+      showMetar ? 'metar-pin' : null,
+      showCouplets ? 'couplet-pin' : null,
+      showProbSevere ? 'probsevere-fill' : null,
+      'warning-fill',
+    ].filter((l): l is string => !!l && !!map.getLayer(l));
+    const allHits = clickLayers.length > 0
+      ? map.queryRenderedFeatures(e.point, { layers: clickLayers })
+      : [];
+    const hitsFor = (layer: string) => allHits.filter((f) => f.layer?.id === layer);
+    if (showSubs) {
+      const subHits = hitsFor('subs-pin');
       if (subHits.length > 0) {
         const props = subHits[0].properties as any;
         if (props?.id) {
@@ -2441,8 +1811,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       }
     }
     // F4: LSR pins next — same priority logic (small targets first).
-    if (showLsr && map.getLayer('lsr-pin')) {
-      const lsrHits = map.queryRenderedFeatures(e.point, { layers: ['lsr-pin'] });
+    if (showLsr) {
+      const lsrHits = hitsFor('lsr-pin');
       if (lsrHits.length > 0) {
         const props = lsrHits[0].properties as any;
         setSelectedLsr({
@@ -2459,8 +1829,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       }
     }
     // Subscriber storm reports — same priority as LSRs (small targets).
-    if (showStormReports && map.getLayer('storm-report-pin')) {
-      const hits = map.queryRenderedFeatures(e.point, { layers: ['storm-report-pin'] });
+    if (showStormReports) {
+      const hits = hitsFor('storm-report-pin');
       if (hits.length > 0) {
         const f = hits[0];
         const props = f.properties as any;
@@ -2483,8 +1853,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     }
     // F13: mPING report click. Higher priority than METAR but lower
     // than LSRs since mPING is community-sourced.
-    if (showMping && map.getLayer('mping-pin')) {
-      const hits = map.queryRenderedFeatures(e.point, { layers: ['mping-pin'] });
+    if (showMping) {
+      const hits = hitsFor('mping-pin');
       if (hits.length > 0) {
         const props = hits[0].properties as any;
         setSelectedMping({
@@ -2499,8 +1869,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     // F12: METAR station click. Lower priority than warning fills but
     // higher than nothing — the operator clicks a station to see surface
     // obs context for whatever storm they're looking at.
-    if (showMetar && map.getLayer('metar-pin')) {
-      const mHits = map.queryRenderedFeatures(e.point, { layers: ['metar-pin'] });
+    if (showMetar) {
+      const mHits = hitsFor('metar-pin');
       if (mHits.length > 0) {
         const props = mHits[0].properties as any;
         setSelectedMetar({
@@ -2521,8 +1891,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     }
     // F9: rotation IDs. Sit above LSRs in click priority because a strong
     // couplet is a higher-urgency signal than a backfilled storm report.
-    if (showCouplets && map.getLayer('couplet-pin')) {
-      const cpHits = map.queryRenderedFeatures(e.point, { layers: ['couplet-pin'] });
+    if (showCouplets) {
+      const cpHits = hitsFor('couplet-pin');
       if (cpHits.length > 0) {
         const f = cpHits[0];
         const props = f.properties as any;
@@ -2548,8 +1918,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     // ProbSevere object click → readout popup. High priority: clicking a storm
     // object to see its full ML breakdown (probs + the radar/NWP ingredients) is
     // a core nowcasting action.
-    if (showProbSevere && map.getLayer('probsevere-fill')) {
-      const psHits = map.queryRenderedFeatures(e.point, { layers: ['probsevere-fill'] });
+    if (showProbSevere) {
+      const psHits = hitsFor('probsevere-fill');
       if (psHits.length > 0) {
         const props = psHits[0].properties as any;
         setProbSeverePopup({
@@ -2568,8 +1938,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         return;
       }
     }
-    if (!map.getLayer('warning-fill')) return;
-    const hits = map.queryRenderedFeatures(e.point, { layers: ['warning-fill'] });
+    const hits = hitsFor('warning-fill');
     if (hits.length === 0) return;
 
     // Multiple overlapping polygons (common: a Tornado Warning nested inside
@@ -2770,85 +2139,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     params.set('geo', JSON.stringify({ type: 'polygon', coordinates: selection.coordinates }));
     window.location.href = `/forecast/new?${params.toString()}`;
   };
-
-  // Playback driver. Uses setTimeout so the dwell-at-NOW pause is variable per
-  // frame; re-runs whenever frame changes, which is cheap and predictable.
-  useEffect(() => {
-    if (!playing || !useLibreWxR || totalFrames <= 1) return;
-    const baseMs = { '0.5x': 800, '1x': 400, '2x': 220, '4x': 110 }[speed] ?? 400;
-    // Pause briefly when we land on the most-recent observed frame so the
-    // viewer can read the "now" state before the loop continues into nowcast
-    // (or wraps back to the oldest past frame).
-    const dwell = frame === lwxrPastCount - 1 ? Math.max(baseMs * 4, 1400) : baseMs;
-    const id = setTimeout(() => {
-      setFrame((f) => (f + 1) % totalFrames);
-    }, dwell);
-    return () => clearTimeout(id);
-  }, [playing, speed, useLibreWxR, totalFrames, lwxrPastCount, frame]);
-
-  // ── Scrub + keyboard ─────────────────────────────────────────────────
-  const trackRef = useRef<HTMLDivElement>(null);
-  const draggingRef = useRef(false);
-  const [hoverFrame, setHoverFrame] = useState<number | null>(null);
-
-  const scrubAtClientX = useCallback((clientX: number): number | null => {
-    const rect = trackRef.current?.getBoundingClientRect();
-    if (!rect || rect.width === 0) return null;
-    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
-    return Math.round((x / rect.width) * Math.max(0, totalFrames - 1));
-  }, [totalFrames]);
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!draggingRef.current) return;
-      const f = scrubAtClientX(e.clientX);
-      if (f != null) setFrame(f);
-    };
-    const onUp = () => { draggingRef.current = false; };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }, [scrubAtClientX]);
-
-  // Keyboard shortcuts. Skipped when focus is on an input so the opacity
-  // slider, etc. keep working.
-  useEffect(() => {
-    if (!useLibreWxR || totalFrames <= 1) return;
-    const onKey = (e: KeyboardEvent) => {
-      const tgt = e.target as HTMLElement | null;
-      const tag = tgt?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tgt?.isContentEditable) return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        setPlaying((p) => !p);
-      } else if (e.code === 'ArrowLeft') {
-        e.preventDefault();
-        setPlaying(false);
-        setFrame((f) => Math.max(0, f - 1));
-      } else if (e.code === 'ArrowRight') {
-        e.preventDefault();
-        setPlaying(false);
-        setFrame((f) => Math.min(totalFrames - 1, f + 1));
-      } else if (e.code === 'Home') {
-        e.preventDefault();
-        setPlaying(false);
-        setFrame(0);
-      } else if (e.code === 'End') {
-        e.preventDefault();
-        setPlaying(false);
-        setFrame(totalFrames - 1);
-      } else if (e.key === 'n' || e.key === 'N') {
-        e.preventDefault();
-        setPlaying(false);
-        setFrame(Math.max(0, lwxrPastCount - 1));
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [useLibreWxR, totalFrames, lwxrPastCount]);
 
   // 'H' toggles hide-all-UI mode. Lives in its own effect (not the LWXR
   // playback handler above) so it works in every product/mode, not only
@@ -3179,11 +2469,14 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     return () => window.clearInterval(id);
   }, [activeClusterCount]);
 
-  // Convert quantized `v` (0-255) to natural units for the hover readout.
+  // Format the raw sampled value in natural units for the hover readout.
+  // Velocity arrives in m/s (Py-ART) — convert to kt for display.
   const sampleLabel = useMemo(() => {
     if (!hoverPixel || hoverPixel.sample == null) return '—';
     if (effectiveProduct === 'correlation') return `${hoverPixel.sample.toFixed(2)} ρhv`;
-    if (effectiveProduct === 'velocity' && useLevel2) return `${hoverPixel.sample.toFixed(0)} kt`;
+    if (effectiveProduct === 'velocity' && useLevel2) return `${(hoverPixel.sample * 1.94384).toFixed(0)} kt`;
+    if (effectiveProduct === 'zdr') return `${hoverPixel.sample.toFixed(1)} dB`;
+    if (effectiveProduct === 'kdp') return `${hoverPixel.sample.toFixed(1)} °/km`;
     return `${hoverPixel.sample.toFixed(0)} dBZ`;
   }, [hoverPixel, effectiveProduct, useLevel2]);
 
@@ -4820,1073 +4113,132 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             map context above. Backdrop dim makes it read as a modal layer
             so the tap-to-close X is obvious. */}
         {!uiHidden && !selection && !inspectorCollapsed && (
-          <>
-            <button
-              type="button"
-              onClick={() => setInspectorCollapsed(true)}
-              className="md:hidden absolute inset-0 z-10 bg-black/40 backdrop-blur-[1px]"
-              aria-label="Close layers panel"
-              tabIndex={-1}
-            />
-            <div className="absolute top-auto bottom-0 left-0 right-0 max-h-[75vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 flex flex-col gap-[18px] z-20 wx-scroll md:top-4 md:bottom-auto md:left-auto md:right-4 md:w-[304px] md:max-h-[calc(100%-220px)] md:rounded-xl md:border">
-            <button
-              type="button"
-              onClick={() => setInspectorCollapsed(true)}
-              className="absolute top-1.5 right-1.5 w-6 h-6 inline-flex items-center justify-center rounded-md text-wx-mute hover:text-wx-fg hover:bg-wx-ink"
-              aria-label="Collapse inspector"
-              title="Collapse inspector"
-            >
-              <ChevronRight size={14} />
-            </button>
-            <div>
-              <div className="flex items-center justify-between text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
-                <span>Legend · {PRODUCTS[effectiveProduct].short}</span>
-                <span className="font-mono text-[10px] text-wx-mute">
-                  {(() => {
-                    if (effectiveProduct === 'satellite' && satSource !== 'lwxr') {
-                      return `GOES-East · ${GOES_SOURCES[satSource as GoesSourceId]?.short ?? 'SAT'}`;
-                    }
-                    if (lwxrSubject === 'satellite') return 'CONUS · LibreWxR IR';
-                    if (useLibreWxR) return 'CONUS · LibreWxR';
-                    if (effectiveProduct === 'rotation') return 'MRMS · CONUS';
-                    if (useLevel2) {
-                      const tiltLabel = isComposite
-                        ? 'COMP'
-                        : (() => {
-                            const s = availableSweeps.find((x) => x.index === resolvedSweepIndex);
-                            return s ? formatElev(s.elevation_deg) : '—';
-                          })();
-                      if (effectiveProduct === 'correlation') return `Level II · ρhv · ${tiltLabel}`;
-                      if (effectiveProduct === 'zdr') return `Level II · ZDR · ${tiltLabel}`;
-                      if (effectiveProduct === 'kdp') return `Level II · KDP · ${tiltLabel}`;
-                      return `Level II · ${tiltLabel}${useL2Png ? ' · PNG' : ''}`;
-                    }
-                    return selectedSite
-                      ? (effectiveProduct === 'velocity' ? 'IEM · SRV 0.5°' : 'IEM · super-res 0.5°')
-                      : 'CONUS · QCD';
-                  })()}
-                </span>
-              </div>
-              {(effectiveProduct === 'correlation' || effectiveProduct === 'zdr' || effectiveProduct === 'kdp') && selectedSite && (
-                <p className="text-[10px] text-wx-mute mt-1">
-                  {level2Loading && level2Attempt > 0 ? `Warming renderer · retry ${level2Attempt}/${level2MaxAttempts}…`
-                    : level2Loading ? (effectiveProduct === 'zdr' ? 'Rendering differential reflectivity…' : effectiveProduct === 'kdp' ? 'Retrieving KDP from differential phase…' : 'Rendering correlation coefficient…')
-                    : level2Error === 'renderer_not_configured' ? 'Renderer not configured (see .env.local)'
-                    : level2Error === 'renderer_waking' ? `Renderer waking up · retry ${level2Attempt}/${level2MaxAttempts}…`
-                    : (level2Error === 'renderer_unreachable' || level2Error === 'renderer_timeout') ? 'Renderer slow — retrying…'
-                    : level2Error ? `${effectiveProduct === 'zdr' ? 'ZDR' : 'CC'} unavailable (${level2Error})`
-                    : level2Overlay ? `Scan ${new Date(level2Overlay.scan_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} UTC`
-                    : 'Waiting for Level II render…'}
-                </p>
-              )}
-              {(() => {
-                const satLegend: GoesLegend | null = effectiveProduct === 'satellite'
-                  ? (satSource === 'lwxr' ? 'ir' : (GOES_SOURCES[satSource as GoesSourceId]?.legend ?? 'ir'))
-                  : null;
-                const satGradient =
-                  satLegend === 'wv'   ? 'bg-[linear-gradient(90deg,#4a2f1c_0%,#92602f_25%,#cfa66d_45%,#4ade80_65%,#3b82f6_100%)]'
-                  : satLegend === 'rgb' ? 'bg-[linear-gradient(90deg,#1e1b4b_0%,#3b82f6_25%,#10b981_50%,#fbbf24_75%,#ef4444_100%)]'
-                  : 'bg-[linear-gradient(90deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]';
-                const satLabels =
-                  satLegend === 'wv'   ? ['Dry', '·', '·', 'Moist']
-                  : satLegend === 'rgb' ? ['RGB composite']
-                  : ['Warm', '·', '·', 'Cold cloud tops'];
-                return (
-                  <>
-                    <div className={`h-2.5 rounded-[3px] mt-1 ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(90deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(90deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(90deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(90deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'kdp' ? 'bg-[linear-gradient(90deg,#4b5563_0%,#1f2937_17%,#0ea5e9_25%,#10b981_33%,#84cc16_50%,#facc15_67%,#f97316_83%,#ec4899_100%)]' : effectiveProduct === 'satellite' ? satGradient : 'bg-[linear-gradient(90deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`} />
-                    <div className="flex justify-between text-[9.5px] font-mono text-wx-mute mt-1">
-                      {effectiveProduct === 'velocity' && ['−64', '−32', '0', '+32', '+64 kts'].map(t => <span key={t}>{t}</span>)}
-                      {effectiveProduct === 'rotation' && ['0', '0.005', '0.010', '0.015', '0.020 s⁻¹'].map(t => <span key={t}>{t}</span>)}
-                      {effectiveProduct === 'correlation' && ['0.2', '0.5', '0.8', '0.95', '1.0'].map(t => <span key={t}>{t}</span>)}
-                      {effectiveProduct === 'zdr' && ['−4', '0', '+2', '+4', '+8 dB'].map(t => <span key={t}>{t}</span>)}
-                      {effectiveProduct === 'kdp' && ['−1', '0', '1', '2', '3', '5 °/km'].map(t => <span key={t}>{t}</span>)}
-                      {effectiveProduct === 'satellite' && satLabels.map((t, i) => <span key={`${t}-${i}`}>{t}</span>)}
-                      {(effectiveProduct === 'composite' || effectiveProduct === 'reflectivity') && ['5', '15', '25', '35', '45', '55', '65', '75 dBZ'].map(t => <span key={t}>{t}</span>)}
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-
-            {/* Inspector tab bar — one group at a time instead of a long scroll. */}
-            <div className="flex gap-1">
-              {([['threats', 'Threats'], ['layers', 'Layers'], ['source', 'Source'], ['models', 'Models']] as const).map(([key, label]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setInspectorTab(key)}
-                  aria-pressed={inspectorTab === key}
-                  className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold tracking-wide transition ${inspectorTab === key ? 'bg-wx-accent/15 text-wx-fg ring-1 ring-wx-accent' : 'text-wx-mute hover:text-wx-fg hover:bg-wx-ink'}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {inspectorTab === 'threats' && (
-            <div className="flex flex-col gap-2">
-              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
-                Threat board · {threatBoard.length}
-              </div>
-              {(
-                threatBoard.length === 0 ? (
-                  <p className="text-[10px] text-wx-mute">No active threats — quiet right now.</p>
-                ) : (
-                  <div className="flex flex-col gap-1 max-h-56 overflow-y-auto wx-scroll">
-                    {threatBoard.map((th) => (
-                      <button
-                        key={th.key}
-                        type="button"
-                        onClick={() => {
-                          if (th.center) {
-                            mapRef.current?.flyTo({ center: th.center, zoom: th.kind === 'warning' ? 8.5 : 8, duration: 700 });
-                          }
-                          if (th.kind === 'warning' && th.warning) setSelectedWarning(th.warning);
-                          if (th.kind === 'probsevere' && th.cell) {
-                            const c = th.cell;
-                            setProbSeverePopup({
-                              lng: c.center[0], lat: c.center[1],
-                              topType: c.topType, topProb: c.topProb,
-                              severe: c.severe, tor: c.tor, hail: c.hail, wind: c.wind,
-                              readout: c.readout, me: c.me, ms: c.ms,
-                            });
-                          }
-                        }}
-                        className="flex items-center gap-2 rounded-md border border-wx-line bg-wx-ink px-2 py-1.5 text-left hover:border-wx-accent"
-                      >
-                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${th.dot} shrink-0`} />
-                        <span className="w-6 shrink-0 text-[8px] font-semibold uppercase tracking-wider text-wx-mute">{th.badge}</span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[10.5px] font-medium text-wx-fg">{th.title}</span>
-                          {th.sub ? <span className="block truncate text-[9px] text-wx-mute">{th.sub}</span> : null}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )
-              )}
-            </div>
-            )}
-
-            {inspectorTab === 'source' && (
-            <div className="flex flex-col gap-[18px]">
-              {(<>
-
-            {effectiveProduct === 'satellite' && (
-              <div>
-                <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">Satellite source</div>
-                <select
-                  value={satSource}
-                  onChange={(e) => setSatSource(e.target.value as SatSourceId)}
-                  className="w-full text-[11px] font-mono bg-wx-ink border border-wx-line rounded px-2 py-1 text-wx-fg"
-                  title="Switch between LibreWxR's modeled IR (animated) and real GOES-East ABI bands (live single frame)"
-                >
-                  <option value="lwxr">LibreWxR IR · modeled · animated</option>
-                  {(Object.keys(GOES_SOURCES) as GoesSourceId[]).map((id) => (
-                    <option key={id} value={id}>{GOES_SOURCES[id].label}</option>
-                  ))}
-                </select>
-                {satSource !== 'lwxr' && (() => {
-                  const cfg = GOES_SOURCES[satSource as GoesSourceId];
-                  const upstream = cfg?.provider === 'iem' ? 'Iowa State Mesonet' : 'NASA GIBS';
-                  return (
-                    <p className="text-[9.5px] text-wx-mute mt-1 leading-snug">
-                      Live single frame via {upstream} · GOES-East ABI · ~10 min cadence
-                    </p>
-                  );
-                })()}
-              </div>
-            )}
-
-            {lwxrSubject === 'radar' && (
-              <div>
-                <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">LibreWxR</div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] text-wx-mute">Motion arrows</span>
-                  <button
-                    onClick={() => setShowArrows((v) => !v)}
-                    className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showArrows ? 'bg-amber-400' : 'bg-wx-line'}`}
-                    aria-pressed={showArrows}
-                    title={showArrows ? 'Hide storm-motion arrows' : 'Show storm-motion arrows'}
-                  >
-                    <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showArrows ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                  </button>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-wx-mute">Color scheme</span>
-                  <select
-                    value={colorScheme}
-                    onChange={(e) => setColorScheme(parseInt(e.target.value, 10))}
-                    className="text-[10px] font-mono bg-wx-ink border border-wx-line rounded px-1.5 py-0.5 text-wx-fg"
-                    title="LibreWxR radar color scheme"
-                  >
-                    {LIBREWXR_COLOR_SCHEMES.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Layer opacity</span>
-                <span className="font-mono text-[11px] text-wx-fg">{opacity}%</span>
-              </div>
-              <input type="range" min={20} max={100} step={2} value={opacity} onChange={(e) => setOpacity(parseInt(e.target.value))} className="w-full" />
-            </div>
-
-            <div>
-              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">Mode</div>
-              <div className="flex border border-wx-line rounded-lg overflow-hidden bg-wx-ink">
-                <button onClick={() => { setSelectedSite(null); setSiteQuery(''); }} className={`flex-1 py-1.5 text-sm font-medium ${!selectedSite ? 'bg-wx-card text-wx-fg' : 'text-wx-mute'}`}>CONUS</button>
-                <button
-                  onClick={() => {
-                    if (!selectedSite) {
-                      const center: [number, number] = [viewState.longitude, viewState.latitude];
-                      const nearest = nearestSites(center, 1)[0] ?? NEXRAD_SITES_BY_CODE[DEFAULT_SITE_CODE];
-                      setSelectedSite(nearest.code);
-                      mapRef.current?.flyTo({ center: nearest.center, zoom: nearest.zoom, duration: 700 });
-                    }
-                  }}
-                  className={`flex-1 py-1.5 text-sm font-medium border-l border-wx-line ${selectedSite ? 'bg-wx-card text-wx-fg' : 'text-wx-mute'}`}
-                >Single site</button>
-              </div>
-              {selectedSite && (
-                <div className="mt-2 flex flex-col gap-1.5">
-                  <div className="relative">
-                    <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-wx-mute pointer-events-none" />
-                    <input
-                      type="text"
-                      value={siteQuery}
-                      onChange={(e) => setSiteQuery(e.target.value)}
-                      placeholder="Search NEXRAD (KOHX, Nashville, TN…)"
-                      className="w-full pl-7 pr-7 py-1.5 text-[11.5px] bg-wx-ink border border-wx-line rounded-md placeholder:text-wx-mute focus:border-wx-accent outline-none"
-                    />
-                    {siteQuery && (
-                      <button
-                        onClick={() => setSiteQuery('')}
-                        className="absolute right-1.5 top-1/2 -translate-y-1/2 text-wx-mute hover:text-wx-fg"
-                        title="Clear"
-                      ><X size={11} /></button>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setDrawMode((m) => (m === 'pick-site' ? 'none' : 'pick-site'))}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10.5px] border ${drawMode === 'pick-site' ? 'bg-wx-accent text-black border-wx-accent' : 'bg-wx-ink/40 border-wx-line text-wx-mute hover:text-wx-fg'}`}
-                    title="Click anywhere on the map to pick the nearest NEXRAD site"
-                  >
-                    <Target size={11} /> {drawMode === 'pick-site' ? 'Click the map…' : 'Pick by clicking map'}
-                  </button>
-
-                  {!siteQuery && recentSiteCodes.length > 0 && (
-                    <>
-                      <div className="text-[9.5px] uppercase tracking-wider text-wx-mute font-semibold">Recent</div>
-                      <div className="grid grid-cols-1 gap-0.5">
-                        {recentSiteCodes
-                          .map((c) => NEXRAD_SITES_BY_CODE[c])
-                          .filter((s): s is RadarSite => !!s)
-                          .map((s) => {
-                            const active = selectedSite === s.code;
-                            return (
-                              <button
-                                key={`recent-${s.code}`}
-                                onClick={() => {
-                                  mapRef.current?.flyTo({ center: s.center, zoom: s.zoom, duration: 700 });
-                                  setSelectedSite(s.code);
-                                }}
-                                className={`w-full text-left px-2 py-1 rounded text-[11.5px] flex items-center gap-2 transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'hover:bg-wx-ink/60 text-wx-mute hover:text-wx-fg'}`}
-                              >
-                                <span className="font-mono text-[10px] text-wx-accent w-[44px] flex-shrink-0">{s.code}</span>
-                                <span className="flex-1 truncate">{s.name}</span>
-                                <span className="text-[9.5px] font-mono text-wx-mute/70 flex-shrink-0">{s.state}</span>
-                              </button>
-                            );
-                          })}
-                      </div>
-                    </>
-                  )}
-                  <div className="text-[9.5px] uppercase tracking-wider text-wx-mute font-semibold flex items-center justify-between">
-                    <span>{siteQuery ? `Matches · ${pickerSites.length}` : 'Nearest sites'}</span>
-                    <span className="font-mono text-wx-mute/70 normal-case tracking-normal">{NEXRAD_SITES.length} CONUS</span>
-                  </div>
-                  <div className="max-h-[220px] overflow-y-auto wx-scroll pr-0.5 -mr-0.5">
-                    {pickerSites.length === 0 && (
-                      <p className="text-[11px] text-wx-mute px-1 py-2">No matches — try a code (KTLX), city, or state code (OK).</p>
-                    )}
-                    <div className="grid grid-cols-1 gap-0.5">
-                      {pickerSites.map((s) => {
-                        const active = selectedSite === s.code;
-                        const distanceFrom: [number, number] = pickerCenter ?? [settledView.longitude, settledView.latitude];
-                        const km = distanceKm(distanceFrom, s.center);
-                        return (
-                          <button
-                            key={s.code}
-                            onClick={() => {
-                              mapRef.current?.flyTo({ center: s.center, zoom: s.zoom, duration: 700 });
-                              setSelectedSite(s.code);
-                            }}
-                            className={`w-full text-left px-2 py-1 rounded text-[11.5px] flex items-center gap-2 transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'hover:bg-wx-ink/60 text-wx-mute hover:text-wx-fg'}`}
-                          >
-                            <span className="font-mono text-[10px] text-wx-accent w-[44px] flex-shrink-0">{s.code}</span>
-                            <span className="flex-1 truncate">{s.name}</span>
-                            <span className="text-[9.5px] font-mono text-wx-mute/70 flex-shrink-0">{s.state} · {Math.round(km)}km</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-              {selectedSite && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity') && (
-                <div className="pt-3 border-t border-wx-line mt-1">
-                  <label className="flex items-center justify-between cursor-pointer">
-                    <div>
-                      <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Split view</div>
-                      <div className="text-[10px] text-wx-mute">
-                        {effectiveProduct === 'reflectivity' ? 'BREF | SRV' : 'SRV | BREF'}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (splitProduct) {
-                          setSplitProduct(null);
-                        } else {
-                          setSplitProduct(effectiveProduct === 'reflectivity' ? 'velocity' : 'reflectivity');
-                        }
-                      }}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${splitProduct ? 'bg-wx-accent' : 'bg-wx-line'}`}
-                      aria-pressed={!!splitProduct}
-                    >
-                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${splitProduct ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
-                    </button>
-                  </label>
-                  <label className="flex items-center justify-between cursor-pointer mt-2.5 pt-2.5 border-t border-wx-line/40">
-                    <div>
-                      <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Hi-Res Level II</div>
-                      <div className="text-[10px] text-wx-mute">Sharper single-site render</div>
-                    </div>
-                    <button
-                      onClick={() => setHiRes(!hiRes)}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${hiRes ? 'bg-wx-accent' : 'bg-wx-line'}`}
-                      aria-pressed={hiRes}
-                    >
-                      <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${hiRes ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
-                    </button>
-                  </label>
-                  {hiRes && (
-                    <>
-                      <label className="flex items-center justify-between cursor-pointer mt-2.5 pt-2.5 border-t border-wx-line/40">
-                        <div>
-                          <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">PNG fallback</div>
-                          <div className="text-[10px] text-wx-mute">Faster, no pointer dBZ</div>
-                        </div>
-                        <button
-                          onClick={() => setPngFallback(!pngFallback)}
-                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${pngFallback ? 'bg-wx-accent' : 'bg-wx-line'}`}
-                          aria-pressed={pngFallback}
-                        >
-                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition ${pngFallback ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
-                        </button>
-                      </label>
-                      <div className="mt-2.5 pt-2.5 border-t border-wx-line/40">
-                        <div className="flex items-center justify-between">
-                          <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Tilt</div>
-                          <span className="font-mono text-[10px] text-wx-mute">
-                            {(() => {
-                              if (isComposite) return 'COMPOSITE';
-                              const s = availableSweeps.find((x) => x.index === resolvedSweepIndex);
-                              return s ? formatElev(s.elevation_deg) : '—';
-                            })()}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-4 gap-1 mt-1.5">
-                          {[0.5, 0.9, 1.3, 1.8, 2.4, 3.1, 4.0].map((deg) => {
-                            const active = !isComposite && selectedElevation === deg;
-                            const haveData = availableSweeps.length > 0;
-                            const nearest = haveData
-                              ? availableSweeps.reduce((best, s) =>
-                                  Math.abs(s.elevation_deg - deg) < Math.abs(best.elevation_deg - deg) ? s : best)
-                              : null;
-                            return (
-                              <button
-                                key={deg}
-                                onClick={() => setSelectedElevation(deg)}
-                                className={`px-1.5 py-1 rounded text-[10px] font-mono border transition ${active ? 'bg-wx-accent text-black border-wx-accent' : 'bg-wx-ink border-wx-line text-wx-mute hover:text-wx-fg'}`}
-                                title={nearest ? `nearest sweep: ${formatElev(nearest.elevation_deg)} (idx ${nearest.index})` : 'awaiting volume metadata'}
-                              >
-                                {formatElev(deg)}
-                              </button>
-                            );
-                          })}
-                          <button
-                            onClick={() => setSelectedElevation('composite')}
-                            className={`col-span-4 px-1.5 py-1 rounded text-[10px] font-mono border transition ${isComposite ? 'bg-wx-accent text-black border-wx-accent' : 'bg-wx-ink border-wx-line text-wx-mute hover:text-wx-fg'}`}
-                            title="Max reflectivity across all tilts"
-                          >
-                            COMPOSITE · ALL TILTS
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                  {hiRes && level2Loading && (
-                    <p className="text-[10px] text-wx-mute mt-1">
-                      {level2Attempt > 0
-                        ? `Warming renderer · retry ${level2Attempt}/${level2MaxAttempts}…`
-                        : 'Rendering…'}
-                    </p>
-                  )}
-                  {hiRes && level2Error === 'renderer_waking' && !level2Loading && (
-                    <p className="text-[10px] text-amber-300/90 mt-1">
-                      Renderer cold-start · retry {level2Attempt}/{level2MaxAttempts} in progress
-                    </p>
-                  )}
-                  {hiRes && level2Error === 'renderer_not_configured' && <p className="text-[10px] text-wx-danger mt-1">Renderer not configured</p>}
-                  {hiRes && level2Error === 'renderer_waking' && <p className="text-[10px] text-wx-mute mt-1">Renderer waking up…</p>}
-                  {hiRes && (level2Error === 'renderer_unreachable' || level2Error === 'renderer_timeout') && <p className="text-[10px] text-wx-mute mt-1">Renderer slow — retrying…</p>}
-                  {hiRes && level2Error && !['renderer_not_configured','renderer_waking','renderer_unreachable','renderer_timeout'].includes(level2Error) && <p className="text-[10px] text-wx-danger mt-1">Level II error: {level2Error}</p>}
-                  {hiRes && level2Overlay && !level2Loading && (
-                    <p className="text-[10px] text-wx-mute mt-1">
-                      Scan {new Date(level2Overlay.scan_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} UTC
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-
-              </>)}
-            </div>
-            )}
-
-            {inspectorTab === 'layers' && (
-            <div className="flex flex-col gap-[18px]">
-              {(<>
-
-            <div>
-              <div className="-mb-1 text-[9px] font-semibold uppercase tracking-[0.15em] text-wx-mute/70">
-                Audience &amp; coverage
-              </div>
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
-                  Subscribers · {subsCount}
-                </div>
-                <button
-                  onClick={() => setShowSubs((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showSubs ? 'bg-sky-400' : 'bg-wx-line'}`}
-                  aria-pressed={showSubs}
-                  title={showSubs ? 'Hide subscriber pins' : 'Show subscriber pins'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showSubs ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <p className="text-[10px] text-wx-mute mb-2">
-                {subsCount === 0
-                  ? 'No active subscribers with a known location yet.'
-                  : showSubs ? 'Cyan dots are active subscribers. Click a pin to open their profile.' : 'Pins hidden.'}
-              </p>
-
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-[10px] text-wx-mute">
-                  Coverage heatmap{subsCount > 0 ? ` · dim = gap` : ''}
-                </div>
-                <button
-                  onClick={() => setShowCoverage((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showCoverage ? 'bg-emerald-400' : 'bg-wx-line'}`}
-                  aria-pressed={showCoverage}
-                  title={showCoverage ? 'Hide coverage heatmap' : 'Show coverage heatmap'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showCoverage ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-
-              <div className="-mb-1 border-t border-wx-line/30 pt-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-wx-mute/70">
-                Alerts &amp; storm-scale
-              </div>
-              <div className="flex items-center justify-between mb-1">
-                <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
-                  NWS alerts · {displayWarnings.length}
-                  {scrubTimeMs != null && warnings.length !== displayWarnings.length
-                    ? <span className="text-wx-mute font-normal normal-case"> / {warnings.length} loaded</span>
-                    : null}
-                  {warningsLoading ? <span className="text-wx-mute font-normal normal-case"> · updating</span> : null}
-                </div>
-                <button
-                  onClick={() => setShowNws((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showNws ? 'bg-amber-400' : 'bg-wx-line'}`}
-                  aria-pressed={showNws}
-                  title={showNws ? 'Hide NWS polygons' : 'Show NWS polygons'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showNws ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              {showNws && (
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1 mb-2 text-[10.5px]">
-                  <CategoryCheckbox label="Warnings" tint="text-red-300" on={catWarnings}      toggle={() => setCatWarnings((v) => !v)}      count={warnings.filter((w) => ['warning'].includes(w.category)).length} />
-                  <CategoryCheckbox label="Watches"  tint="text-yellow-200" on={catWatches}    toggle={() => setCatWatches((v) => !v)}        count={warnings.filter((w) => w.category === 'watch').length} />
-                  <CategoryCheckbox label="Advisories" tint="text-violet-200" on={catAdvisories} toggle={() => setCatAdvisories((v) => !v)} count={warnings.filter((w) => w.category === 'advisory').length} />
-                  <CategoryCheckbox label="SPC MDs"  tint="text-fuchsia-200" on={catDiscussions} toggle={() => setCatDiscussions((v) => !v)} count={warnings.filter((w) => w.category === 'discussion').length} />
-                </div>
-              )}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  Storm tracks · {stormTrackCount} storm{stormTrackCount === 1 ? '' : 's'}
-                  {stormTrackCount === 0 ? ' (none with NWS motion data)' : ''}
-                </span>
-                <button
-                  onClick={() => setShowStormTracks((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showStormTracks ? 'bg-sky-400' : 'bg-wx-line'}`}
-                  aria-pressed={showStormTracks}
-                  title={showStormTracks ? 'Hide storm tracks' : 'Show storm tracks'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showStormTracks ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  Storm reports · {displayLsrGeo.features?.length ?? 0} (last 6h)
-                </span>
-                <button
-                  onClick={() => setShowLsr((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showLsr ? 'bg-red-400' : 'bg-wx-line'}`}
-                  aria-pressed={showLsr}
-                  title={showLsr ? 'Hide NWS storm reports' : 'Show NWS storm reports'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showLsr ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  Subscriber reports · {displayStormReportsGeo.features?.length ?? 0} (last 24h)
-                </span>
-                <button
-                  onClick={() => setShowStormReports((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showStormReports ? 'bg-red-400' : 'bg-wx-line'}`}
-                  aria-pressed={showStormReports}
-                  title={showStormReports ? 'Hide subscriber storm reports' : 'Show subscriber storm reports'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showStormReports ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  Lightning (GLM) · {lightningGeo.features.length} flash{lightningGeo.features.length === 1 ? '' : 'es'}
-                </span>
-                <button
-                  onClick={() => setShowLightning((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showLightning ? 'bg-yellow-400' : 'bg-wx-line'}`}
-                  aria-pressed={showLightning}
-                  title={showLightning ? 'Hide GOES-19 GLM lightning' : 'Show GOES-19 GLM lightning'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showLightning ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  Rotation IDs · {coupletGeo.features?.length ?? 0} active
-                  {coupletsSwr.isLoading && showCouplets ? ' · updating' : ''}
-                </span>
-                <button
-                  onClick={() => setShowCouplets((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showCouplets ? 'bg-fuchsia-400' : 'bg-wx-line'}`}
-                  aria-pressed={showCouplets}
-                  title={showCouplets ? 'Hide NEXRAD velocity-couplet IDs' : 'Show NEXRAD velocity-couplet IDs'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showCouplets ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              {/* ProbSevere 3.0 — object-based ML severe probabilities. */}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  ProbSevere · {probSevereDrawn.count} cell{probSevereDrawn.count === 1 ? '' : 's'}
-                  {probSevereDrawn.max >= 1 ? ` · max ${probSevereDrawn.max}%` : ''}
-                  {showProbSevere && probSevereSwr.isLoading ? ' · updating' : ''}
-                </span>
-                <button
-                  onClick={() => setShowProbSevere((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showProbSevere ? 'bg-rose-500' : 'bg-wx-line'}`}
-                  aria-pressed={showProbSevere}
-                  title={showProbSevere ? 'Hide ProbSevere ML storm objects' : 'Show ProbSevere ML storm objects'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showProbSevere ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              {/* Ranked ProbSevere threats — tap a row to fly to the cell + open
-                  its ML readout. Top-down triage instead of hunting polygons. */}
-              {showProbSevere && probSevereTop.length > 0 && (
-                <div className="mb-2 ml-0.5 space-y-1">
-                  {probSevereTop.map((c) => {
-                    const dot =
-                      c.topType === 'tor' ? 'bg-red-500'
-                      : c.topType === 'hail' ? 'bg-cyan-400'
-                      : c.topType === 'wind' ? 'bg-blue-400'
-                      : 'bg-amber-400';
-                    const t = probSevereTrend[c.id];
-                    const hot = !!t && (t.dProb >= 8 || t.dFlash >= 4);
-                    // Tendency arrow from the probability delta since last scan.
-                    const arrow = !t || Math.abs(t.dProb) < 1 ? null : t.dProb > 0 ? '▲' : '▼';
-                    return (
-                      <button
-                        key={c.id || `${c.center[0]},${c.center[1]}`}
-                        type="button"
-                        onClick={() => {
-                          mapRef.current?.flyTo({ center: c.center, zoom: 8, duration: 700 });
-                          setProbSeverePopup({
-                            lng: c.center[0], lat: c.center[1],
-                            topType: c.topType, topProb: c.topProb,
-                            severe: c.severe, tor: c.tor, hail: c.hail, wind: c.wind,
-                            readout: c.readout,
-                            me: c.me, ms: c.ms,
-                          });
-                        }}
-                        className={`flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1 text-left hover:border-wx-accent ${hot ? 'border-yellow-400/70 bg-yellow-400/10' : 'border-wx-line bg-wx-ink'}`}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
-                          <span className="font-mono text-[10.5px] font-semibold text-wx-fg">{c.topProb}%</span>
-                          {arrow ? (
-                            <span className={`text-[9px] ${t!.dProb > 0 ? 'text-rose-400' : 'text-sky-400'}`}>
-                              {arrow}{Math.abs(t!.dProb)}
-                            </span>
-                          ) : null}
-                          <span className="text-[9px] uppercase tracking-wider text-wx-mute">{c.topType}</span>
-                          {hot ? <span className="text-[9px] font-semibold text-yellow-300">⚠ {t!.dProb >= 8 ? 'intensifying' : 'ltg jump'}</span> : null}
-                        </span>
-                        {c.id ? <span className="font-mono text-[9px] text-wx-mute">#{c.id.slice(-4)}</span> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-              <div className="-mb-1 border-t border-wx-line/30 pt-2 text-[9px] font-semibold uppercase tracking-[0.15em] text-wx-mute/70">
-                Observations &amp; base
-              </div>
-              {/* F13: mPING crowdsource reports overlay. */}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  mPING reports · {mpingGeo.features?.length ?? 0} (last 3h)
-                  {showMping && mpingSwr.isLoading ? ' · updating' : ''}
-                </span>
-                <button
-                  onClick={() => setShowMping((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showMping ? 'bg-orange-400' : 'bg-wx-line'}`}
-                  aria-pressed={showMping}
-                  title={showMping ? 'Hide mPING crowdsource reports' : 'Show mPING crowdsource reports'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showMping ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              {/* F12: METAR surface obs overlay. */}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  METAR obs · {metarGeo.features?.length ?? 0} stations
-                  {showMetar && metarSwr.isLoading ? ' · updating' : ''}
-                </span>
-                <button
-                  onClick={() => setShowMetar((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showMetar ? 'bg-cyan-400' : 'bg-wx-line'}`}
-                  aria-pressed={showMetar}
-                  title={showMetar ? 'Hide METAR surface obs' : 'Show METAR surface obs'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showMetar ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  NWS zones · forecast + fire
-                </span>
-                <button
-                  onClick={() => setShowZones((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showZones ? 'bg-slate-400' : 'bg-wx-line'}`}
-                  aria-pressed={showZones}
-                  title={showZones ? 'Hide NWS zone outlines' : 'Show NWS zone outlines'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showZones ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  NEXRAD site pills · {mapPillSites.length}
-                </span>
-                <button
-                  onClick={() => setShowSitePills((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showSitePills ? 'bg-amber-400' : 'bg-wx-line'}`}
-                  aria-pressed={showSitePills}
-                  title={showSitePills ? 'Hide NEXRAD site pills (selected site still shown)' : 'Show NEXRAD site pills'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showSitePills ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-
-              {/* LibreWxR CAP polygons — sky-blue dashed overlay, complementary
-                  to the NWS warning layer. Use to spot-check what the CAP
-                  pipeline catches relative to NWS. */}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  CAP polygons (LibreWxR) · {capWarningsGeo.features.length}
-                </span>
-                <button
-                  onClick={() => setShowCap((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showCap ? 'bg-sky-400' : 'bg-wx-line'}`}
-                  aria-pressed={showCap}
-                  title={showCap ? 'Hide LibreWxR CAP polygons' : 'Show LibreWxR CAP polygons'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showCap ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-
-              {/* F7: SPC convective outlook row + day picker. */}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  SPC outlook · Day {spcDay}
-                  {activeSpc?.highest_label ? ` · ${activeSpc.highest_label}` : ''}
-                </span>
-                <button
-                  onClick={() => setShowSpc((v) => !v)}
-                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showSpc ? 'bg-orange-400' : 'bg-wx-line'}`}
-                  aria-pressed={showSpc}
-                  title={showSpc ? 'Hide SPC outlook' : 'Show SPC outlook'}
-                >
-                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showSpc ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-                </button>
-              </div>
-              {showSpc && (
-                <div className="mb-2">
-                  <div className="flex gap-1 mb-1">
-                    {([1, 2, 3] as const).map((d) => {
-                      const row = spcDays.find((r) => r.day_number === d);
-                      const label = row?.highest_label ?? '—';
-                      const active = spcDay === d;
-                      return (
-                        <button
-                          key={d}
-                          onClick={() => setSpcDay(d)}
-                          className={`flex-1 px-2 py-1 rounded text-[10px] font-mono border transition ${active ? 'bg-wx-ink border-orange-400 text-wx-fg' : 'bg-wx-ink/40 border-wx-line text-wx-mute hover:text-wx-fg'}`}
-                          title={row?.valid_from ? `Valid ${new Date(row.valid_from).toLocaleString()}` : 'Outlook not yet available'}
-                        >
-                          Day {d} · {label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {activeSpc?.issued_at ? (
-                    <div className="text-[9.5px] font-mono text-wx-mute">
-                      Issued {new Date(activeSpc.issued_at).toLocaleString([], {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit',
-                      })}
-                    </div>
-                  ) : (
-                    <div className="text-[9.5px] text-wx-mute">No outlook fetched yet for Day {spcDay}.</div>
-                  )}
-                </div>
-              )}
-            </div>
-
-              </>)}
-            </div>
-            )}
-
-            {inspectorTab === 'threats' && (
-            <div className="border-t border-wx-line/40 pt-3 flex flex-col gap-[18px]">
-              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">Active alerts</div>
-              {(<>
-
-            <div>
-              {selectedWarning && (() => {
-                const tint = alertTint(selectedWarning.category, selectedWarning.hazard, selectedWarning.severity);
-                return (
-                <div className={`mb-3 p-3 rounded-lg bg-wx-ink border ${tint.border} ${tint.bg} space-y-1.5`}>
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className={`text-[11px] font-semibold ${tint.text}`}>{selectedWarning.event}</div>
-                      {selectedWarning.ai_summary ? (
-                        <p className="text-[10.5px] text-wx-fg/90 mt-0.5 line-clamp-3">
-                          {selectedWarning.ai_summary}
-                        </p>
-                      ) : selectedWarning.headline ? (
-                        <p className="text-[10.5px] text-wx-fg/85 mt-0.5 line-clamp-3">{selectedWarning.headline}</p>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedWarning(null)}
-                      className="text-wx-mute hover:text-wx-fg shrink-0"
-                      aria-label="Clear selection"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <div className="text-[10px] text-wx-mute">
-                    {categoryBadge(selectedWarning.category)} · {selectedWarning.severity ?? '—'} · until{' '}
-                    {selectedWarning.expires_at
-                      ? new Date(selectedWarning.expires_at).toLocaleString([], {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })
-                      : '—'}
-                  </div>
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <a href={`/nws/${selectedWarning.id}`} className="text-[11px] text-wx-accent font-medium">
-                      Full NWS detail →
-                    </a>
-                    <a
-                      href={composeUrlForWarning(selectedWarning)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-wx-accent text-black rounded-md text-[11px] font-semibold hover:bg-amber-300"
-                      title="Send to subscribers in this polygon"
-                    >
-                      <Send size={11} /> Send to polygon
-                    </a>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => openWarningSounding(selectedWarning)}
-                    className="mt-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 border border-wx-line text-wx-fg hover:border-wx-accent hover:bg-wx-accent/5 rounded-md text-[11px] font-medium w-full"
-                    title="Model Skew-T at this polygon's centroid — read the storm environment"
-                  >
-                    <Atom size={11} /> Environmental sounding
-                  </button>
-                  {selectedWarning.forecast_track && selectedWarning.in_path_count != null ? (
-                    (() => {
-                      const trackUrl = composeUrlForWarningTrack(selectedWarning);
-                      if (!trackUrl) return null;
-                      return (
-                        <a
-                          href={trackUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-1 inline-flex items-center justify-center gap-1.5 px-2.5 py-1.5 border border-amber-400/50 text-amber-300 hover:bg-amber-400/10 rounded-md text-[11px] font-semibold w-full"
-                          title={`Send to ${selectedWarning.in_path_count} subscribers in the storm's projected ${selectedWarning.in_path_corridor_km ?? 8}km corridor`}
-                        >
-                          <Send size={11} />
-                          Send to path · {selectedWarning.in_path_count} in {selectedWarning.in_path_corridor_km ?? 8}km
-                        </a>
-                      );
-                    })()
-                  ) : null}
-                </div>
-                );
-              })()}
-              <div className="flex flex-col gap-1 max-h-40 overflow-y-auto wx-scroll">
-                {displayWarnings.slice(0, 12).map((w) => (
-                  <div
-                    key={w.id}
-                    className={`flex items-center gap-2 p-2 rounded-lg bg-wx-ink border ${
-                      selectedWarning?.id === w.id ? 'border-wx-accent' : 'border-wx-line'
-                    } hover:border-wx-accent`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSelectedWarning(w);
-                        focusWarning(w);
-                      }}
-                      className="flex items-center gap-2 flex-1 min-w-0 text-left"
-                    >
-                      <span
-                        className={`px-1.5 py-0.5 text-[9px] rounded shrink-0 ${
-                          w.category === 'warning' && w.hazard === 'tornado'
-                            ? 'bg-red-500/20 text-red-300'
-                            : w.category === 'warning' && w.hazard === 'severe'
-                              ? 'bg-orange-500/20 text-orange-300'
-                              : w.category === 'warning' && w.hazard === 'flood'
-                                ? 'bg-emerald-500/20 text-emerald-300'
-                                : w.category === 'watch'
-                                  ? 'bg-yellow-500/20 text-yellow-200'
-                                  : w.category === 'advisory'
-                                    ? 'bg-violet-500/20 text-violet-200'
-                                    : w.category === 'discussion' && w.severity === 'Extreme'
-                                      ? 'bg-red-500/20 text-red-300'
-                                      : w.category === 'discussion' && w.severity === 'Severe'
-                                        ? 'bg-orange-500/20 text-orange-300'
-                                        : w.category === 'discussion' && w.severity === 'Minor'
-                                          ? 'bg-sky-500/20 text-sky-300'
-                                          : w.category === 'discussion'
-                                            ? 'bg-fuchsia-500/20 text-fuchsia-200'
-                                            : 'bg-slate-500/20 text-slate-300'
-                        }`}
-                      >
-                        {categoryBadge(w.category)}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-[11.5px] font-semibold truncate">{w.event}</div>
-                        <div className="text-[10px] text-wx-mute truncate">
-                          {w.area_desc ?? '—'} · until{' '}
-                          {w.expires_at
-                            ? new Date(w.expires_at).toLocaleTimeString([], {
-                                hour: 'numeric',
-                                minute: '2-digit',
-                              })
-                            : '—'}
-                        </div>
-                        {w.in_path_count != null && w.in_path_count > 0 ? (
-                          <div className="text-[9.5px] mt-0.5 text-amber-300/90 font-mono">
-                            ⟶ {w.in_path_count} in path
-                            {w.in_path_corridor_km ? ` (${w.in_path_corridor_km}km)` : ''}
-                          </div>
-                        ) : null}
-                      </div>
-                    </button>
-                    {w.category === 'warning' && (
-                      <a
-                        href={composeUrlForWarning(w)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-md text-wx-mute hover:text-wx-accent hover:bg-wx-accent/10"
-                        title="Send to subscribers in this polygon"
-                        aria-label={`Send to subscribers in ${w.event} polygon`}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <Send size={12} />
-                      </a>
-                    )}
-                  </div>
-                ))}
-                {displayWarnings.length === 0 && !warningsLoading && (
-                  <p className="text-[11px] text-wx-mute">
-                    {scrubTimeMs == null
-                      ? 'No active NWS polygons with geometry right now.'
-                      : 'No warnings were active at the scrubbed timestamp.'}
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2 mt-2 text-[9px] text-wx-mute">
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-500/60" /> Warning</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm border border-yellow-400 border-dashed" /> Watch</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-violet-400/40" /> Advisory</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-fuchsia-500/50" /> SPC MD</span>
-                <span className="inline-flex items-center gap-1 w-full mt-1">
-                  <span className="w-4 h-0.5 bg-orange-400 rounded" /> Track
-                  <span className="w-4 h-0.5 border-t border-dashed border-orange-400/80" /> 1h forecast
-                </span>
-              </div>
-            </div>
-
-              </>)}
-            </div>
-            )}
-
-            {inspectorTab === 'models' && (
-            <div className="flex flex-col gap-[18px]">
-              {(<>
-
-            <div>
-              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">
-                Area Forecast Discussions
-              </div>
-              <AfdPanel />
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold">
-                  Forecast overlay
-                </div>
-                {activeModel ? (
-                  <button
-                    type="button"
-                    onClick={() => setModelOverlay(null)}
-                    className="text-[10px] text-wx-mute hover:text-wx-fg"
-                  >
-                    Clear ✕
-                  </button>
-                ) : null}
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {(Object.keys(MODEL_OVERLAYS) as ModelOverlayKey[]).map((k) => {
-                  const m = MODEL_OVERLAYS[k];
-                  const on = modelOverlay === k;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setModelOverlay(on ? null : k)}
-                      className={`text-left px-2 py-1.5 rounded border text-[10.5px] font-semibold transition ${
-                        on
-                          ? 'border-wx-accent bg-wx-accent/10 text-wx-accent'
-                          : 'border-wx-line text-wx-mute hover:text-wx-fg'
-                      }`}
-                      title={m.label}
-                    >
-                      <div>{m.short}</div>
-                      <div className="text-[9px] font-normal text-wx-mute mt-0.5">{m.source}</div>
-                    </button>
-                  );
-                })}
-                {DISABLED_MODELS.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    disabled
-                    className="text-left px-2 py-1.5 rounded border border-wx-line text-[10.5px] font-semibold text-wx-mute opacity-40 cursor-not-allowed"
-                    title={d.why}
-                  >
-                    <div>{d.label}</div>
-                    <div className="text-[9px] font-normal text-wx-mute mt-0.5">no public WMS</div>
-                  </button>
-                ))}
-              </div>
-
-              {activeModel ? (
-                <div className="mt-3 space-y-2">
-                  <div className="flex items-center justify-between text-[10.5px]">
-                    <span className="text-wx-mute">Hour</span>
-                    <span className="font-mono text-wx-fg">{activeModel.hourLabel(modelHour)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={activeModel.hours.min}
-                    max={activeModel.hours.max}
-                    step={activeModel.hours.step}
-                    value={modelHour}
-                    onChange={(e) => setModelHour(parseInt(e.target.value, 10))}
-                    className="wx-slider"
-                  />
-                  <div className="flex items-center justify-between text-[10.5px]">
-                    <span className="text-wx-mute">Opacity</span>
-                    <span className="font-mono text-wx-fg">{modelOpacity}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={20}
-                    max={100}
-                    step={2}
-                    value={modelOpacity}
-                    onChange={(e) => setModelOpacity(parseInt(e.target.value, 10))}
-                    className="wx-slider"
-                  />
-                  <p className="text-[10px] text-wx-mute leading-snug">{activeModel.legend}</p>
-                  <p className="text-[9.5px] text-wx-mute/80">{activeModel.attribution}</p>
-                </div>
-              ) : (
-                <p className="mt-2 text-[10px] text-wx-mute">
-                  Pick a model to overlay forecast guidance on the live radar. Cleared on next refresh.
-                </p>
-              )}
-            </div>
-
-              </>)}
-            </div>
-            )}
-
-            <div className="border-t border-wx-line/40 pt-3">
-              <div className="text-[10.5px] tracking-wider uppercase text-wx-mute font-semibold mb-1">Pointer</div>
-              <div className="space-y-0.5 text-[11px] font-mono">
-                <div className="flex justify-between"><span className="text-wx-mute">Lat</span><span>{hoverPixel ? hoverPixel.lat.toFixed(4) : '—'}</span></div>
-                <div className="flex justify-between"><span className="text-wx-mute">Lon</span><span>{hoverPixel ? hoverPixel.lng.toFixed(4) : '—'}</span></div>
-                <div className="flex justify-between"><span className="text-wx-mute">Sample</span><span className={hoverPixel && hoverPixel.sample != null ? 'text-wx-accent' : 'text-wx-mute'}>{sampleLabel}</span></div>
-              </div>
-            </div>
-          </div>
-          </>
+          <RadarInspector
+            setInspectorCollapsed={setInspectorCollapsed}
+            inspectorTab={inspectorTab}
+            setInspectorTab={setInspectorTab}
+            mapRef={mapRef}
+            effectiveProduct={effectiveProduct}
+            satSource={satSource}
+            setSatSource={setSatSource}
+            lwxrSubject={lwxrSubject}
+            useLibreWxR={useLibreWxR}
+            useLevel2={useLevel2}
+            useL2Png={useL2Png}
+            isComposite={isComposite}
+            availableSweeps={availableSweeps}
+            resolvedSweepIndex={resolvedSweepIndex}
+            level2Loading={level2Loading}
+            level2Error={level2Error}
+            level2Attempt={level2Attempt}
+            level2MaxAttempts={level2MaxAttempts}
+            level2Overlay={level2Overlay}
+            threatBoard={threatBoard}
+            setProbSeverePopup={setProbSeverePopup}
+            showArrows={showArrows}
+            setShowArrows={setShowArrows}
+            colorScheme={colorScheme}
+            setColorScheme={setColorScheme}
+            opacity={opacity}
+            setOpacity={setOpacity}
+            selectedSite={selectedSite}
+            setSelectedSite={setSelectedSite}
+            siteQuery={siteQuery}
+            setSiteQuery={setSiteQuery}
+            viewState={viewState}
+            settledView={settledView}
+            drawMode={drawMode}
+            setDrawMode={setDrawMode}
+            recentSiteCodes={recentSiteCodes}
+            pickerSites={pickerSites}
+            pickerCenter={pickerCenter}
+            splitProduct={splitProduct}
+            setSplitProduct={setSplitProduct}
+            hiRes={hiRes}
+            setHiRes={setHiRes}
+            pngFallback={pngFallback}
+            setPngFallback={setPngFallback}
+            selectedElevation={selectedElevation}
+            setSelectedElevation={setSelectedElevation}
+            subsCount={subsCount}
+            showSubs={showSubs}
+            setShowSubs={setShowSubs}
+            showCoverage={showCoverage}
+            setShowCoverage={setShowCoverage}
+            warnings={warnings}
+            warningsLoading={warningsLoading}
+            displayWarnings={displayWarnings}
+            scrubTimeMs={scrubTimeMs}
+            showNws={showNws}
+            setShowNws={setShowNws}
+            catWarnings={catWarnings}
+            setCatWarnings={setCatWarnings}
+            catWatches={catWatches}
+            setCatWatches={setCatWatches}
+            catAdvisories={catAdvisories}
+            setCatAdvisories={setCatAdvisories}
+            catDiscussions={catDiscussions}
+            setCatDiscussions={setCatDiscussions}
+            stormTrackCount={stormTrackCount}
+            showStormTracks={showStormTracks}
+            setShowStormTracks={setShowStormTracks}
+            displayLsrGeo={displayLsrGeo}
+            showLsr={showLsr}
+            setShowLsr={setShowLsr}
+            displayStormReportsGeo={displayStormReportsGeo}
+            showStormReports={showStormReports}
+            setShowStormReports={setShowStormReports}
+            lightningGeo={lightningGeo}
+            showLightning={showLightning}
+            setShowLightning={setShowLightning}
+            coupletGeo={coupletGeo}
+            coupletsSwr={coupletsSwr}
+            showCouplets={showCouplets}
+            setShowCouplets={setShowCouplets}
+            probSevereDrawn={probSevereDrawn}
+            probSevereSwr={probSevereSwr}
+            showProbSevere={showProbSevere}
+            setShowProbSevere={setShowProbSevere}
+            probSevereTop={probSevereTop}
+            probSevereTrend={probSevereTrend}
+            mpingGeo={mpingGeo}
+            mpingSwr={mpingSwr}
+            showMping={showMping}
+            setShowMping={setShowMping}
+            metarGeo={metarGeo}
+            metarSwr={metarSwr}
+            showMetar={showMetar}
+            setShowMetar={setShowMetar}
+            showZones={showZones}
+            setShowZones={setShowZones}
+            mapPillSites={mapPillSites}
+            showSitePills={showSitePills}
+            setShowSitePills={setShowSitePills}
+            capWarningsGeo={capWarningsGeo}
+            showCap={showCap}
+            setShowCap={setShowCap}
+            spcDay={spcDay}
+            setSpcDay={setSpcDay}
+            spcDays={spcDays}
+            activeSpc={activeSpc}
+            showSpc={showSpc}
+            setShowSpc={setShowSpc}
+            selectedWarning={selectedWarning}
+            setSelectedWarning={setSelectedWarning}
+            composeUrlForWarning={composeUrlForWarning}
+            composeUrlForWarningTrack={composeUrlForWarningTrack}
+            openWarningSounding={openWarningSounding}
+            focusWarning={focusWarning}
+            modelOverlay={modelOverlay}
+            setModelOverlay={setModelOverlay}
+            activeModel={activeModel}
+            modelHour={modelHour}
+            setModelHour={setModelHour}
+            modelOpacity={modelOpacity}
+            setModelOpacity={setModelOpacity}
+            hoverPixel={hoverPixel}
+            sampleLabel={sampleLabel}
+          />
         )}
 
         {selection && (
@@ -6148,333 +4500,24 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
-        {/* F4: selected Local Storm Report card. Floats above the hover-pixel
-            readout so the operator can dismiss without losing the cursor
-            position. */}
-        {selectedLsr && (
-          <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[280px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
-                  NWS Storm Report{selectedLsr.source ? ` · ${selectedLsr.source}` : ''}
-                </div>
-                <div className="text-[12px] font-semibold text-wx-fg mt-0.5">
-                  {selectedLsr.event}
-                  {selectedLsr.magnitude ? <span className="ml-1.5 font-mono text-wx-accent">{selectedLsr.magnitude}</span> : null}
-                </div>
-                {selectedLsr.location ? (
-                  <div className="text-[11px] text-wx-mute mt-0.5">{selectedLsr.location}</div>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedLsr(null)}
-                className="text-wx-mute hover:text-wx-fg shrink-0"
-                aria-label="Clear selection"
-              >
-                <X size={14} />
-              </button>
-            </div>
-            {selectedLsr.occurred_at ? (
-              <div className="text-[10px] font-mono text-wx-mute">
-                {new Date(selectedLsr.occurred_at).toLocaleString([], {
-                  month: 'short',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}
-              </div>
-            ) : null}
-            {selectedLsr.remark ? (
-              <p className="text-[10.5px] text-wx-fg/85 italic line-clamp-4">
-                &quot;{selectedLsr.remark}&quot;
-              </p>
-            ) : null}
-          </div>
+
+        {/* Click-selected entity cards — all five share the lower-right slot;
+            the click dispatch above guarantees at most one opens per click. */}
+        {selectedLsr && <LsrCard lsr={selectedLsr} onClose={() => setSelectedLsr(null)} />}
+        {selectedStormReport && (
+          <StormReportCard
+            report={selectedStormReport}
+            onClose={() => setSelectedStormReport(null)}
+            onActed={() => {
+              setSelectedStormReport(null);
+              swrMutate(STORM_REPORTS_KEY);
+              swrMutate(STORM_REPORT_CLUSTERS_KEY);
+            }}
+          />
         )}
-
-        {selectedStormReport && (() => {
-          const sr = selectedStormReport;
-          const hazardLabelMap: Record<string, string> = {
-            tornado: 'Tornado',
-            funnel: 'Funnel cloud',
-            wind: 'Damaging wind',
-            hail: 'Hail',
-            flood: 'Flooding',
-            other: 'Severe weather',
-          };
-          const ageMin = sr.reported_at
-            ? Math.max(0, Math.round((Date.now() - new Date(sr.reported_at).getTime()) / 60_000))
-            : null;
-          return (
-            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
-                    <span>Subscriber report{sr.reporter ? ` · ${sr.reporter}` : ''}</span>
-                    {sr.status && sr.status !== 'new' ? (
-                      <span className={
-                        'px-1.5 py-0.5 rounded text-[9px] ' +
-                        (sr.status === 'verified' ? 'bg-emerald-400/15 text-emerald-300' :
-                         sr.status === 'promoted' ? 'bg-sky-400/15 text-sky-300' :
-                         'bg-wx-line/40 text-wx-mute')
-                      }>{sr.status}</span>
-                    ) : null}
-                  </div>
-                  <div className="text-[12px] font-semibold text-wx-fg mt-0.5">
-                    {hazardLabelMap[sr.hazard] ?? sr.hazard}
-                  </div>
-                  {sr.place_name ? (
-                    <div className="text-[11px] text-wx-mute mt-0.5">{sr.place_name}</div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedStormReport(null)}
-                  className="text-wx-mute hover:text-wx-fg shrink-0"
-                  aria-label="Clear selection"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              {ageMin != null ? (
-                <div className="text-[10px] font-mono text-wx-mute">
-                  {ageMin < 60 ? `${ageMin} min ago` : `${Math.round(ageMin / 60)} h ago`}
-                </div>
-              ) : null}
-              {sr.photo_url ? (
-                <a
-                  href={sr.photo_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block rounded-md overflow-hidden border border-wx-line"
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={sr.photo_url}
-                    alt="Subscriber storm report"
-                    className="w-full max-h-48 object-cover"
-                    loading="lazy"
-                  />
-                </a>
-              ) : null}
-              {sr.description ? (
-                <p className="text-[10.5px] text-wx-fg/85 italic line-clamp-4">
-                  &quot;{sr.description}&quot;
-                </p>
-              ) : null}
-              <StormReportPopupActions
-                report={sr}
-                onActed={() => {
-                  setSelectedStormReport(null);
-                  swrMutate(STORM_REPORTS_KEY);
-                  swrMutate(STORM_REPORT_CLUSTERS_KEY);
-                }}
-              />
-            </div>
-          );
-        })()}
-
-        {/* F13: selected mPING report card. Compact — just description +
-            age + a "lower confidence than LSR" reminder. The operator
-            looks at this to decide whether to escalate from "possible"
-            to "confirmed" before sending an alert. */}
-        {selectedMping && (() => {
-          const sm = selectedMping;
-          const ageMin = sm.obtime
-            ? Math.max(0, Math.round((Date.now() - new Date(sm.obtime).getTime()) / 60_000))
-            : null;
-          return (
-            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[280px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
-                    mPING · citizen report
-                  </div>
-                  <div className="text-[12px] font-semibold text-wx-fg mt-0.5">
-                    {sm.description}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedMping(null)}
-                  className="text-wx-mute hover:text-wx-fg shrink-0"
-                  aria-label="Clear selection"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              {ageMin != null ? (
-                <div className="text-[10px] font-mono text-wx-mute">
-                  {ageMin} min ago · hazard {sm.hazard}
-                </div>
-              ) : null}
-              <div className="text-[10px] text-wx-mute/80 italic">
-                Crowdsourced — verify before treating as confirmed ground truth.
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* F12: selected METAR station card. Single-line obs summary plus
-            raw METAR for the operator who wants the full picture. Sits in
-            the same lower-right slot as the LSR / couplet cards; only one
-            of the three can be open at a time per click flow. */}
-        {selectedMetar && (() => {
-          const m = selectedMetar;
-          const toF = (c: number | null) => c == null ? null : Math.round(c * 1.8 + 32);
-          const tempF = toF(m.temp);
-          const dewpF = toF(m.dewp);
-          const ageMin = m.obsTime
-            ? Math.max(0, Math.round((Date.now() - new Date(m.obsTime).getTime()) / 60_000))
-            : null;
-          return (
-            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-1.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
-                    METAR{ageMin != null ? ` · ${ageMin} min old` : ''}
-                  </div>
-                  <div className="text-[13px] font-mono font-bold text-cyan-200 mt-0.5">
-                    {m.icaoId}
-                  </div>
-                  {m.name ? (
-                    <div className="text-[10.5px] text-wx-mute mt-0.5 truncate">{m.name}</div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedMetar(null)}
-                  className="text-wx-mute hover:text-wx-fg shrink-0"
-                  aria-label="Clear selection"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10.5px] font-mono">
-                {tempF != null ? (
-                  <div><span className="text-wx-mute/70">T</span> <span className="text-wx-fg">{tempF}°F</span></div>
-                ) : null}
-                {dewpF != null ? (
-                  <div><span className="text-wx-mute/70">Td</span> <span className="text-wx-fg">{dewpF}°F</span></div>
-                ) : null}
-                {m.wspd != null && m.wspd > 0 ? (
-                  <div className="col-span-2">
-                    <span className="text-wx-mute/70">wind</span>{' '}
-                    <span className="text-wx-fg">
-                      {m.wdir != null ? `${Math.round(m.wdir)}°` : 'VRB'} @ {Math.round(m.wspd)} kt
-                    </span>
-                    {m.wgst != null && m.wgst > 0 ? (
-                      <span className={`ml-1.5 ${m.wgst >= 35 ? 'text-red-300' : 'text-amber-200'}`}>
-                        G{Math.round(m.wgst)}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : (
-                  <div className="col-span-2 text-wx-mute/70">calm</div>
-                )}
-                {m.altim != null ? (
-                  <div className="col-span-2 text-[10px] text-wx-mute">altim {m.altim.toFixed(0)} hPa</div>
-                ) : null}
-                {m.wxString ? (
-                  <div className="col-span-2 text-amber-200">{m.wxString}</div>
-                ) : null}
-              </div>
-              {m.rawOb ? (
-                <pre className="mt-1 text-[9.5px] font-mono text-wx-mute/80 whitespace-pre-wrap break-all border-t border-wx-line/60 pt-1">{m.rawOb}</pre>
-              ) : null}
-            </div>
-          );
-        })()}
-
-        {/* F9: selected NEXRAD velocity-couplet ("rotation ID") card.
-            Volume_count + first_seen disambiguate a one-scan blip from a
-            persistent circulation; "Alert from this rotation" pre-fills
-            compose with an 8 km circle around the meso, ready to send. */}
-        {selectedCouplet && (() => {
-          const sc = selectedCouplet;
-          const intensity = sc.max_shear_kt >= 80
-            ? { label: 'TVS-strength', cls: 'text-red-300', dot: 'bg-red-400' }
-            : sc.max_shear_kt >= 60
-            ? { label: 'Meso',          cls: 'text-fuchsia-300', dot: 'bg-fuchsia-400' }
-            : { label: 'Weak couplet',  cls: 'text-amber-300', dot: 'bg-amber-400' };
-          const ageMin = sc.first_seen_at
-            ? Math.max(0, Math.round((Date.now() - new Date(sc.first_seen_at).getTime()) / 60_000))
-            : null;
-          // F19a: signature-triggered phrasing. Body copy and audience
-          // radius escalate with shear strength so the operator's default
-          // alert matches the threat tier. Tier breakpoints align with the
-          // pin's color (60 kt = meso, 80 kt = TVS-strength) so the visual
-          // intensity and the language move together.
-          const tier = sc.max_shear_kt >= 80
-            ? 'tvs'
-            : sc.max_shear_kt >= 60
-            ? 'meso'
-            : 'weak';
-          const composeGeo = {
-            type: 'circle' as const,
-            center: [sc.lon, sc.lat] as [number, number],
-            // Wider audience for stronger rotations — downstream impact
-            // grows with intensity, and a TVS warrants pulling in
-            // neighbors a township over.
-            radius_km: tier === 'tvs' ? 12 : tier === 'meso' ? 9 : 6,
-          };
-          const ageStr = ageMin != null ? `${ageMin} min` : 'new';
-          const persistStr = sc.volume_count >= 3 ? ', persistent' : '';
-          const body =
-            tier === 'tvs'
-              ? `TORNADO LIKELY — strong rotation (${Math.round(sc.max_shear_kt)} kt gate-to-gate, ${ageStr}${persistStr}) on ${sc.site} radar at ${sc.track_id}. TAKE SHELTER NOW if you are in the affected area: lowest floor, interior room, away from windows. Stay sheltered until the threat passes.`
-              : tier === 'meso'
-              ? `Rotation observed — mesocyclone signature (${Math.round(sc.max_shear_kt)} kt, ${ageStr}${persistStr}) on ${sc.site} radar at ${sc.track_id}. Move to a safe shelter and monitor for a tornado warning. Do not wait for sirens.`
-              : `Weak rotation under observation (${Math.round(sc.shear_kt)} kt, ${ageStr}) on ${sc.site} radar at ${sc.track_id}. Stay weather-aware and have a shelter plan ready in case it strengthens.`;
-          const composeHref = `/compose?geo=${encodeURIComponent(JSON.stringify(composeGeo))}&hazard=tornado&body=${encodeURIComponent(body)}`;
-          return (
-            <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
-                    <span className={`inline-block h-2 w-2 rounded-full ${intensity.dot}`} />
-                    Rotation ID · {sc.site}
-                  </div>
-                  <div className="text-[14px] font-mono font-bold text-fuchsia-200 mt-0.5">
-                    {sc.track_id}
-                  </div>
-                  <div className={`text-[11px] mt-0.5 ${intensity.cls}`}>
-                    {intensity.label} · {Math.round(sc.shear_kt)} kt gate-to-gate shear
-                    {sc.max_shear_kt > sc.shear_kt
-                      ? <span className="text-wx-mute"> (peak {Math.round(sc.max_shear_kt)})</span>
-                      : null}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedCouplet(null)}
-                  className="text-wx-mute hover:text-wx-fg shrink-0"
-                  aria-label="Clear selection"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono text-wx-mute">
-                <div><span className="text-wx-mute/70">range</span> {sc.range_km.toFixed(0)} km</div>
-                <div><span className="text-wx-mute/70">az</span> {Math.round(sc.azimuth_deg)}°</div>
-                <div><span className="text-wx-mute/70">tilt</span> {sc.elevation_deg.toFixed(1)}°</div>
-                <div><span className="text-wx-mute/70">scans</span> {sc.volume_count}</div>
-                {ageMin != null ? (
-                  <div className="col-span-2"><span className="text-wx-mute/70">first seen</span> {ageMin} min ago</div>
-                ) : null}
-              </div>
-              <a
-                href={composeHref}
-                target="_blank"
-                rel="noreferrer"
-                className="block w-full text-center px-2.5 py-1.5 text-[11px] font-semibold rounded-md bg-fuchsia-500/90 hover:bg-fuchsia-500 text-white"
-              >
-                Alert from this rotation →
-              </a>
-            </div>
-          );
-        })()}
+        {selectedMping && <MpingCard report={selectedMping} onClose={() => setSelectedMping(null)} />}
+        {selectedMetar && <MetarCard metar={selectedMetar} onClose={() => setSelectedMetar(null)} />}
+        {selectedCouplet && <CoupletCard couplet={selectedCouplet} onClose={() => setSelectedCouplet(null)} />}
 
         {/* NEXRAD site pills — one per radar location in the current view.
             Stays below the products rail / draw toolbar / inspector (z-20) so

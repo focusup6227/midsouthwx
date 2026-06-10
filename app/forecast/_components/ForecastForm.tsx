@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Map, { Source, Layer, type MapRef, type MapMouseEvent } from 'react-map-gl';
 import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
 import { Sparkles, Trash2, Check, X, Wand2 } from 'lucide-react';
 import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 import { saveForecast, draftForecast } from '../actions';
