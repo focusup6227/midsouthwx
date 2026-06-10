@@ -782,3 +782,96 @@ per-tier mode matrix (PDS_TOR/TOR → auto, SVR → operator review) and the
 `pending_approval`/`dispatched`/`cancelled`/`expired` statuses already defined
 on the `couplet_alert_status` enum. The operator-approval panel stays as the
 review surface for any tier kept on `review`.
+
+---
+
+## 15. Forecasting & broadcasting suite (post-v4 extensions)
+
+Layered on after v1–v4, like §14. Three pillars: an on-air production toolkit
+(`/broadcast`), an operator forecast-authoring + verification system
+(`/forecast` + public `/f`), and an opt-in subscriber daily forecast digest.
+None of these change the core alert pipeline; the digest reuses it verbatim.
+
+### 15.1 Broadcast suite (`/broadcast`)
+
+YouTube/OBS production toolkit — no YouTube API, nothing auto-publishes.
+
+- **Console** (`app/broadcast/BroadcastConsole.tsx`) — four sections: AI
+  script generator, OBS overlay URLs, full-frame scene URLs, thumbnail.
+- **AI script** (`lib/ai/broadcast-script.ts`, DeepSeek `deepseek-chat`,
+  temp 0.4, `BROADCAST_SCRIPT_SYSTEM` in `lib/ai/prompts.ts`) — drafts a
+  spoken rundown + YouTube title/description/tags/thumbnail line from
+  `gatherBroadcastContext()` (SPC Day 1-3, AFD synopses, HWOs, active
+  alerts, 24 h LSRs, live rotation tracks). Anti-fabrication rules mirror the
+  alert writer; rotation detections must be phrased "radar-indicated", never
+  tornado-confirmed.
+- **Script library** (`broadcast_scripts` table, migration
+  `20260621000001`) — every generated script is archived (operator-only RLS)
+  and can be reloaded from the console. `localStorage`
+  (`lib/broadcast/script-store.ts`) remains the console → teleprompter
+  hand-off; the table is the durable history.
+- **Overlays** (`/broadcast/overlay/{ticker,lower-third,bug}`) and **scenes**
+  (`/broadcast/scene/{standby,brb,outro,headlines}`) — cookieless OBS browser
+  sources on the middleware public allowlist, polling `/api/broadcast/state`
+  (~30 s). They serve public weather data only (NWS products + our own
+  radar-derived couplet tracks) — never subscriber data.
+- **Rotation on-air** — `gatherBroadcastState()` includes `rotation_tracks`
+  (latest per track from `radar_couplets_geojson`, 20-min window, strongest
+  first, best-effort). Ticker leads with magenta rotation entries, the
+  headlines scene shows a rotation panel when tracks are live, the corner bug
+  adds a count chip.
+- **Thumbnail** (`/cards/broadcast-thumb`) — 1280×720 PNG, SPC Day-1 risk +
+  warning outlines over the Mid-South basemap, operator headline.
+
+### 15.2 Operator forecasts (`/forecast`, public `/f`)
+
+Forecasts are operator-authored probabilistic outlooks: a PostGIS area, a
+valid window, hazards ⊆ {tornado, severe, flood, wind, winter, heat},
+confidence, and a discussion. Status: `draft`/`ai_draft` → `issued` → `closed`.
+
+- **Authoring** — `forecasts` table (migration `20260608000001`), area drawn
+  on the form or handed off from `/radar` ("Forecast this area"). AI draft via
+  `lib/ai/forecast-draft.ts` (DeepSeek temp 0.2) over the `forecast_context()`
+  RPC (SPC incl. per-feature area overlap, AFD, alerts, LSRs) enriched with
+  Open-Meteo thermo + HRRR severe parameters at the centroid. Raw model I/O is
+  audit-logged in `ai_draft` + `source_refs` jsonb.
+- **Verification** — `score_forecast()` (migrations `20260609000001`,
+  upgraded `20260619000001`) scores each forecast against NWS warnings and
+  LSR ground truth in the area & window: counts, matched/missed/false-alarm
+  hazards, and a POD/FAR/CSI skill block. Hourly cron closes + scores elapsed
+  windows; `forecast_rescore()` powers the on-demand button. Surfaces: the
+  detail-page Scorecard and the `/forecast/skill` dashboard (rolling
+  contingency stats + confidence reliability).
+- **Recurring templates** — `forecast_templates` + 15-min cron auto-create a
+  dated draft (with a fresh context snapshot, deliberately no AI call) for
+  e.g. a daily morning outlook.
+- **Distribution** — `broadcastForecast()` sends the discussion to the
+  subscribers inside the polygon via the standard pipeline and links
+  `broadcast_message_id`; `composeFromForecast()` hands off to `/compose`.
+- **Public surface** — minting `public_token` exposes the forecast at
+  `/f/<token>` (issued/closed only; drafts stay private regardless of token),
+  with an OG card at `/f/<token>/card`. `/f` is a public index of all shared
+  forecasts (active vs past, verified/busted badges) and `/f/rss.xml` is an
+  RSS 2.0 feed of the same rows — both on the middleware allowlist.
+
+### 15.3 Subscriber daily forecast digest (opt-in)
+
+Routine weather is opt-in; alerts remain the default product.
+
+- **Opt-in** — `alert_preferences.daily_forecast` (jsonb flag, default off),
+  toggled from the Telegram ⚙️ Alerts menu (`pref:toggle:daily_forecast`).
+  All three prefs parsers (webhook, web `lib/subscribers/prefs.ts`) carry the
+  key — the webhook rewrites the whole prefs object on every toggle, so an
+  unknown key would be silently dropped.
+- **Delivery** (`daily-forecast` edge function + migration
+  `20260621000002`, cron daily 12:15 UTC) —
+  `daily_forecast_recipients()` (active + opted-in + has a point; prefers the
+  temporary `/where` pin over home) → bucket to 0.1° (~11 km) cells → one
+  NWS point-forecast fetch per cell (`api.weather.gov/points` → first period
+  detailed, next two compact) → one `messages` row per cell
+  (`source='forecast'`, `audience_spec={subscribers:[…]}`) →
+  `enqueue_message_system`. Delivery logs, recipient counts and the dashboard
+  see it like any other send. Capped at 40 buckets/run.
+- **Quiet hours** — no special-casing needed: the send worker already
+  delivers non-life-safety sources silently inside a subscriber's quiet
+  hours, so an early digest lands without ringing.
