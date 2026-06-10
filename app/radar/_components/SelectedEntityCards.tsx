@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import StormReportPopupActions from './StormReportPopupActions';
 
@@ -381,20 +381,76 @@ export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet
   );
 }
 
-// TDOT SmartWay camera card: live snapshot that re-fetches every 30 s while
-// open (tnsnapshots.com serves a continuously updated PNG per camera — the
-// cache-bust param forces the refresh). Ground truth two clicks from a
-// warning polygon.
+// TDOT SmartWay camera card: plays the camera's HLS stream live in the card
+// (skyvdn serves CORS:* so hls.js can fetch directly — verified). Safari
+// plays HLS natively; everyone else goes through a lazily-imported hls.js so
+// the radar bundle doesn't carry it until a cam is opened. Individual cams go
+// down routinely (their origin 503s), so any fatal error drops to the
+// tnsnapshots.com PNG refreshed every 30 s instead of a black box.
 export function TrafficCamCard({ cam, onClose }: { cam: SelectedTrafficCam; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [streamFailed, setStreamFailed] = useState(false);
   const [tick, setTick] = useState(0);
+  const useStream = !!cam.video_url && !streamFailed;
+
+  // New camera selected → give its stream a fresh chance.
+  useEffect(() => setStreamFailed(false), [cam.id]);
+
   useEffect(() => {
+    if (!useStream || !cam.video_url) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const url = cam.video_url;
+
+    // Safari: native HLS.
+    if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      const onErr = () => setStreamFailed(true);
+      video.addEventListener('error', onErr);
+      video.src = url;
+      video.play().catch(() => { /* muted autoplay should be allowed; ignore */ });
+      return () => {
+        video.removeEventListener('error', onErr);
+        video.removeAttribute('src');
+        video.load();
+      };
+    }
+
+    // Everyone else: hls.js via MSE.
+    let hls: { destroy: () => void } | null = null;
+    let cancelled = false;
+    (async () => {
+      const { default: Hls } = await import('hls.js');
+      if (cancelled) return;
+      if (!Hls.isSupported()) {
+        setStreamFailed(true);
+        return;
+      }
+      const instance = new Hls({ maxBufferLength: 10, liveSyncDurationCount: 3 });
+      hls = instance;
+      instance.on(Hls.Events.ERROR, (_evt, data) => {
+        if (data.fatal) setStreamFailed(true);
+      });
+      instance.loadSource(url);
+      instance.attachMedia(video);
+      video.play().catch(() => { /* ignore autoplay rejection */ });
+    })();
+    return () => {
+      cancelled = true;
+      hls?.destroy();
+    };
+  }, [useStream, cam.video_url, cam.id]);
+
+  // Snapshot fallback refresh — only ticks while we're actually showing it.
+  useEffect(() => {
+    if (useStream) return;
     const id = setInterval(() => setTick((t) => t + 1), 30_000);
     return () => clearInterval(id);
-  }, []);
-  const src = cam.thumbnail_url ? `${cam.thumbnail_url}?t=${tick}` : null;
+  }, [useStream]);
+
+  const snapshotSrc = cam.thumbnail_url ? `${cam.thumbnail_url}?t=${tick}` : null;
 
   return (
-    <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[340px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
+    <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[380px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
@@ -409,30 +465,48 @@ export function TrafficCamCard({ cam, onClose }: { cam: SelectedTrafficCam; onCl
         </div>
         <CloseButton onClose={onClose} />
       </div>
-      {src ? (
+
+      {useStream ? (
+        <video
+          ref={videoRef}
+          muted
+          autoPlay
+          playsInline
+          controls={false}
+          className="w-full rounded-lg border border-wx-line bg-black"
+          style={{ aspectRatio: '16 / 9', objectFit: 'cover' }}
+        />
+      ) : snapshotSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={src}
-          alt={`Live snapshot: ${cam.title}`}
+          src={snapshotSrc}
+          alt={`Snapshot: ${cam.title}`}
           className="w-full rounded-lg border border-wx-line bg-wx-ink"
           style={{ aspectRatio: '16 / 9', objectFit: 'cover' }}
         />
       ) : (
         <div className="rounded-lg border border-dashed border-wx-line p-4 text-center text-[11px] text-wx-mute">
-          No snapshot available for this camera.
+          Camera offline — no stream or snapshot available.
         </div>
       )}
+
       <div className="flex items-center justify-between text-[10px] text-wx-mute">
-        <span>Refreshes every 30 s</span>
-        {cam.video_url ? (
-          <a
-            href={cam.video_url}
-            target="_blank"
-            rel="noreferrer"
+        {useStream ? (
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-red-500" />
+            LIVE · TDOT SmartWay
+          </span>
+        ) : (
+          <span>Stream offline — snapshot mode, refreshes every 30 s</span>
+        )}
+        {cam.video_url && !useStream ? (
+          <button
+            type="button"
+            onClick={() => setStreamFailed(false)}
             className="text-wx-accent hover:underline"
           >
-            Live stream (HLS) →
-          </a>
+            Retry stream
+          </button>
         ) : null}
       </div>
     </div>
