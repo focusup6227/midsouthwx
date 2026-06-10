@@ -1847,6 +1847,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       showMping ? 'mping-pin' : null,
       showMetar ? 'metar-pin' : null,
       showTrafficCams ? 'traffic-cam-pin' : null,
+      showTrafficCams ? 'traffic-cam-cluster' : null,
       showCouplets ? 'couplet-pin' : null,
       showProbSevere ? 'probsevere-fill' : null,
       'warning-fill',
@@ -1922,8 +1923,23 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       }
     }
     // TDOT traffic cam click — opens the live-snapshot card. Same priority
-    // band as the other small point targets.
+    // band as the other small point targets. Cluster bubbles zoom toward
+    // their expansion zoom instead of opening a card.
     if (showTrafficCams) {
+      const clusterHits = hitsFor('traffic-cam-cluster');
+      if (clusterHits.length > 0) {
+        const f = clusterHits[0];
+        const clusterId = (f.properties as any)?.cluster_id;
+        const geom = f.geometry as GeoJSON.Point | undefined;
+        const src = map.getSource('traffic-cams-source') as mapboxgl.GeoJSONSource | undefined;
+        if (src && clusterId != null && geom) {
+          src.getClusterExpansionZoom(clusterId, (err, zoom) => {
+            if (err || zoom == null) return;
+            map.easeTo({ center: geom.coordinates as [number, number], zoom, duration: 500 });
+          });
+          return;
+        }
+      }
       const camHits = hitsFor('traffic-cam-pin');
       if (camHits.length > 0) {
         const props = camHits[0].properties as any;
@@ -3074,17 +3090,54 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             />
           </Source>
 
-          {/* TDOT SmartWay traffic cameras — small cyan video glyphs along
-              the interstates. Click → live-snapshot card (ground truth under
-              a warning). Positions are static; the card refreshes the image. */}
-          <Source id="traffic-cams-source" type="geojson" data={trafficCamsGeo as any}>
+          {/* TDOT SmartWay traffic cameras. Source-side clustering keeps the
+              667 statewide cams readable: count bubbles at state zoom,
+              individual dots once zoomed past ~z9. Cluster click zooms in;
+              dot click → live-snapshot card. */}
+          <Source
+            id="traffic-cams-source"
+            type="geojson"
+            data={trafficCamsGeo as any}
+            cluster={true}
+            clusterMaxZoom={9}
+            clusterRadius={42}
+          >
+            <Layer
+              id="traffic-cam-cluster"
+              {...overlayAnchor}
+              type="circle"
+              filter={['has', 'point_count']}
+              layout={{ visibility: showTrafficCams ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['step', ['get', 'point_count'], 9, 10, 12, 50, 15],
+                'circle-color': '#155e75',
+                'circle-stroke-color': '#22d3ee',
+                'circle-stroke-width': 1.2,
+                'circle-opacity': 0.85,
+              }}
+            />
+            <Layer
+              id="traffic-cam-cluster-count"
+              {...overlayAnchor}
+              type="symbol"
+              filter={['has', 'point_count']}
+              layout={{
+                visibility: showTrafficCams ? 'visible' : 'none',
+                'text-field': ['get', 'point_count_abbreviated'],
+                'text-size': 10,
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+                'text-allow-overlap': true,
+              }}
+              paint={{ 'text-color': '#a5f3fc' }}
+            />
             <Layer
               id="traffic-cam-pin"
               {...overlayAnchor}
               type="circle"
+              filter={['!', ['has', 'point_count']]}
               layout={{ visibility: showTrafficCams ? 'visible' : 'none' }}
               paint={{
-                'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2.5, 8, 4.5, 11, 6.5],
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 3.5, 11, 5.5, 13, 7],
                 'circle-color': '#22d3ee',
                 'circle-stroke-color': '#0b1220',
                 'circle-stroke-width': 1.2,
