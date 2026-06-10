@@ -54,6 +54,10 @@ export default function ComposeForm({
   const [body, setBody] = useState(initialBody ?? '');
   const [kind, setKind] = useState<Kind>('all');
   const [ids, setIds] = useState<Set<string>>(new Set());
+  const [audienceFilter, setAudienceFilter] = useState('');
+  // Set when ?hazard=… auto-applied a template, so the operator sees what
+  // happened instead of silently inheriting a body they didn't pick.
+  const [autoTemplateNote, setAutoTemplateNote] = useState<string | null>(null);
   const [quickReplies, setQuickReplies] = useState<{ label: string; data: string }[]>([]);
   // F5: when true, message goes out with source='checkin' and the standard
   // safe/help buttons attached. Auto-flips on when a category='checkin'
@@ -91,7 +95,10 @@ export default function ComposeForm({
   useEffect(() => {
     if (!initialHazard || templateId) return;
     const match = templates.find((t) => t.hazard === initialHazard);
-    if (match) applyTemplate(match.id);
+    if (match) {
+      applyTemplate(match.id);
+      setAutoTemplateNote(match.name);
+    }
     // applyTemplate is stable enough — we only want to run this once at mount
     // when both inputs are first known.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -222,16 +229,29 @@ export default function ComposeForm({
               label: `${s.display_name}${s.telegram_chat_id ? '' : ' (unlinked)'}`,
             }))
           : [];
+  // Typeahead over the option list. Checked entries stay visible even when
+  // they don't match the filter, so narrowing the list can't silently hide
+  // who's already selected.
+  const filteredOptions = audienceFilter.trim()
+    ? optionList.filter(
+        (o) => ids.has(o.id) || o.label.toLowerCase().includes(audienceFilter.trim().toLowerCase()),
+      )
+    : optionList;
 
   return (
     <div className="space-y-5">
       <section className="card p-5 space-y-3">
         <label className="block text-xs uppercase tracking-wide text-wx-mute">Template</label>
+        {autoTemplateNote ? (
+          <div className="rounded-md border border-wx-accent/40 bg-wx-accent/10 px-2.5 py-1.5 text-[11.5px] text-wx-accent">
+            Template “{autoTemplateNote}” was applied automatically from the warning’s hazard — review the body before sending.
+          </div>
+        ) : null}
         <div className="flex gap-2 flex-wrap">
           <select
             className="input max-w-xs"
             value={templateId}
-            onChange={(e) => applyTemplate(e.target.value)}
+            onChange={(e) => { setAutoTemplateNote(null); applyTemplate(e.target.value); }}
           >
             <option value="">— blank —</option>
             {templates.map((t) => (
@@ -455,6 +475,7 @@ export default function ComposeForm({
                 onChange={() => {
                   setKind(k);
                   setIds(new Set());
+                  setAudienceFilter('');
                   setPreviewCount(null);
                   if (k !== 'geometry') setGeometry(null);
                 }}
@@ -471,22 +492,34 @@ export default function ComposeForm({
         )}
 
         {kind !== 'all' && kind !== 'geometry' && (
-          <div className="max-h-56 overflow-auto border border-wx-line rounded-lg p-2 space-y-1">
-            {optionList.length === 0 ? (
-              <p className="text-wx-mute text-sm p-2">No {kind} yet.</p>
-            ) : (
-              optionList.map((o) => (
-                <label key={o.id} className="flex items-center gap-2 text-sm p-1">
-                  <input
-                    type="checkbox"
-                    checked={ids.has(o.id)}
-                    onChange={() => toggleId(o.id)}
-                  />
-                  {o.label}
-                </label>
-              ))
-            )}
-          </div>
+          <>
+            {optionList.length > 8 ? (
+              <input
+                className="input w-full"
+                placeholder={`Filter ${kind}…`}
+                value={audienceFilter}
+                onChange={(e) => setAudienceFilter(e.target.value)}
+              />
+            ) : null}
+            <div className="max-h-56 overflow-auto border border-wx-line rounded-lg p-2 space-y-1">
+              {optionList.length === 0 ? (
+                <p className="text-wx-mute text-sm p-2">No {kind} yet.</p>
+              ) : filteredOptions.length === 0 ? (
+                <p className="text-wx-mute text-sm p-2">No match for “{audienceFilter.trim()}”.</p>
+              ) : (
+                filteredOptions.map((o) => (
+                  <label key={o.id} className="flex items-center gap-2 text-sm p-1">
+                    <input
+                      type="checkbox"
+                      checked={ids.has(o.id)}
+                      onChange={() => toggleId(o.id)}
+                    />
+                    {o.label}
+                  </label>
+                ))
+              )}
+            </div>
+          </>
         )}
 
         <div className="flex items-center gap-3 pt-1">

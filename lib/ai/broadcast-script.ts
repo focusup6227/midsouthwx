@@ -13,6 +13,8 @@ export type BroadcastContext = {
   lsrs?: Array<{ event?: string | null; magnitude?: string | null; location?: string | null; occurred_at?: string | null }>;
   /** Live algorithm-detected velocity couplets (rotation tracks) — see lib/broadcast/data.ts. */
   couplets?: Array<{ track_id?: string; site?: string; shear_kt?: number; max_shear_kt?: number; volume_count?: number; last_seen_at?: string | null }>;
+  /** The operator's own issued forecasts with open valid windows. */
+  operator_forecasts?: Array<{ title?: string; hazards?: string[] | null; confidence?: string | null; valid_from?: string; valid_until?: string; discussion?: string | null }>;
   warnings_count?: number;
   watches_count?: number;
 };
@@ -146,6 +148,25 @@ function buildPrompt(input: BroadcastScriptInput): string {
     }
   } else {
     lines.push('- No AFDs on file.');
+  }
+
+  lines.push('');
+  lines.push("## Operator's issued forecasts (currently valid)");
+  if (c.operator_forecasts && c.operator_forecasts.length > 0) {
+    lines.push(
+      'The presenter has ALREADY PUBLISHED these outlooks. The script must stay consistent with ' +
+      'them — reference and build on them rather than contradicting them. If newer NWS data has ' +
+      'shifted the picture, acknowledge the update explicitly ("since this morning\'s outlook…").',
+    );
+    for (const f of c.operator_forecasts.slice(0, 3)) {
+      const hz = (f.hazards ?? []).join(', ') || 'none listed';
+      lines.push(
+        `- "${f.title ?? 'Forecast'}" (hazards: ${hz}; confidence: ${f.confidence ?? '?'}; valid ${f.valid_from ?? '?'} -> ${f.valid_until ?? '?'}):`,
+      );
+      if (f.discussion) lines.push(`  ${truncate(f.discussion.replace(/\s+/g, ' '), 500)}`);
+    }
+  } else {
+    lines.push('- No operator forecast currently in effect.');
   }
 
   lines.push('');

@@ -99,20 +99,31 @@ export default function HealthIndicator() {
           ? 'text-amber-400'
           : 'text-wx-danger';
 
+  // Worst-of summary for the compact (sub-lg) dot: field operators on phones
+  // still get a one-glance green/amber/red system light.
+  const worstIsRed =
+    (nwsAge != null && nwsAge >= 600) || (workerAge != null && workerAge >= 600) || queuePending >= 250;
+  const worstIsAmber =
+    (nwsAge != null && nwsAge >= 180) || (workerAge != null && workerAge >= 180) || queuePending >= 50;
+  const dotClass = worstIsRed ? 'bg-wx-danger' : worstIsAmber ? 'bg-amber-400' : 'bg-wx-ok';
+
   return (
     <Link
       href="/health"
-      className="hidden items-center gap-2 rounded border border-wx-line bg-wx-bg/40 px-2 py-1 text-[11px] font-mono hover:bg-wx-line/30 lg:flex"
+      className="flex items-center gap-2 rounded border border-wx-line bg-wx-bg/40 px-2 py-1 text-[11px] font-mono hover:bg-wx-line/30"
       title="Live system health · click for details"
     >
-      <span className="text-wx-mute">NWS</span>
-      <span className={tone(nwsAge, 'recent')}>{fmtAge(nwsAge)}</span>
-      <span className="text-wx-line">·</span>
-      <span className="text-wx-mute">Worker</span>
-      <span className={tone(workerAge, 'recent')}>{fmtAge(workerAge)}</span>
-      <span className="text-wx-line">·</span>
-      <span className="text-wx-mute">Queue</span>
-      <span className={queueTone}>{queuePending}</span>
+      <span className={`inline-block h-2 w-2 rounded-full lg:hidden ${dotClass}`} aria-label="System health" />
+      <span className="hidden items-center gap-2 lg:flex">
+        <span className="text-wx-mute">NWS</span>
+        <span className={tone(nwsAge, 'recent')}>{fmtAge(nwsAge)}</span>
+        <span className="text-wx-line">·</span>
+        <span className="text-wx-mute">Worker</span>
+        <span className={tone(workerAge, 'recent')}>{fmtAge(workerAge)}</span>
+        <span className="text-wx-line">·</span>
+        <span className="text-wx-mute">Queue</span>
+        <span className={queueTone}>{queuePending}</span>
+      </span>
     </Link>
   );
 }

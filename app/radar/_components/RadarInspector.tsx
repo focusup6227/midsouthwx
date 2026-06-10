@@ -1114,8 +1114,8 @@ export default function RadarInspector({
                   to the NWS warning layer. Use to spot-check what the CAP
                   pipeline catches relative to NWS. */}
               <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] text-wx-mute">
-                  CAP polygons (LibreWxR) · {capWarningsGeo.features.length}
+                <span className="text-[10px] text-wx-mute" title="Common Alerting Protocol feed via LibreWxR — cross-check against the NWS layer">
+                  2nd-source alerts (CAP) · {capWarningsGeo.features.length}
                 </span>
                 <button
                   onClick={() => setShowCap((v) => !v)}

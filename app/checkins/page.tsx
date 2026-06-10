@@ -62,6 +62,7 @@ export default async function CheckinsPage({
   return (
     <DashShell
       title="Check-ins"
+      width="wide"
       actions={<Link href="/compose" className="btn">New alert</Link>}
     >
       <CheckinsRealtime />

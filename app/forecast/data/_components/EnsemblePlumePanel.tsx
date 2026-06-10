@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapPin, RefreshCw } from 'lucide-react';
-import { MIDSOUTH_POINTS, DEFAULT_POINT, type ForecastPoint } from '@/lib/forecast/points';
+import { MIDSOUTH_POINTS, type ForecastPoint } from '@/lib/forecast/points';
+import { useSharedForecastPoint } from '@/lib/forecast/use-shared-point';
 
 type EnsembleData = {
   time: string[];
@@ -105,7 +106,7 @@ function Plume({ members, time, unit }: { members: number[][]; time: string[]; u
 }
 
 export default function EnsemblePlumePanel() {
-  const [pt, setPt] = useState<ForecastPoint>(DEFAULT_POINT);
+  const [pt, setPt] = useSharedForecastPoint();
   const [varKey, setVarKey] = useState('temperature_2m');
   const [data, setData] = useState<EnsembleData | null>(null);
   const [loading, setLoading] = useState(false);

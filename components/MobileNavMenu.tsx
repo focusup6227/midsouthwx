@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Menu, X } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
+import { isActivePath } from './NavLinks';
 
 export type MobileMenuLink = { href: string; label: string; extra?: ReactNode };
 
@@ -14,6 +16,7 @@ export type MobileMenuLink = { href: string; label: string; extra?: ReactNode };
  */
 export default function MobileNavMenu({ links }: { links: MobileMenuLink[] }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname() ?? '';
 
   useEffect(() => {
     if (!open) return;
@@ -53,17 +56,25 @@ export default function MobileNavMenu({ links }: { links: MobileMenuLink[] }) {
               </button>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
-              {links.map((l) => (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  onClick={() => setOpen(false)}
-                  className="flex items-center gap-1.5 rounded-md border border-wx-line px-3 py-2.5 text-sm text-wx-fg hover:bg-wx-ink"
-                >
-                  {l.label}
-                  {l.extra}
-                </Link>
-              ))}
+              {links.map((l) => {
+                const active = isActivePath(pathname, l.href);
+                return (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    onClick={() => setOpen(false)}
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex items-center gap-1.5 rounded-md border px-3 py-2.5 text-sm ${
+                      active
+                        ? 'border-wx-accent bg-wx-accent/10 font-semibold text-wx-accent'
+                        : 'border-wx-line text-wx-fg hover:bg-wx-ink'
+                    }`}
+                  >
+                    {l.label}
+                    {l.extra}
+                  </Link>
+                );
+              })}
             </div>
           </div>
         </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   generateScriptAction,
   listSavedScripts,
@@ -40,6 +40,35 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
 
 type OverlayCfg = { brand: string; title: string; subtitle: string; accent: string };
 
+// Brand/overlay config persists across sessions — the operator sets their
+// name and accent once, not before every stream.
+const CFG_KEY = 'midsouthwx:broadcast-cfg';
+const DEFAULT_CFG: OverlayCfg = {
+  brand: 'MID-SOUTH WX',
+  title: 'Tyler Dixon',
+  subtitle: 'Severe Weather Briefing',
+  accent: '#fbbf24',
+};
+
+function loadCfg(): OverlayCfg & { standbyMins: number } {
+  try {
+    const raw = localStorage.getItem(CFG_KEY);
+    if (raw) {
+      const o = JSON.parse(raw) as Partial<OverlayCfg & { standbyMins: number }>;
+      return {
+        brand: typeof o.brand === 'string' ? o.brand : DEFAULT_CFG.brand,
+        title: typeof o.title === 'string' ? o.title : DEFAULT_CFG.title,
+        subtitle: typeof o.subtitle === 'string' ? o.subtitle : DEFAULT_CFG.subtitle,
+        accent: typeof o.accent === 'string' ? o.accent : DEFAULT_CFG.accent,
+        standbyMins: typeof o.standbyMins === 'number' ? o.standbyMins : 5,
+      };
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  return { ...DEFAULT_CFG, standbyMins: 5 };
+}
+
 export default function BroadcastConsole() {
   const [origin, setOrigin] = useState('');
   const [mode, setMode] = useState<'live' | 'recorded'>('recorded');
@@ -49,15 +78,29 @@ export default function BroadcastConsole() {
   const [error, setError] = useState<string | null>(null);
   const [script, setScript] = useState<BroadcastScript | null>(null);
 
-  const [cfg, setCfg] = useState<OverlayCfg>({
-    brand: 'MID-SOUTH WX',
-    title: 'Tyler Dixon',
-    subtitle: 'Severe Weather Briefing',
-    accent: '#fbbf24',
-  });
+  const [cfg, setCfg] = useState<OverlayCfg>(DEFAULT_CFG);
   const [thumbHeadline, setThumbHeadline] = useState('');
   const [thumbBust, setThumbBust] = useState(0);
   const [standbyMins, setStandbyMins] = useState(5);
+
+  // Hydrate persisted overlay config after mount (avoids SSR/client markup
+  // mismatch), then write back on every change. The ref gate keeps the
+  // write-back effect from clobbering storage with defaults on first render.
+  const cfgHydrated = useRef(false);
+  useEffect(() => {
+    const stored = loadCfg();
+    setCfg({ brand: stored.brand, title: stored.title, subtitle: stored.subtitle, accent: stored.accent });
+    setStandbyMins(stored.standbyMins);
+    cfgHydrated.current = true;
+  }, []);
+  useEffect(() => {
+    if (!cfgHydrated.current) return;
+    try {
+      localStorage.setItem(CFG_KEY, JSON.stringify({ ...cfg, standbyMins }));
+    } catch {
+      /* storage unavailable */
+    }
+  }, [cfg, standbyMins]);
 
   const [library, setLibrary] = useState<SavedScriptMeta[]>([]);
   const [libraryOpen, setLibraryOpen] = useState(false);

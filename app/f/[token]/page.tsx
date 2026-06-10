@@ -76,6 +76,29 @@ export default async function PublicForecastPage({ params }: { params: { token: 
   if (error || !data) return notFound();
   const f = data as Forecast;
 
+  // Forecast area as a static map so the public reader gets spatial context
+  // ("severe risk — but where?"). Same Mapbox Static pattern as the internal
+  // DistributePanel; the token-scoped RPC only returns issued/closed areas.
+  let areaImageUrl: string | null = null;
+  const mapToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  if (mapToken) {
+    const { data: areaJson } = await admin.rpc('forecast_public_area_geojson', { p_token: params.token });
+    if (areaJson) {
+      const overlay = {
+        type: 'Feature',
+        properties: { fill: '#f97316', 'fill-opacity': 0.25, stroke: '#f97316', 'stroke-width': 2 },
+        geometry: areaJson,
+      };
+      const enc = encodeURIComponent(JSON.stringify(overlay));
+      const url = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/geojson(${enc})/auto/700x440@2x?access_token=${mapToken}&padding=40`;
+      // Mapbox rejects over-long URLs (~8 KB); operator-drawn polygons are
+      // small, but skip the image rather than render a broken one.
+      if (url.length < 8000) areaImageUrl = url;
+    }
+  }
+
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+
   const verification = f.verification as null | {
     lsrs_in_area?: number;
     warnings_in_area?: number;
@@ -114,6 +137,18 @@ export default async function PublicForecastPage({ params }: { params: { token: 
           </div>
         </header>
 
+        {areaImageUrl ? (
+          <section className="overflow-hidden rounded-lg border border-wx-line">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={areaImageUrl}
+              alt="Map of the forecast area"
+              className="w-full"
+              style={{ aspectRatio: '700 / 440' }}
+            />
+          </section>
+        ) : null}
+
         {f.discussion ? (
           <section className="rounded-lg border border-wx-line bg-wx-card p-5">
             <div className="whitespace-pre-wrap leading-relaxed text-[15px]">
@@ -123,6 +158,17 @@ export default async function PublicForecastPage({ params }: { params: { token: 
         ) : (
           <p className="text-wx-mute italic text-sm">No written discussion was included with this forecast.</p>
         )}
+
+        {botUsername ? (
+          <a
+            href={`https://t.me/${botUsername}`}
+            target="_blank"
+            rel="noreferrer"
+            className="block rounded-lg border border-wx-accent/50 bg-wx-accent/10 p-4 text-center text-sm font-semibold text-wx-accent hover:bg-wx-accent/20"
+          >
+            ⚡ Get these alerts free on Telegram → t.me/{botUsername}
+          </a>
+        ) : null}
 
         {f.status === 'closed' && verification ? (
           <section className="rounded-lg border border-wx-line bg-wx-card p-5 space-y-3">

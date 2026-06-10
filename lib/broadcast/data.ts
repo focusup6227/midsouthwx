@@ -118,7 +118,7 @@ export async function gatherBroadcastState(client: SupabaseClient): Promise<Broa
 // Full context for the AI scriptwriter: the briefing snapshot plus active
 // alerts and recent local storm reports.
 export async function gatherBroadcastContext(client: SupabaseClient): Promise<BroadcastContext> {
-  const [{ data: snap }, alerts, { data: lsrs }, rotationTracks] = await Promise.all([
+  const [{ data: snap }, alerts, { data: lsrs }, rotationTracks, { data: forecasts }] = await Promise.all([
     client.rpc('daily_briefing_snapshot'),
     activeAlerts(client),
     client
@@ -128,6 +128,15 @@ export async function gatherBroadcastContext(client: SupabaseClient): Promise<Br
       .order('occurred_at', { ascending: false })
       .limit(30),
     activeRotationTracks(client),
+    // The operator's own issued forecasts whose window is still open — the
+    // script must align with (not contradict) what was already published.
+    client
+      .from('forecasts')
+      .select('title, hazards, confidence, valid_from, valid_until, discussion')
+      .eq('status', 'issued')
+      .gte('valid_until', new Date().toISOString())
+      .order('valid_from', { ascending: true })
+      .limit(3),
   ]);
   const s = (snap as SnapRow | null) ?? {};
   return {
@@ -144,6 +153,7 @@ export async function gatherBroadcastContext(client: SupabaseClient): Promise<Br
     })),
     lsrs: (lsrs ?? []) as BroadcastContext['lsrs'],
     couplets: rotationTracks,
+    operator_forecasts: (forecasts ?? []) as BroadcastContext['operator_forecasts'],
     warnings_count: s.warnings_count ?? 0,
     watches_count: s.watches_count ?? 0,
   };

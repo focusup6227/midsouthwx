@@ -112,6 +112,16 @@ export default async function PublicForecastIndex() {
             against NWS warnings and spotter reports.{' '}
             <a href="/f/rss.xml" className="text-wx-accent hover:underline">RSS</a>
           </p>
+          {process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ? (
+            <a
+              href={`https://t.me/${process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME}`}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-block rounded-lg border border-wx-accent/50 bg-wx-accent/10 px-4 py-2 text-sm font-semibold text-wx-accent hover:bg-wx-accent/20"
+            >
+              ⚡ Get alerts free on Telegram
+            </a>
+          ) : null}
         </header>
 
         {rows.length === 0 ? (

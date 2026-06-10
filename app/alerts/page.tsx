@@ -26,6 +26,7 @@ export default async function AlertsPage() {
   return (
     <DashShell
       title="Alerts"
+      width="wide"
       actions={<Link href="/compose" className="btn">New alert</Link>}
     >
       <section className="card p-4 space-y-2">

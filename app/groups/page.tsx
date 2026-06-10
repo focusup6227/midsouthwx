@@ -17,7 +17,7 @@ export default async function GroupsPage() {
   for (const m of memberships ?? []) counts[m.group_id] = (counts[m.group_id] ?? 0) + 1;
 
   return (
-    <DashShell title="Groups" width="narrow">
+    <DashShell title="Groups" width="normal">
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold">New group</h2>
         <form action={createGroup} className="space-y-2">

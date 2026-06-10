@@ -51,6 +51,8 @@ import {
 } from './_hooks/useRadarData';
 import { useSWRConfig } from 'swr';
 import RadarInspector, { type InspectorTab } from './_components/RadarInspector';
+import QuickComposePanel from './_components/QuickComposePanel';
+import RecentSends from './_components/RecentSends';
 import {
   PRODUCTS,
   GOES_SOURCES,
@@ -298,6 +300,49 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [drawMode, setDrawMode] = useState<'none' | 'polygon' | 'snap' | 'pick-site'>('none');
   const [polygonPoints, setPolygonPoints] = useState<[number, number][]>([]);
+
+  // Survive reloads: an active selection or half-drawn polygon is operator
+  // work product — a crash, deploy, or stray refresh mid-outbreak must not
+  // erase it. sessionStorage scopes recovery to this tab; transient modes
+  // (snap / pick-site) are deliberately not restored.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('midsouthwx:radar-selection');
+      if (!raw) return;
+      const s = JSON.parse(raw) as {
+        selection?: Selection | null;
+        drawMode?: string;
+        polygonPoints?: [number, number][];
+      };
+      if (s.selection && (s.selection.type === 'circle' || s.selection.type === 'polygon')) {
+        setSelection(s.selection);
+      }
+      if (s.drawMode === 'polygon') setDrawMode('polygon');
+      if (Array.isArray(s.polygonPoints) && s.polygonPoints.length > 0) {
+        setPolygonPoints(s.polygonPoints);
+      }
+    } catch {
+      /* corrupt entry — start clean */
+    }
+  }, []);
+  useEffect(() => {
+    try {
+      if (!selection && drawMode !== 'polygon' && polygonPoints.length === 0) {
+        sessionStorage.removeItem('midsouthwx:radar-selection');
+      } else {
+        sessionStorage.setItem(
+          'midsouthwx:radar-selection',
+          JSON.stringify({
+            selection,
+            drawMode: drawMode === 'polygon' ? 'polygon' : 'none',
+            polygonPoints,
+          }),
+        );
+      }
+    } catch {
+      /* storage unavailable */
+    }
+  }, [selection, drawMode, polygonPoints]);
   // 5 min buckets — NCEP base reflectivity itself only updates every ~4–6 min
   // (one full NEXRAD VCP), so anything faster just forces tile refetches for
   // identical imagery and tanks the buttery feel during pan/zoom.
@@ -2130,6 +2175,19 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     window.open(`/compose?${params.toString()}`, '_blank', 'noopener,noreferrer');
   };
 
+  // In-radar quick send. The audience_spec mirrors goToCompose's geo param so
+  // preview-count = queued-count holds (both resolve via resolve_audience).
+  const [quickComposeOpen, setQuickComposeOpen] = useState(false);
+  const quickComposeSpec = useMemo(() => {
+    if (!selection) return null;
+    return selection.type === 'circle'
+      ? { geometry: { type: 'circle', center: selection.center, radius_km: selection.radius_km } }
+      : { geometry: { type: 'Polygon', coordinates: [selection.coordinates] } };
+  }, [selection]);
+  useEffect(() => {
+    if (!selection) setQuickComposeOpen(false);
+  }, [selection]);
+
   // Hand off the polygon selection to /forecast/new for the operator to
   // attach hazards + a time window + discussion. /forecast only handles
   // polygon areas today, so the circle path is intentionally omitted.
@@ -3871,7 +3929,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                       onClick={() => { startSnapMode(); setToolsMenuOpen(false); }}
                       className={`flex items-center gap-2.5 px-2.5 py-2.5 rounded-lg text-sm text-left ${drawMode === 'snap' ? 'bg-wx-accent text-black' : 'text-wx-fg hover:bg-wx-ink'}`}
                     >
-                      <MousePointer2 size={15} /> Adopt alert
+                      <MousePointer2 size={15} /> Copy alert polygon
                     </button>
                     <button
                       onClick={() => { toggleNowcast(); setToolsMenuOpen(false); }}
@@ -3919,10 +3977,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               <button
                 onClick={startSnapMode}
                 className={`px-3 py-2 bg-wx-card border border-wx-line rounded-lg text-sm flex items-center gap-1.5 ${drawMode === 'snap' ? 'bg-wx-accent text-black border-wx-accent' : ''}`}
-                aria-label="Adopt alert"
-                title="Adopt alert"
+                aria-label="Copy alert polygon"
+                title="Copy an active alert's polygon as your selection (click an alert on the map)"
               >
-                <MousePointer2 size={14} /> Adopt alert
+                <MousePointer2 size={14} /> Copy alert
               </button>
               <button
                 onClick={toggleNowcast}
@@ -4261,19 +4319,38 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               <div className="bg-wx-ink border border-wx-line rounded-lg p-2.5"><div className="text-base font-bold">{audienceBreakdown.other}</div><div className="text-[10px] uppercase tracking-wide text-wx-mute mt-0.5">Other</div></div>
             </div>
 
-            <button onClick={goToCompose} className="mt-3.5 w-full bg-wx-accent text-black rounded-lg font-semibold text-sm py-2 flex items-center justify-center gap-2 hover:bg-amber-300">
+            <button onClick={() => setQuickComposeOpen(true)} className="mt-3.5 w-full bg-wx-accent text-black rounded-lg font-semibold text-sm py-2 flex items-center justify-center gap-2 hover:bg-amber-300">
               <Send size={14} /> Send alert to area
             </button>
-            {selection.type === 'polygon' && (
+            <div className="mt-2 flex gap-2">
               <button
-                onClick={goToForecast}
-                className="mt-2 w-full bg-wx-ink border border-wx-line text-wx-fg rounded-lg font-semibold text-sm py-2 flex items-center justify-center gap-2 hover:border-wx-accent hover:text-wx-accent"
+                onClick={goToCompose}
+                className="flex-1 bg-wx-ink border border-wx-line text-wx-mute rounded-lg text-xs font-semibold py-1.5 hover:border-wx-accent hover:text-wx-fg"
+                title="Templates, media, check-ins — opens in a new tab"
               >
-                Forecast this area
+                Full compose ↗
               </button>
-            )}
+              {selection.type === 'polygon' && (
+                <button
+                  onClick={goToForecast}
+                  className="flex-1 bg-wx-ink border border-wx-line text-wx-mute rounded-lg text-xs font-semibold py-1.5 hover:border-wx-accent hover:text-wx-fg"
+                >
+                  Forecast this area
+                </button>
+              )}
+            </div>
           </div>
         )}
+
+        {quickComposeOpen && quickComposeSpec ? (
+          <QuickComposePanel
+            spec={quickComposeSpec}
+            count={previewCount ?? audienceBreakdown.total}
+            onClose={() => setQuickComposeOpen(false)}
+          />
+        ) : null}
+
+        {!uiHidden && <RecentSends />}
 
         {/* Hide-all-UI toggle (always visible so we can get out of hidden mode).
             Desktop sits bottom-right; mobile moves to top-right so it doesn't

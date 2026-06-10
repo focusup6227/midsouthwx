@@ -88,6 +88,28 @@ export default function ForecastForm({ initialArea }: Props) {
   const [aiSourceRefs, setAiSourceRefs] = useState<Record<string, unknown> | null>(null);
   const aiActive = aiDraft !== null;
 
+  // Warn before the tab/window closes with unsaved work. "Dirty" = anything
+  // the operator actively produced (typed text, drawn polygon, AI draft) —
+  // the prefilled valid window alone doesn't count. Cleared once saving
+  // starts so the post-save router.push doesn't trip it.
+  const dirty =
+    !saving &&
+    (title.trim().length > 0 ||
+      discussion.trim().length > 0 ||
+      hazards.size > 0 ||
+      aiDraft !== null ||
+      points.length > 0 ||
+      (polygon !== null && polygon !== initialArea));
+  useEffect(() => {
+    if (!dirty) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
   const toggleHazard = (h: HazardKey) => {
     setHazards((prev) => {
       const next = new Set(prev);

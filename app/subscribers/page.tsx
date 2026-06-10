@@ -69,6 +69,7 @@ export default async function SubscribersPage({
   return (
     <DashShell
       title="Subscribers"
+      width="wide"
       actions={<Link href="/subscribers/invite" className="btn">Invite subscriber</Link>}
     >
       {regionInfo ? (

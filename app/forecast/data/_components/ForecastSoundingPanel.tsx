@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MapPin, RefreshCw } from 'lucide-react';
-import { MIDSOUTH_POINTS, DEFAULT_POINT, type ForecastPoint } from '@/lib/forecast/points';
+import { MIDSOUTH_POINTS, type ForecastPoint } from '@/lib/forecast/points';
+import { useSharedForecastPoint } from '@/lib/forecast/use-shared-point';
 
 type SoundingResult = {
   image_url: string;
@@ -35,7 +36,7 @@ const RAOB_OBS = [
 export default function ForecastSoundingPanel() {
   const [mode, setMode] = useState<'fcst' | 'obs'>('fcst');
   const [modelKey, setModelKey] = useState('gfs');
-  const [pt, setPt] = useState<ForecastPoint>(DEFAULT_POINT);
+  const [pt, setPt] = useSharedForecastPoint();
   const [fhr, setFhr] = useState(0);
   const [obsWmo, setObsWmo] = useState('72340');
   const [res, setRes] = useState<SoundingResult | null>(null);

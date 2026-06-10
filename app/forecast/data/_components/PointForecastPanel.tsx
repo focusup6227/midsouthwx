@@ -4,11 +4,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapPin, RefreshCw, Wind } from 'lucide-react';
 import {
   MIDSOUTH_POINTS,
-  DEFAULT_POINT,
-  type ForecastPoint,
   type HourPoint,
   type PointForecast,
 } from '@/lib/forecast/points';
+import { useSharedForecastPoint } from '@/lib/forecast/use-shared-point';
 
 // Colors picked to read on the wx-card dark background; kept as literals
 // because Tailwind tokens can't drive SVG stroke/fill.
@@ -145,7 +144,7 @@ function Meteogram({ hourly, tz }: { hourly: HourPoint[]; tz: string | null }) {
 }
 
 export default function PointForecastPanel() {
-  const [pt, setPt] = useState<ForecastPoint>(DEFAULT_POINT);
+  const [pt, setPt] = useSharedForecastPoint();
   const [latlon, setLatLon] = useState('');
   const [data, setData] = useState<PointForecast | null>(null);
   const [loading, setLoading] = useState(false);

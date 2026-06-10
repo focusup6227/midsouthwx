@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { MapPin, RefreshCw, Zap } from 'lucide-react';
-import { MIDSOUTH_POINTS, DEFAULT_POINT, type ForecastPoint } from '@/lib/forecast/points';
+import { MIDSOUTH_POINTS, type ForecastPoint } from '@/lib/forecast/points';
+import { useSharedForecastPoint } from '@/lib/forecast/use-shared-point';
 import type { SevereSample } from '@/lib/forecast/severe-sample';
 
 // Ascending thresholds → tone. Higher value = more supportive of severe.
@@ -62,7 +63,7 @@ function Verdict({ data }: { data: SevereSample }) {
 }
 
 export default function SevereParamsPanel() {
-  const [pt, setPt] = useState<ForecastPoint>(DEFAULT_POINT);
+  const [pt, setPt] = useSharedForecastPoint();
   const [data, setData] = useState<SevereSample | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);

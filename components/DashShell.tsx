@@ -9,6 +9,8 @@ import SevereAlertAudio from './SevereAlertAudio';
 import StormReportAudio from './StormReportAudio';
 import MobileNavOverlay from './MobileNavOverlay';
 import MobileNavMenu from './MobileNavMenu';
+import OpsStatusBadges from './OpsStatusBadges';
+import NavLinks from './NavLinks';
 
 type Props = {
   title?: string;
@@ -76,7 +78,12 @@ export default async function DashShell({
       <SevereAlertAudio />
       <StormReportAudio />
       {mobileCompact ? (
-        <MobileNavOverlay primary={primary} secondary={secondary} field={field} />
+        <>
+          <MobileNavOverlay primary={primary} secondary={secondary} field={field} />
+          {/* Approval/distress badges float beside the hamburger on compact
+              pages (radar) where the header is hidden. */}
+          <OpsStatusBadges floating />
+        </>
       ) : null}
       <header
         className={`sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur ${
@@ -88,19 +95,9 @@ export default async function DashShell({
             <Image src="/icons/icon-192.png" alt="" width={28} height={28} className="rounded-full" />
             MidSouthWX
           </Link>
-          <div className="hidden flex-wrap items-center gap-1 md:flex">
-            {primary.map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                className="px-2.5 py-1 text-sm text-wx-mute hover:text-wx-fg"
-              >
-                {l.label}
-                {l.extra}
-              </Link>
-            ))}
-          </div>
+          <NavLinks links={primary.map(({ href, label }) => ({ href, label }))} />
           <div className="ml-auto flex items-center gap-2">
+            <OpsStatusBadges />
             <HealthIndicator />
             <NotificationPermissionButton />
             <details className="relative hidden md:block">
