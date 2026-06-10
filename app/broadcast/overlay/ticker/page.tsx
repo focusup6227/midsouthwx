@@ -25,14 +25,25 @@ function Ticker() {
 
   const segments = useMemo(() => {
     const items = state?.items ?? [];
-    if (items.length === 0) {
+    // Rotation tracks lead the crawl: an on-air "radar indicated rotation"
+    // signal outranks a routine watch. Magenta to match the radar UI's
+    // couplet markers and to stay visually distinct from warning red.
+    const rotation = (state?.rotation_tracks ?? []).map((r) => ({
+      event: 'Rotation',
+      text: `RADAR-INDICATED ROTATION ${r.track_id} — ${r.shear_kt} kt shear${r.volume_count > 1 ? ` (${r.volume_count} scans)` : ''}`,
+      color: '#d946ef',
+    }));
+    if (rotation.length === 0 && items.length === 0) {
       return [{ event: '', text: 'No active warnings or watches across the Mid-South at this time — conditions quiet.', color: '#94a3b8' }];
     }
-    return items.map((it) => ({
-      event: it.event,
-      text: `${it.event}${it.area ? ` — ${it.area}` : ''}`,
-      color: tone(it.event),
-    }));
+    return [
+      ...rotation,
+      ...items.map((it) => ({
+        event: it.event,
+        text: `${it.event}${it.area ? ` — ${it.area}` : ''}`,
+        color: tone(it.event),
+      })),
+    ];
   }, [state]);
 
   // Duplicate the run so the marquee loops seamlessly.

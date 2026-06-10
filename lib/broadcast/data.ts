@@ -1,8 +1,9 @@
-// Shared data-gathering for the broadcast suite. Reads PUBLIC NWS products
-// only (SPC outlooks, active alerts, local storm reports) — no subscriber
-// data ever touches these queries — so the overlay API can serve them to an
-// unauthenticated OBS browser source via the service role, the same surface
-// area as the /cards/* social-card routes.
+// Shared data-gathering for the broadcast suite. Reads PUBLIC weather data
+// only (SPC outlooks, active alerts, local storm reports, and our own
+// radar-derived rotation detections) — no subscriber data ever touches these
+// queries — so the overlay API can serve them to an unauthenticated OBS
+// browser source via the service role, the same surface area as the /cards/*
+// social-card routes.
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BroadcastContext } from '@/lib/ai/broadcast-script';
@@ -23,6 +24,16 @@ export type TickerItem = {
   expires_at: string | null;
 };
 
+/** One live algorithm-detected velocity couplet ("rotation ID") per track. */
+export type RotationTrack = {
+  track_id: string;
+  site: string;
+  shear_kt: number;
+  max_shear_kt: number;
+  volume_count: number;
+  last_seen_at: string | null;
+};
+
 export type BroadcastState = {
   generated_at: string;
   day1_label: string | null;
@@ -31,6 +42,8 @@ export type BroadcastState = {
   warnings_count: number;
   watches_count: number;
   items: TickerItem[];
+  /** Active rotation tracks from the couplet detector, strongest first. */
+  rotation_tracks: RotationTrack[];
 };
 
 // Active warnings/watches, freshest first — used for both the AI script
@@ -57,12 +70,38 @@ async function activeAlerts(client: SupabaseClient): Promise<TickerItem[]> {
     }));
 }
 
+// Live rotation tracks from the F9 couplet detector (radar_couplets table,
+// fed by couplet-poll). Uses the same radar_couplets_geojson RPC as /radar:
+// latest detection per track over the recency window, strongest shear first.
+// 20-minute window ≈ the last 3-4 volume scans — long enough to keep a
+// persistent meso on screen between scans, short enough that a dissipated
+// one drops off the air quickly. Best-effort: a missing RPC (migration not
+// applied) or transient error just renders no rotation rather than failing
+// the whole state feed.
+async function activeRotationTracks(client: SupabaseClient): Promise<RotationTrack[]> {
+  const { data, error } = await client.rpc('radar_couplets_geojson', { p_minutes: 20 });
+  if (error || !data) return [];
+  const features = (data as { features?: Array<{ properties?: Record<string, unknown> }> }).features ?? [];
+  return features.slice(0, 8).map((f) => {
+    const p = f.properties ?? {};
+    return {
+      track_id: String(p.track_id ?? '?'),
+      site: String(p.site ?? '?'),
+      shear_kt: Math.round(Number(p.shear_kt ?? 0)),
+      max_shear_kt: Math.round(Number(p.max_shear_kt ?? p.shear_kt ?? 0)),
+      volume_count: Number(p.volume_count ?? 1),
+      last_seen_at: (p.last_seen_at as string | null) ?? (p.volume_time_utc as string | null) ?? null,
+    };
+  });
+}
+
 // Lightweight state for the OBS overlays (ticker, bug, counts). Cheap enough
 // to poll every ~30s without a full briefing snapshot.
 export async function gatherBroadcastState(client: SupabaseClient): Promise<BroadcastState> {
-  const [{ data: snap }, items] = await Promise.all([
+  const [{ data: snap }, items, rotationTracks] = await Promise.all([
     client.rpc('daily_briefing_snapshot'),
     activeAlerts(client),
+    activeRotationTracks(client),
   ]);
   const s = (snap as SnapRow | null) ?? {};
   return {
@@ -72,13 +111,14 @@ export async function gatherBroadcastState(client: SupabaseClient): Promise<Broa
     warnings_count: s.warnings_count ?? 0,
     watches_count: s.watches_count ?? 0,
     items,
+    rotation_tracks: rotationTracks,
   };
 }
 
 // Full context for the AI scriptwriter: the briefing snapshot plus active
 // alerts and recent local storm reports.
 export async function gatherBroadcastContext(client: SupabaseClient): Promise<BroadcastContext> {
-  const [{ data: snap }, alerts, { data: lsrs }] = await Promise.all([
+  const [{ data: snap }, alerts, { data: lsrs }, rotationTracks] = await Promise.all([
     client.rpc('daily_briefing_snapshot'),
     activeAlerts(client),
     client
@@ -87,6 +127,7 @@ export async function gatherBroadcastContext(client: SupabaseClient): Promise<Br
       .gte('occurred_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString())
       .order('occurred_at', { ascending: false })
       .limit(30),
+    activeRotationTracks(client),
   ]);
   const s = (snap as SnapRow | null) ?? {};
   return {
@@ -102,6 +143,7 @@ export async function gatherBroadcastContext(client: SupabaseClient): Promise<Br
       expires_at: a.expires_at,
     })),
     lsrs: (lsrs ?? []) as BroadcastContext['lsrs'],
+    couplets: rotationTracks,
     warnings_count: s.warnings_count ?? 0,
     watches_count: s.watches_count ?? 0,
   };

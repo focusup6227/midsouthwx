@@ -1,7 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { generateScriptAction } from './actions';
+import {
+  generateScriptAction,
+  listSavedScripts,
+  loadSavedScript,
+  deleteSavedScript,
+  type SavedScriptMeta,
+} from './actions';
 import { saveScript, clearScript, scriptToPrompterText } from '@/lib/broadcast/script-store';
 import type { BroadcastScript } from '@/lib/ai/broadcast-script';
 
@@ -53,7 +59,20 @@ export default function BroadcastConsole() {
   const [thumbBust, setThumbBust] = useState(0);
   const [standbyMins, setStandbyMins] = useState(5);
 
+  const [library, setLibrary] = useState<SavedScriptMeta[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryBusy, setLibraryBusy] = useState<string | null>(null);
+
   useEffect(() => setOrigin(window.location.origin), []);
+
+  async function refreshLibrary() {
+    try {
+      setLibrary(await listSavedScripts());
+    } catch {
+      /* library unavailable (migration not applied) — section stays empty */
+    }
+  }
+  useEffect(() => { refreshLibrary(); }, []);
 
   async function onGenerate() {
     setBusy(true);
@@ -66,11 +85,39 @@ export default function BroadcastConsole() {
         setScript(res.script);
         saveScript(res.script, res.generated_at);
         if (res.script.thumbnail_headline) setThumbHeadline(res.script.thumbnail_headline);
+        refreshLibrary();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Generation failed');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onLoadSaved(id: string) {
+    setLibraryBusy(id);
+    setError(null);
+    try {
+      const { script: s, context_generated_at } = await loadSavedScript(id);
+      setScript(s);
+      saveScript(s, context_generated_at ?? undefined);
+      if (s.thumbnail_headline) setThumbHeadline(s.thumbnail_headline);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load script');
+    } finally {
+      setLibraryBusy(null);
+    }
+  }
+
+  async function onDeleteSaved(id: string) {
+    setLibraryBusy(id);
+    try {
+      await deleteSavedScript(id);
+      setLibrary((prev) => prev.filter((r) => r.id !== id));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete script');
+    } finally {
+      setLibraryBusy(null);
     }
   }
 
@@ -97,7 +144,7 @@ export default function BroadcastConsole() {
     },
     { name: 'Be right back', desc: 'Intermission card.', url: sceneUrl('brb', { brand: cfg.brand, accent: cfg.accent }) },
     { name: 'Outro', desc: 'Sign-off / thanks-for-watching card.', url: sceneUrl('outro', { brand: cfg.brand, accent: cfg.accent }) },
-    { name: 'Headlines board', desc: 'Live SPC Day 1-3, watch/warning counts + alert list.', url: sceneUrl('headlines', { brand: cfg.brand, accent: cfg.accent }) },
+    { name: 'Headlines board', desc: 'Live SPC Day 1-3, watch/warning counts, rotation tracks + alert list.', url: sceneUrl('headlines', { brand: cfg.brand, accent: cfg.accent }) },
   ];
 
   const thumbUrl = useMemo(() => {
@@ -116,7 +163,7 @@ export default function BroadcastConsole() {
       <section className="card p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold">1 · AI broadcast script</h2>
-          <span className="text-[11px] text-wx-mute">Built from live SPC · AFD · alerts · LSRs</span>
+          <span className="text-[11px] text-wx-mute">Built from live SPC · AFD · alerts · LSRs · rotation tracks</span>
         </div>
 
         <div className="flex flex-wrap items-end gap-3">
@@ -237,6 +284,53 @@ export default function BroadcastConsole() {
             outlook, not an official warning.
           </p>
         )}
+
+        {/* Script library — every generated script is archived server-side. */}
+        {library.length > 0 ? (
+          <div className="border-t border-wx-line pt-3">
+            <button
+              type="button"
+              onClick={() => setLibraryOpen((v) => !v)}
+              className="flex w-full items-center justify-between text-left"
+            >
+              <span className="text-xs uppercase tracking-wider text-wx-mute font-semibold">
+                Script library ({library.length})
+              </span>
+              <span className="text-[11px] text-wx-mute">{libraryOpen ? '▾ hide' : '▸ show'}</span>
+            </button>
+            {libraryOpen ? (
+              <ul className="mt-2 divide-y divide-wx-line">
+                {library.map((r) => (
+                  <li key={r.id} className="flex items-center gap-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm text-wx-fg">{r.title}</div>
+                      <div className="text-[11px] text-wx-mute">
+                        {new Date(r.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        {' · '}{r.mode} · {r.target_minutes} min
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={libraryBusy === r.id}
+                      onClick={() => onLoadSaved(r.id)}
+                      className="btn-ghost text-[11px] px-2 py-1 shrink-0"
+                    >
+                      {libraryBusy === r.id ? '…' : 'Load'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={libraryBusy === r.id}
+                      onClick={() => onDeleteSaved(r.id)}
+                      className="btn-ghost text-[11px] px-2 py-1 shrink-0 text-wx-danger"
+                    >
+                      Delete
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       {/* ───────────── 2. OBS overlays ───────────── */}
@@ -265,8 +359,8 @@ export default function BroadcastConsole() {
 
         {[
           { name: 'Lower third', desc: 'Name + title plate, bottom corner.', url: lowerThirdUrl },
-          { name: 'Alert ticker', desc: 'Scrolling crawl of active warnings/watches, auto-refreshing.', url: tickerUrl },
-          { name: 'Corner bug', desc: 'Brand, live CT clock, Day-1 risk + warning/watch counts.', url: bugUrl },
+          { name: 'Alert ticker', desc: 'Scrolling crawl of live rotation tracks + active warnings/watches, auto-refreshing.', url: tickerUrl },
+          { name: 'Corner bug', desc: 'Brand, live CT clock, Day-1 risk + warning/watch/rotation counts.', url: bugUrl },
         ].map((o) => (
           <div key={o.name} className="rounded-lg border border-wx-line p-3">
             <div className="flex items-center justify-between gap-2">

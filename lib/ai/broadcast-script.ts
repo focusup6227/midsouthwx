@@ -11,6 +11,8 @@ export type BroadcastContext = {
   hwos?: Array<{ event?: string; headline?: string | null; area_desc?: string | null; effective?: string | null; expires_at?: string | null }>;
   alerts?: Array<{ event?: string | null; area_desc?: string | null; severity?: string | null; headline?: string | null; expires_at?: string | null }>;
   lsrs?: Array<{ event?: string | null; magnitude?: string | null; location?: string | null; occurred_at?: string | null }>;
+  /** Live algorithm-detected velocity couplets (rotation tracks) — see lib/broadcast/data.ts. */
+  couplets?: Array<{ track_id?: string; site?: string; shear_kt?: number; max_shear_kt?: number; volume_count?: number; last_seen_at?: string | null }>;
   warnings_count?: number;
   watches_count?: number;
 };
@@ -144,6 +146,22 @@ function buildPrompt(input: BroadcastScriptInput): string {
     }
   } else {
     lines.push('- No AFDs on file.');
+  }
+
+  lines.push('');
+  lines.push('## Live radar rotation signatures (algorithm-detected, last ~20 min)');
+  if (c.couplets && c.couplets.length > 0) {
+    lines.push(
+      'CAUTION: these are automated velocity-couplet detections, NOT confirmed tornadoes. ' +
+      'Phrase as "radar is indicating rotation near/—" and pair with the matching warning if one exists. ' +
+      'Never say a tornado is on the ground from these alone.',
+    );
+    for (const r of c.couplets.slice(0, 8)) {
+      const persists = (r.volume_count ?? 1) > 1 ? `, persistent across ${r.volume_count} scans` : ', single scan';
+      lines.push(`- Track ${r.track_id ?? '?'} (${r.site ?? '?'}): ${r.shear_kt ?? '?'} kt gate-to-gate shear${persists}; last seen ${r.last_seen_at ?? '?'}.`);
+    }
+  } else {
+    lines.push('- No active rotation signatures detected.');
   }
 
   lines.push('');

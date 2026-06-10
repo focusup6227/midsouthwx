@@ -82,6 +82,11 @@ function Bug() {
             {state.watches_count} watch{state.watches_count > 1 ? 'es' : ''}
           </span>
         ) : null}
+        {state && (state.rotation_tracks?.length ?? 0) > 0 ? (
+          <span className="rounded bg-fuchsia-600 px-[1.4vh] py-[0.7vh] text-[1.7vh] font-bold">
+            {state.rotation_tracks.length} rotation{state.rotation_tracks.length > 1 ? 's' : ''}
+          </span>
+        ) : null}
       </div>
     </div>
   );

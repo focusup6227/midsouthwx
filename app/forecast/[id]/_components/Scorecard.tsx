@@ -7,15 +7,28 @@ import { rescoreForecast } from '../../actions';
 // pass; component handles partial / null gracefully.
 type Verification = {
   scored_at?: string;
-  window?: { from?: string; until?: string };
+  window?: { from?: string; until?: string; valid_from?: string; valid_until?: string };
   warnings_in_area?: number;
   warnings_by_event?: Record<string, number>;
   lsrs_in_area?: number;
   lsrs_by_hazard?: Record<string, number>;
   matched_hazards?: string[];
   missed_hazards?: string[];
+  false_alarm_hazards?: string[];
   hazard_match?: boolean;
+  skill?: {
+    hits?: number;
+    misses?: number;
+    false_alarms?: number;
+    pod?: number | null;
+    far?: number | null;
+    csi?: number | null;
+  };
 };
+
+function pct(v: number | null | undefined): string {
+  return v == null ? '—' : `${Math.round(v * 100)}%`;
+}
 
 type Props = {
   forecastId: string;
@@ -90,6 +103,14 @@ export default function Scorecard({ forecastId, verification, validUntil }: Prop
             <Stat label="LSRs in area" value={v.lsrs_in_area ?? 0} />
           </div>
 
+          {v.skill ? (
+            <div className="grid grid-cols-3 gap-2">
+              <Stat label="POD" value={pct(v.skill.pod)} />
+              <Stat label="FAR" value={pct(v.skill.far)} />
+              <Stat label="CSI" value={pct(v.skill.csi)} />
+            </div>
+          ) : null}
+
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-wx-mute">Matched hazards</div>
             <div className="mt-1">
@@ -103,6 +124,15 @@ export default function Scorecard({ forecastId, verification, validUntil }: Prop
               <PillRow items={v.missed_hazards ?? []} tone="bad" />
             </div>
           </div>
+
+          {(v.false_alarm_hazards ?? []).length > 0 ? (
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-wx-mute">False alarms (forecast, did not occur)</div>
+              <div className="mt-1">
+                <PillRow items={v.false_alarm_hazards ?? []} tone="neutral" />
+              </div>
+            </div>
+          ) : null}
 
           {Object.keys(v.warnings_by_event ?? {}).length > 0 ? (
             <div>
@@ -133,7 +163,7 @@ export default function Scorecard({ forecastId, verification, validUntil }: Prop
           ) : null}
 
           <div className="border-t border-wx-line pt-2 text-[10.5px] text-wx-mute">
-            Scored {fmtTime(v.scored_at)} · window {fmtTime(v.window?.from)} → {fmtTime(v.window?.until)}
+            Scored {fmtTime(v.scored_at)} · window {fmtTime(v.window?.valid_from ?? v.window?.from)} → {fmtTime(v.window?.valid_until ?? v.window?.until)}
           </div>
         </>
       )}

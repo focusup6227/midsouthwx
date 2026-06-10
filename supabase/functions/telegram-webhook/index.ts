@@ -192,7 +192,7 @@ async function handleOperatorCallback(
   return false;
 }
 
-const PREF_TOGGLE = /^pref:toggle:(warnings|watches|advisories|statements|quiet|aggregate)$/;
+const PREF_TOGGLE = /^pref:toggle:(warnings|watches|advisories|statements|quiet|aggregate|daily_forecast)$/;
 // F6: hazard-specific opt-out. Kept separate from PREF_TOGGLE so the existing
 // boolean-toggle path doesn't have to special-case array membership.
 const PREF_HAZARD = /^pref:hazard:(tornado|severe|flood|winter|heat|wind)$/;
@@ -266,6 +266,14 @@ async function handlePrefCallback(
       // (subscriberWantsAggregation). Stored under the same alert_preferences
       // jsonb as the category toggles.
       prefs.aggregate_warnings = !prefs.aggregate_warnings;
+      await supa
+        .from('subscribers')
+        .update({ alert_preferences: prefs, updated_at: new Date().toISOString() })
+        .eq('id', sub.id);
+    } else if (field === 'daily_forecast') {
+      // Morning forecast digest opt-in — read by daily_forecast_recipients()
+      // when the daily-forecast edge function fans out each morning.
+      prefs.daily_forecast = !prefs.daily_forecast;
       await supa
         .from('subscribers')
         .update({ alert_preferences: prefs, updated_at: new Date().toISOString() })

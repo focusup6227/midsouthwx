@@ -25,6 +25,9 @@ export type AlertPreferences = {
   // for this subscriber and sends each warning as its own message. Default
   // true (aggregate) — matches the worker's existing read of the field.
   aggregate_warnings: boolean;
+  // Opt-in morning forecast digest, sent by the daily-forecast edge function.
+  // Default off — routine weather is a choice, alerts are the product.
+  daily_forecast: boolean;
 };
 
 function isHazardKind(x: unknown): x is HazardKind {
@@ -47,6 +50,7 @@ export const DEFAULT_ALERT_PREFERENCES: AlertPreferences = {
   statements: false,
   skip_hazards: [],
   aggregate_warnings: true,
+  daily_forecast: false,
 };
 
 export const DEFAULT_QUIET_HOURS: QuietHours = {
@@ -67,6 +71,7 @@ export function parseAlertPreferences(raw: unknown): AlertPreferences {
     statements: o.statements === true,
     skip_hazards,
     aggregate_warnings: o.aggregate_warnings !== false,
+    daily_forecast: o.daily_forecast === true,
   };
 }
 
@@ -98,6 +103,9 @@ export function formatPrefsSummary(prefs: AlertPreferences, qh: QuietHours): str
     prefs.aggregate_warnings
       ? '• Outbreak grouping: ON — multiple simultaneous warnings arrive as one message'
       : '• Outbreak grouping: off — each warning arrives separately',
+    prefs.daily_forecast
+      ? '• Daily forecast: ON — a morning NWS forecast for your location'
+      : '• Daily forecast: off',
     '',
     'Tap a button to toggle. Hazard buttons mute that kind across all alerts.',
     'Manual operator alerts always come through.',
@@ -136,6 +144,14 @@ export function prefsKeyboard(prefs: AlertPreferences, qh: QuietHours) {
             ? '📦 Group outbreak: ON'
             : '📨 Group outbreak: off',
           callback_data: 'pref:toggle:aggregate',
+        },
+      ],
+      [
+        {
+          text: prefs.daily_forecast
+            ? '🌅 Daily forecast: ON'
+            : '🌅 Daily forecast: off',
+          callback_data: 'pref:toggle:daily_forecast',
         },
       ],
     ],

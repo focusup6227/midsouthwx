@@ -27,6 +27,7 @@ function Headlines() {
   const state = useBroadcastState(30000);
   const days = state?.spc_days ?? [1, 2, 3].map((d) => ({ day: d, label: null as string | null }));
   const items = state?.items ?? [];
+  const rotation = state?.rotation_tracks ?? [];
 
   return (
     <SceneShell brand={brand} accent={accent} showAlerts={false}>
@@ -59,6 +60,25 @@ function Headlines() {
             <div className="text-[5vh] font-extrabold leading-none text-amber-300">{state?.watches_count ?? 0}</div>
           </div>
         </div>
+
+        {/* Live rotation tracks — only rendered when the couplet detector has
+            something, so quiet days keep the board clean. */}
+        {rotation.length > 0 ? (
+          <div className="mt-[2vh] rounded-2xl border border-fuchsia-500/40 bg-fuchsia-600/10 p-[1.8vh] text-left">
+            <div className="text-[1.6vh] uppercase tracking-widest text-fuchsia-200/70">Radar-indicated rotation</div>
+            <div className="mt-[0.8vh] flex flex-col gap-[0.8vh]">
+              {rotation.slice(0, 4).map((r) => (
+                <div key={r.track_id} className="flex items-baseline gap-[1.4vh]">
+                  <span className="text-[2.3vh] font-extrabold text-fuchsia-300">{r.track_id}</span>
+                  <span className="text-[2vh] font-semibold text-white/85">{r.shear_kt} kt shear</span>
+                  <span className="text-[1.7vh] text-white/50">
+                    {r.volume_count > 1 ? `persistent · ${r.volume_count} scans` : 'new this scan'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {/* Alert list */}
         <div className="mt-[2vh] rounded-2xl border border-white/10 bg-black/30 p-[2vh] text-left">

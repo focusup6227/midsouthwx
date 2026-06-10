@@ -15,6 +15,8 @@ export type AlertPreferences = {
   // F-aggregation: when false, the send worker skips outbreak aggregation
   // for this subscriber. Subscribers toggle it via /prefs in Telegram.
   aggregate_warnings: boolean;
+  // Opt-in morning forecast digest (daily-forecast edge function). Default off.
+  daily_forecast: boolean;
 };
 
 export type QuietHours = {
@@ -35,6 +37,7 @@ export const DEFAULT_ALERT_PREFERENCES: AlertPreferences = {
   statements: false,
   skip_hazards: [],
   aggregate_warnings: true,
+  daily_forecast: false,
 };
 
 export function isHazardKind(x: unknown): x is HazardKind {
@@ -59,6 +62,7 @@ export function parseAlertPreferences(raw: unknown): AlertPreferences {
     statements: o.statements === true,
     skip_hazards,
     aggregate_warnings: o.aggregate_warnings !== false,
+    daily_forecast: o.daily_forecast === true,
   };
 }
 
@@ -230,5 +234,6 @@ export function formatPrefsSummary(prefs: AlertPreferences, qh: QuietHours | nul
       ? 'Outbreak grouping: ON (3+ simultaneous warnings arrive as one message)'
       : 'Outbreak grouping: off (each warning arrives separately)',
   );
+  lines.push(prefs.daily_forecast ? 'Daily forecast: ON' : 'Daily forecast: off');
   return lines.join('\n');
 }
