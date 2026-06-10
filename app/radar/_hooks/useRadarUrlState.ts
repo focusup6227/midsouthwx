@@ -33,6 +33,7 @@ export type RadarUrlState = {
   showMping: boolean;           // F13: mPING crowdsource reports overlay
   showStormReports: boolean;    // Telegram subscriber-submitted storm reports
   showCoverage: boolean;        // Mapbox heatmap on subs-source for blind-spot scouting
+  showTrafficCams: boolean;     // TDOT SmartWay traffic cameras (ground truth)
 };
 
 const KEY_MAP = {
@@ -62,6 +63,7 @@ const KEY_MAP = {
   showMping:          'mpg',
   showStormReports:   'sr',
   showCoverage:       'cov',
+  showTrafficCams:    'cams',
 } as const satisfies Record<keyof RadarUrlState, string>;
 
 const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'zdr', 'kdp', 'rotation', 'satellite']);
@@ -86,7 +88,7 @@ export function parseRadarUrl(search: string): Partial<RadarUrlState> {
   const flags: (keyof RadarUrlState)[] = [
     'showNws', 'showSpc', 'showLsr', 'showZones', 'showSubs', 'showStormTracks', 'showArrows', 'showCap',
     'inspectorCollapsed', 'uiHidden', 'showSitePills', 'showLightning', 'showCouplets', 'showProbSevere', 'showMesh', 'showMetar', 'showMping',
-    'showStormReports', 'showCoverage',
+    'showStormReports', 'showCoverage', 'showTrafficCams',
   ];
   for (const k of flags) {
     const v = sp.get(KEY_MAP[k]);
@@ -151,6 +153,7 @@ export function useRadarUrlSync(state: RadarUrlState) {
     // Subscriber storm reports default-on; encode only when off.
     setOrDelete(KEY_MAP.showStormReports, state.showStormReports ? null : '0');
     setOrDelete(KEY_MAP.showCoverage, state.showCoverage ? '1' : null);
+    setOrDelete(KEY_MAP.showTrafficCams, state.showTrafficCams ? '1' : null);
 
     const qs = sp.toString();
     const next = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
@@ -182,5 +185,6 @@ export function useRadarUrlSync(state: RadarUrlState) {
     state.showMping,
     state.showStormReports,
     state.showCoverage,
+    state.showTrafficCams,
   ]);
 }

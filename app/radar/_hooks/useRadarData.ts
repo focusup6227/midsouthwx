@@ -54,6 +54,34 @@ export function useCapWarnings(enabled: boolean) {
   );
 }
 
+// TDOT SmartWay traffic cameras — static positions, so a slow refresh is
+// fine; the popup refreshes the snapshot image itself on its own cadence.
+export type TrafficCamProps = {
+  id: number;
+  title: string;
+  route: string | null;
+  mile_marker: string | null;
+  jurisdiction: string | null;
+  thumbnail_url: string | null;
+  video_url: string | null;
+};
+export type TrafficCamsResponse = {
+  geojson: GeoJSON.FeatureCollection<GeoJSON.Point, TrafficCamProps>;
+  count?: number;
+  error?: string;
+};
+const EMPTY_TRAFFIC_CAMS: TrafficCamsResponse = {
+  geojson: { type: 'FeatureCollection', features: [] },
+};
+export const TRAFFIC_CAMS_KEY = '/api/radar/traffic-cams';
+export function useTrafficCams(enabled: boolean) {
+  return useSWR<TrafficCamsResponse>(enabled ? TRAFFIC_CAMS_KEY : null, jsonFetcher, {
+    ...BASE_OPTS,
+    refreshInterval: 600_000,
+    fallbackData: EMPTY_TRAFFIC_CAMS,
+  });
+}
+
 export type LsrResponse = { geojson: GeoJSON.FeatureCollection; hours: number };
 const EMPTY_LSR: LsrResponse = { geojson: EMPTY_FC, hours: 6 };
 export const LSR_KEY = '/api/radar/lsr';

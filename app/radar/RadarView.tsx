@@ -45,6 +45,7 @@ import {
   useStormReports,
   useStormReportClusters,
   useProbSevere,
+  useTrafficCams,
   WARNINGS_KEY,
   STORM_REPORTS_KEY,
   STORM_REPORT_CLUSTERS_KEY,
@@ -68,11 +69,13 @@ import {
   MpingCard,
   MetarCard,
   CoupletCard,
+  TrafficCamCard,
   type SelectedLsr,
   type SelectedStormReport,
   type SelectedMping,
   type SelectedMetar,
   type SelectedCouplet,
+  type SelectedTrafficCam,
 } from './_components/SelectedEntityCards';
 import { parseRadarUrl, useRadarUrlSync } from './_hooks/useRadarUrlState';
 import { useLevel2Data } from './_hooks/useLevel2Data';
@@ -465,6 +468,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // doesn't compete with the pin layer for visual attention; the operator
   // turns it on during recruitment planning or briefing time.
   const [showCoverage, setShowCoverage] = useState(urlInitial.showCoverage ?? false);
+  // TDOT SmartWay traffic cameras — ground-truth layer, off by default.
+  const [showTrafficCams, setShowTrafficCams] = useState(urlInitial.showTrafficCams ?? false);
+  const [selectedTrafficCam, setSelectedTrafficCam] = useState<SelectedTrafficCam | null>(null);
   const subsCount = subsGeo.features?.length ?? 0;
 
   // Default the inspector closed on phones — the 304px panel would otherwise
@@ -659,6 +665,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   const [showMping, setShowMping] = useState(urlInitial.showMping ?? false);
   const mpingSwr = useMping(showMping);
   const mpingGeo = (mpingSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
+  const trafficCamsSwr = useTrafficCams(showTrafficCams);
+  const trafficCamsGeo = (trafficCamsSwr.data?.geojson ?? { type: 'FeatureCollection', features: [] }) as GeoJSON.FeatureCollection;
   // Inspector is organized into tabs (one group visible at a time) rather than a
   // long scroll of collapsible sections — far less scrolling, clearer IA:
   //   Threats → threat board + active alerts (the triage/decision surface)
@@ -723,6 +731,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     meshWindow,
     showMetar,
     showMping,
+    showTrafficCams,
   });
 
   const mapCursor = drawMode !== 'none' ? 'crosshair' : 'grab';
@@ -1837,6 +1846,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       showStormReports ? 'storm-report-pin' : null,
       showMping ? 'mping-pin' : null,
       showMetar ? 'metar-pin' : null,
+      showTrafficCams ? 'traffic-cam-pin' : null,
       showCouplets ? 'couplet-pin' : null,
       showProbSevere ? 'probsevere-fill' : null,
       'warning-fill',
@@ -1907,6 +1917,23 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           description: String(props?.description ?? ''),
           hazard: String(props?.hazard ?? 'other'),
           obtime: String(props?.obtime ?? ''),
+        });
+        return;
+      }
+    }
+    // TDOT traffic cam click — opens the live-snapshot card. Same priority
+    // band as the other small point targets.
+    if (showTrafficCams) {
+      const camHits = hitsFor('traffic-cam-pin');
+      if (camHits.length > 0) {
+        const props = camHits[0].properties as any;
+        setSelectedTrafficCam({
+          id: Number(props?.id ?? 0),
+          title: String(props?.title ?? 'Camera'),
+          route: (props?.route as string | null) ?? null,
+          mile_marker: (props?.mile_marker as string | null) ?? null,
+          thumbnail_url: (props?.thumbnail_url as string | null) ?? null,
+          video_url: (props?.video_url as string | null) ?? null,
         });
         return;
       }
@@ -3043,6 +3070,25 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 'text-halo-color': '#0b1220',
                 'text-halo-width': 1.4,
                 'text-opacity': 0.95,
+              }}
+            />
+          </Source>
+
+          {/* TDOT SmartWay traffic cameras — small cyan video glyphs along
+              the interstates. Click → live-snapshot card (ground truth under
+              a warning). Positions are static; the card refreshes the image. */}
+          <Source id="traffic-cams-source" type="geojson" data={trafficCamsGeo as any}>
+            <Layer
+              id="traffic-cam-pin"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showTrafficCams ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 2.5, 8, 4.5, 11, 6.5],
+                'circle-color': '#22d3ee',
+                'circle-stroke-color': '#0b1220',
+                'circle-stroke-width': 1.2,
+                'circle-opacity': 0.9,
               }}
             />
           </Source>
@@ -4267,6 +4313,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             metarSwr={metarSwr}
             showMetar={showMetar}
             setShowMetar={setShowMetar}
+            trafficCamCount={trafficCamsGeo.features?.length ?? 0}
+            showTrafficCams={showTrafficCams}
+            setShowTrafficCams={setShowTrafficCams}
             showZones={showZones}
             setShowZones={setShowZones}
             mapPillSites={mapPillSites}
@@ -4594,6 +4643,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         )}
         {selectedMping && <MpingCard report={selectedMping} onClose={() => setSelectedMping(null)} />}
         {selectedMetar && <MetarCard metar={selectedMetar} onClose={() => setSelectedMetar(null)} />}
+        {selectedTrafficCam && <TrafficCamCard cam={selectedTrafficCam} onClose={() => setSelectedTrafficCam(null)} />}
         {selectedCouplet && <CoupletCard couplet={selectedCouplet} onClose={() => setSelectedCouplet(null)} />}
 
         {/* NEXRAD site pills — one per radar location in the current view.

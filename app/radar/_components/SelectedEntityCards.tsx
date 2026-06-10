@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import StormReportPopupActions from './StormReportPopupActions';
 
@@ -52,6 +53,15 @@ export type SelectedMetar = {
   altim: number | null;
   wxString: string | null;
   rawOb: string | null;
+};
+
+export type SelectedTrafficCam = {
+  id: number;
+  title: string;
+  route: string | null;
+  mile_marker: string | null;
+  thumbnail_url: string | null;
+  video_url: string | null;
 };
 
 export type SelectedCouplet = {
@@ -367,6 +377,64 @@ export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet
       >
         Alert from this rotation →
       </a>
+    </div>
+  );
+}
+
+// TDOT SmartWay camera card: live snapshot that re-fetches every 30 s while
+// open (tnsnapshots.com serves a continuously updated PNG per camera — the
+// cache-bust param forces the refresh). Ground truth two clicks from a
+// warning polygon.
+export function TrafficCamCard({ cam, onClose }: { cam: SelectedTrafficCam; onClose: () => void }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  const src = cam.thumbnail_url ? `${cam.thumbnail_url}?t=${tick}` : null;
+
+  return (
+    <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[340px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
+            TDOT SmartWay camera
+          </div>
+          <div className="text-[12px] font-semibold text-wx-fg mt-0.5 truncate">{cam.title}</div>
+          {cam.route ? (
+            <div className="text-[10.5px] font-mono text-wx-mute mt-0.5">
+              {cam.route}{cam.mile_marker ? ` @ MM ${cam.mile_marker}` : ''}
+            </div>
+          ) : null}
+        </div>
+        <CloseButton onClose={onClose} />
+      </div>
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt={`Live snapshot: ${cam.title}`}
+          className="w-full rounded-lg border border-wx-line bg-wx-ink"
+          style={{ aspectRatio: '16 / 9', objectFit: 'cover' }}
+        />
+      ) : (
+        <div className="rounded-lg border border-dashed border-wx-line p-4 text-center text-[11px] text-wx-mute">
+          No snapshot available for this camera.
+        </div>
+      )}
+      <div className="flex items-center justify-between text-[10px] text-wx-mute">
+        <span>Refreshes every 30 s</span>
+        {cam.video_url ? (
+          <a
+            href={cam.video_url}
+            target="_blank"
+            rel="noreferrer"
+            className="text-wx-accent hover:underline"
+          >
+            Live stream (HLS) →
+          </a>
+        ) : null}
+      </div>
     </div>
   );
 }

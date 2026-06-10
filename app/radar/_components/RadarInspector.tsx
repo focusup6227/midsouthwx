@@ -246,6 +246,9 @@ export type RadarInspectorProps = {
   metarSwr: LoadingLike;
   showMetar: boolean;
   setShowMetar: Dispatch<SetStateAction<boolean>>;
+  trafficCamCount: number;
+  showTrafficCams: boolean;
+  setShowTrafficCams: Dispatch<SetStateAction<boolean>>;
   showZones: boolean;
   setShowZones: Dispatch<SetStateAction<boolean>>;
   mapPillSites: RadarSite[];
@@ -379,6 +382,9 @@ export default function RadarInspector({
   metarSwr,
   showMetar,
   setShowMetar,
+  trafficCamCount,
+  showTrafficCams,
+  setShowTrafficCams,
   showZones,
   setShowZones,
   mapPillSites,
@@ -1080,6 +1086,19 @@ export default function RadarInspector({
                   title={showMetar ? 'Hide METAR surface obs' : 'Show METAR surface obs'}
                 >
                   <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showMetar ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] text-wx-mute" title="TDOT SmartWay cameras — click a dot on the map for a live snapshot">
+                  Traffic cams (TDOT) · {trafficCamCount}
+                </span>
+                <button
+                  onClick={() => setShowTrafficCams((v) => !v)}
+                  className={`relative inline-flex h-4 w-7 items-center rounded-full transition ${showTrafficCams ? 'bg-cyan-400' : 'bg-wx-line'}`}
+                  aria-pressed={showTrafficCams}
+                  title={showTrafficCams ? 'Hide TDOT traffic cameras' : 'Show TDOT traffic cameras'}
+                >
+                  <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition ${showTrafficCams ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
                 </button>
               </div>
               <div className="flex items-center justify-between mb-2">
