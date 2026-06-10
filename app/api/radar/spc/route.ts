@@ -41,6 +41,6 @@ export async function GET() {
 
   return NextResponse.json(
     { days: (data ?? []) as SpcRow[] },
-    { headers: { 'Cache-Control': 'public, s-maxage=600, stale-while-revalidate=1800' } },
+    { headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=5400' } },
   );
 }

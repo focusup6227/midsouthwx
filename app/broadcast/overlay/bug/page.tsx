@@ -20,8 +20,19 @@ function useClock(): string {
         }).format(new Date()) + ' CT',
       );
     tick();
-    const id = setInterval(tick, 1000 * 15);
-    return () => clearInterval(id);
+    // Same visibility pattern as useBroadcastState: pause the tick while the
+    // document is hidden and repaint immediately on return so the clock never
+    // shows a stale minute. OBS browser sources always report visible, so
+    // this is a no-op on air.
+    const id = setInterval(() => {
+      if (document.visibilityState === 'visible') tick();
+    }, 1000 * 15);
+    const onVis = () => { if (document.visibilityState === 'visible') tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []);
   return now;
 }

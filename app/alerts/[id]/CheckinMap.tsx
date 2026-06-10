@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Map, { Source, Layer, type MapRef, Popup } from 'react-map-gl';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { boundsFromGeometry } from '@/lib/mapbox/geometry-utils';
 import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 import { supabaseBrowser } from '@/lib/supabase/client';
 
@@ -80,42 +81,6 @@ const POLY_LINE_PAINT: mapboxgl.LinePaint = {
   'line-color': '#fbbf24',
   'line-width': 1.5,
 };
-
-function computeBounds(
-  recipients: Recipient[],
-  polygon: GeoJSON.Polygon | GeoJSON.MultiPolygon | null,
-): mapboxgl.LngLatBoundsLike | null {
-  let minLon = Infinity;
-  let minLat = Infinity;
-  let maxLon = -Infinity;
-  let maxLat = -Infinity;
-  let any = false;
-  const include = (lon: number, lat: number) => {
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
-    any = true;
-    if (lon < minLon) minLon = lon;
-    if (lon > maxLon) maxLon = lon;
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-  };
-  for (const r of recipients) {
-    if (r.lon != null && r.lat != null) include(r.lon, r.lat);
-  }
-  if (polygon) {
-    const rings =
-      polygon.type === 'Polygon'
-        ? polygon.coordinates
-        : polygon.coordinates.flat();
-    for (const ring of rings) {
-      for (const [lon, lat] of ring as [number, number][]) include(lon, lat);
-    }
-  }
-  if (!any) return null;
-  return [
-    [minLon, minLat],
-    [maxLon, maxLat],
-  ];
-}
 
 export default function CheckinMap({
   messageId,
@@ -187,10 +152,13 @@ export default function CheckinMap({
     [polygon],
   );
 
-  const bounds = useMemo(
-    () => computeBounds(recipients, polygon),
-    [recipients, polygon],
-  );
+  const bounds = useMemo(() => {
+    const pins: [number, number][] = [];
+    for (const r of recipients) {
+      if (r.lon != null && r.lat != null) pins.push([r.lon, r.lat]);
+    }
+    return boundsFromGeometry(polygon, pins);
+  }, [recipients, polygon]);
 
   // Fit to bounds once on mount and whenever bounds change meaningfully.
   // padding=40 keeps pins off the card edge.

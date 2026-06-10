@@ -41,6 +41,8 @@ export async function GET(req: NextRequest) {
     const res = await fetch(CATALOG(win), {
       next: { revalidate: 60 },
       headers: { Accept: 'application/xml' },
+      // THREDDS occasionally hangs; a TimeoutError lands in the catch below.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       return NextResponse.json(

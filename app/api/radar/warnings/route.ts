@@ -8,6 +8,7 @@ import {
 import { classifyConcernType, classifyMdConcernType } from '@/lib/nws/concern';
 import { buildStormTracksCollection } from '@/lib/nws/storm-tracks';
 import { classifyAlertSeverity } from '@/lib/nws/display';
+import { parseFeatureCollection } from '@/lib/radar/geojson-utils';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -46,13 +47,6 @@ function corridorKmFor(hazard: string | null | undefined, severe: { isPds: boole
 
 type Geom = GeoJSON.Polygon | GeoJSON.MultiPolygon;
 
-function parseFeatureCollection(raw: unknown): GeoJSON.FeatureCollection<Geom> | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as { type?: string; features?: unknown[] };
-  if (o.type !== 'FeatureCollection' || !Array.isArray(o.features)) return null;
-  return o as GeoJSON.FeatureCollection<Geom>;
-}
-
 export async function GET() {
   const supa = supabaseServer();
 
@@ -72,8 +66,7 @@ export async function GET() {
     );
   }
 
-  const fc =
-    parseFeatureCollection(fcRaw) ?? { type: 'FeatureCollection' as const, features: [] };
+  const fc = parseFeatureCollection<Geom>(fcRaw);
   const warnings: NwsRadarAlert[] = [];
 
   for (const f of fc.features) {

@@ -12,16 +12,11 @@
 // Failure mode: empty FeatureCollection + 200 OK. mPING uptime is variable;
 // the operator's situational picture should never crash on it.
 
+import { nwsUserAgent } from '@/lib/nws/fetch-ua';
+import { MIDSOUTH_BBOX } from '@/lib/radar/aor';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-
-const MIDSOUTH_BBOX = {
-  west: -93.5,
-  south: 32.8,
-  east: -82.0,
-  north: 37.5,
-} as const;
 
 const LOOKBACK_HOURS = 3;
 
@@ -75,7 +70,7 @@ export async function GET() {
   );
   url.searchParams.set('page_size', '500');
 
-  const ua = process.env.NWS_USER_AGENT || 'midsouthwx (contact: operator@midsouthwx)';
+  const ua = nwsUserAgent();
 
   try {
     const res = await fetch(url.toString(), {

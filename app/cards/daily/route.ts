@@ -4,6 +4,7 @@
 // ?download=1 forces an attachment download.
 
 import { ImageResponse } from 'next/og';
+import { nwsUserAgent } from '@/lib/nws/fetch-ua';
 import { dailyCardElement, type DailyCardData, type DailyPeriod } from '@/lib/social/daily-card';
 import { loadCardFonts } from '@/lib/social/og-fonts';
 
@@ -13,12 +14,10 @@ const WIDTH = 1080;
 const HEIGHT = 1350;
 const DEFAULT = { lat: 35.1495, lon: -90.049, place: 'Memphis, TN' };
 
-const UA = () => process.env.NWS_USER_AGENT || 'midsouthwx (contact: operator@midsouthwx)';
-
 async function getJson(url: string): Promise<any | null> {
   try {
     const res = await fetch(url, {
-      headers: { 'User-Agent': UA(), Accept: 'application/geo+json, application/json' },
+      headers: { 'User-Agent': nwsUserAgent(), Accept: 'application/geo+json, application/json' },
       signal: AbortSignal.timeout(10_000),
     });
     return res.ok ? await res.json() : null;

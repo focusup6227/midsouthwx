@@ -12,11 +12,11 @@
 
 import { NextResponse } from 'next/server';
 import { cToF, type HourPoint, type PointForecast } from '@/lib/forecast/points';
+import { nwsUserAgent } from '@/lib/nws/fetch-ua';
 
 export const dynamic = 'force-dynamic';
 
-const UA = () => process.env.NWS_USER_AGENT || 'midsouthwx (contact: operator@midsouthwx)';
-const HDRS = () => ({ 'User-Agent': UA(), Accept: 'application/geo+json, application/json' });
+const HDRS = () => ({ 'User-Agent': nwsUserAgent(), Accept: 'application/geo+json, application/json' });
 
 const KMH_TO_KT = 0.539957;
 

@@ -7,18 +7,11 @@
 // stations CONUS-wide; we bbox-filter server-side so the client gets a
 // payload sized for Mid-South use (~120 stations).
 
+import { nwsUserAgent } from '@/lib/nws/fetch-ua';
+import { MIDSOUTH_BBOX } from '@/lib/radar/aor';
 import { NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
-
-// Same envelope used by the LSR / NWS storm reports radar queries — keep in
-// sync if the AOR ever changes.
-const MIDSOUTH_BBOX = {
-  west: -93.5,
-  south: 32.8,
-  east: -82.0,
-  north: 37.5,
-} as const;
 
 // AWC accepts a bbox via the `bbox=lat0,lon0,lat1,lon1` parameter (note the
 // lat-first ordering, opposite of GeoJSON). `hours=1` gives us the most
@@ -72,8 +65,7 @@ function trimProps(p: Record<string, unknown>): Record<string, unknown> {
 }
 
 export async function GET() {
-  const ua = process.env.NWS_USER_AGENT
-    || 'midsouthwx (contact: operator@midsouthwx)';
+  const ua = nwsUserAgent();
 
   try {
     const res = await fetch(AWC_URL, {

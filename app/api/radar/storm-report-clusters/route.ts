@@ -3,6 +3,7 @@
 // Backed by public.recent_storm_report_clusters(p_minutes); RLS-gated to
 // operators via supabaseServer.
 
+import { parseFeatureCollection } from '@/lib/radar/geojson-utils';
 import { supabaseServer } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -10,15 +11,6 @@ export const dynamic = 'force-dynamic';
 
 const DEFAULT_MINUTES = 30;
 const MAX_MINUTES = 240;
-
-type Geometry = GeoJSON.Point;
-
-function parseFC(raw: unknown): GeoJSON.FeatureCollection<Geometry> | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as { type?: string; features?: unknown[] };
-  if (o.type !== 'FeatureCollection' || !Array.isArray(o.features)) return null;
-  return o as GeoJSON.FeatureCollection<Geometry>;
-}
 
 export async function GET(req: Request) {
   const supa = supabaseServer();
@@ -36,10 +28,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const geojson = parseFC(data) ?? {
-    type: 'FeatureCollection' as const,
-    features: [],
-  };
+  const geojson = parseFeatureCollection<GeoJSON.Point>(data);
 
   return NextResponse.json(
     { geojson, minutes },

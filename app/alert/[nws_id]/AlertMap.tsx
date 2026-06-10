@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Map, { Source, Layer } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { boundsFromGeometry } from '@/lib/mapbox/geometry-utils';
 import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
 
 type Geometry =
@@ -43,29 +44,6 @@ async function fetchLwxrIndex(signal: AbortSignal): Promise<LwxrIndex | null> {
   }
 }
 
-function bounds(geom: Geometry): [[number, number], [number, number]] {
-  let minLon = Infinity;
-  let minLat = Infinity;
-  let maxLon = -Infinity;
-  let maxLat = -Infinity;
-  const visit = (lon: number, lat: number) => {
-    if (lon < minLon) minLon = lon;
-    if (lat < minLat) minLat = lat;
-    if (lon > maxLon) maxLon = lon;
-    if (lat > maxLat) maxLat = lat;
-  };
-  if (geom.type === 'Polygon') {
-    for (const ring of geom.coordinates) for (const [lon, lat] of ring) visit(lon, lat);
-  } else {
-    for (const poly of geom.coordinates)
-      for (const ring of poly) for (const [lon, lat] of ring) visit(lon, lat);
-  }
-  return [
-    [minLon, minLat],
-    [maxLon, maxLat],
-  ];
-}
-
 export default function AlertMap({
   geometry,
   fill,
@@ -80,7 +58,11 @@ export default function AlertMap({
   // wide, so this lands around zoom 8-10. Padding via -0.5 so the polygon
   // doesn't hug the viewport edge.
   const initialView = useMemo(() => {
-    const [[minLon, minLat], [maxLon, maxLat]] = bounds(geometry);
+    const b = boundsFromGeometry(geometry);
+    // Degenerate geometry (no finite coords) shouldn't happen for a stored
+    // alert polygon; fall back to a Mid-South overview rather than NaN math.
+    if (!b) return { longitude: -90, latitude: 35, zoom: 6 };
+    const [[minLon, minLat], [maxLon, maxLat]] = b;
     const span = Math.max(maxLon - minLon, (maxLat - minLat) * 1.4, 0.01);
     const zoom = Math.max(4, Math.min(11, Math.log2(360 / span) - 0.5));
     return {

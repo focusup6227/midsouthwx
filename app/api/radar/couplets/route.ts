@@ -8,6 +8,7 @@
 // public.radar_couplets_tracks_geojson(mins) RPCs which apply the time
 // window and stitch the trail in one round-trip each.
 
+import { parseFeatureCollection } from '@/lib/radar/geojson-utils';
 import { supabaseServer } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -15,22 +16,6 @@ export const dynamic = 'force-dynamic';
 
 const DEFAULT_MINUTES = 30;
 const MAX_MINUTES = 180;
-
-type PointGeo = GeoJSON.Point;
-type LineGeo = GeoJSON.LineString;
-
-function parseFC<G extends GeoJSON.Geometry>(
-  raw: unknown,
-): GeoJSON.FeatureCollection<G> {
-  if (!raw || typeof raw !== 'object') {
-    return { type: 'FeatureCollection', features: [] };
-  }
-  const o = raw as { type?: string; features?: unknown[] };
-  if (o.type !== 'FeatureCollection' || !Array.isArray(o.features)) {
-    return { type: 'FeatureCollection', features: [] };
-  }
-  return o as GeoJSON.FeatureCollection<G>;
-}
 
 export async function GET(req: Request) {
   const supa = supabaseServer();
@@ -58,8 +43,8 @@ export async function GET(req: Request) {
 
   return NextResponse.json(
     {
-      geojson: parseFC<PointGeo>(pts.data),
-      tracks: parseFC<LineGeo>(trails.data),
+      geojson: parseFeatureCollection<GeoJSON.Point>(pts.data),
+      tracks: parseFeatureCollection<GeoJSON.LineString>(trails.data),
       minutes,
     },
     {

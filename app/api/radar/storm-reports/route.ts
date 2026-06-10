@@ -3,6 +3,7 @@
 // Backed by public.telegram_storm_reports_geojson(hours); RLS gates it to
 // operators via supabaseServer.
 
+import { parseFeatureCollection } from '@/lib/radar/geojson-utils';
 import { supabaseServer } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 
@@ -10,15 +11,6 @@ export const dynamic = 'force-dynamic';
 
 const DEFAULT_HOURS = 24;
 const MAX_HOURS = 168; // 7 days
-
-type Geometry = GeoJSON.Point;
-
-function parseFeatureCollection(raw: unknown): GeoJSON.FeatureCollection<Geometry> | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as { type?: string; features?: unknown[] };
-  if (o.type !== 'FeatureCollection' || !Array.isArray(o.features)) return null;
-  return o as GeoJSON.FeatureCollection<Geometry>;
-}
 
 export async function GET(req: Request) {
   const supa = supabaseServer();
@@ -37,10 +29,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const geojson = parseFeatureCollection(data) ?? {
-    type: 'FeatureCollection' as const,
-    features: [],
-  };
+  const geojson = parseFeatureCollection<GeoJSON.Point>(data);
 
   return NextResponse.json(
     { geojson, hours },

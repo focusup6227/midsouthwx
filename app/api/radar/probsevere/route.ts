@@ -40,9 +40,20 @@ function num(v: unknown): number {
 async function fetchRetry(url: string, tries = 3): Promise<Response> {
   let last: Response | null = null;
   for (let i = 0; i < tries; i++) {
-    const res = await fetch(url, { next: { revalidate: 60 } });
-    if (res.ok) return res;
-    last = res;
+    try {
+      const res = await fetch(url, {
+        next: { revalidate: 60 },
+        // Fresh signal per attempt so one hung connection can't eat the whole
+        // retry budget.
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return res;
+      last = res;
+    } catch (err) {
+      // Timeout / network error counts as a failed attempt. Rethrow on the
+      // final try so GET's catch returns the standard empty-FC error shape.
+      if (i === tries - 1) throw err;
+    }
     if (i < tries - 1) await new Promise((r) => setTimeout(r, 300 * (i + 1)));
   }
   return last as Response;

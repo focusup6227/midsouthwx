@@ -15,6 +15,8 @@ export async function GET() {
     const res = await fetch(LATEST_XML_URL, {
       next: { revalidate: 60 },
       headers: { Accept: 'application/xml' },
+      // THREDDS occasionally hangs; a TimeoutError lands in the catch below.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
       return NextResponse.json(
