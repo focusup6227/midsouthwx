@@ -1,3 +1,5 @@
+import { defineJob } from '../../lib/harness.ts';
+import { env } from '../../lib/env.ts';
 // F9: Poll the Fly.io renderer's /couplets/scan endpoint for each Mid-South
 // NEXRAD site and persist detected gate-to-gate velocity couplets to
 // public.radar_couplets. The renderer-side detector lives in
@@ -13,9 +15,9 @@
 // ingested just refreshes the row in place. Track IDs are assigned by the
 // RPC based on a 5 km / 12 min spatial-temporal match to prior detections.
 
-import { serviceClient, json, withHealthLog } from './supabase.ts';
+import { serviceClient, json } from '../../lib/supabase.ts';
 
-declare const EdgeRuntime: { waitUntil: (p: Promise<unknown>) => void };
+import { EdgeRuntime } from '../../lib/edge-runtime.ts';
 
 // Same list as MIDSOUTH_SITES in _renderer/couplet_detect.py — kept in sync
 // manually. Both ends must agree on which sites are scannable; the renderer
@@ -143,10 +145,10 @@ async function scanOneSite(
   }
 }
 
-Deno.serve(withHealthLog('couplet-poll', async (req) => {
+export default defineJob('couplet-poll', async (req) => {
   if (req.method !== 'POST' && req.method !== 'GET') return json({ ok: false }, 405);
 
-  const cronJwt = Deno.env.get('CRON_INVOKER_JWT');
+  const cronJwt = env('CRON_INVOKER_JWT');
   if (cronJwt) {
     const auth = req.headers.get('Authorization');
     if (auth !== `Bearer ${cronJwt}`) {
@@ -154,8 +156,8 @@ Deno.serve(withHealthLog('couplet-poll', async (req) => {
     }
   }
 
-  const base = Deno.env.get('RENDERER_BASE_URL');
-  const token = Deno.env.get('RENDERER_TOKEN');
+  const base = env('RENDERER_BASE_URL');
+  const token = env('RENDERER_TOKEN');
   if (!base || !token) {
     return json({ ok: false, error: 'renderer_not_configured' }, 503);
   }
@@ -167,7 +169,7 @@ Deno.serve(withHealthLog('couplet-poll', async (req) => {
   // the Mid-South bbox. The Fly renderer is the cost driver here; outside
   // active threats there's nothing for the couplet detector to find anyway.
   // Set COUPLET_POLL_FORCE=1 to bypass the gate (manual diagnostics).
-  const force = Deno.env.get('COUPLET_POLL_FORCE') === '1';
+  const force = env('COUPLET_POLL_FORCE') === '1';
   if (!force) {
     const { data: shouldRun, error: gateErr } = await supa.rpc('couplet_poll_should_run');
     if (gateErr) {
@@ -221,4 +223,4 @@ Deno.serve(withHealthLog('couplet-poll', async (req) => {
     ...totals,
     sites_detail: results,
   });
-}));
+});

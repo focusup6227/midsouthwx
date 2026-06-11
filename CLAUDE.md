@@ -21,6 +21,9 @@ npm run db:reset     # WIPES local db + reapplies migrations + seed
 npm run fn:deploy <name>   # deploy a single Edge Function (signup | telegram-webhook | telegram-send-worker | scheduled-dispatcher | nws-poll | nws-dispatcher | lsr-poll | spc-poll | afd-poll | librewxr-poll | cap-dispatcher | health-monitor | event-recap | couplet-poll | daily-forecast)
 npm run fn:serve           # serve Edge Functions locally
 
+npm run worker:port        # re-sync worker/src/jobs/ from supabase/functions/ (see worker/README.md)
+cd worker && npm run validate   # print the worker job registry; `npm start` runs it
+
 # One-off scripts (read .env.local for SUPABASE_URL + SERVICE_ROLE_KEY)
 node scripts/set-operator-password.mjs <new-password> [email]
 node scripts/gen-icons.mjs
@@ -54,6 +57,7 @@ There is no test suite. Verify changes by exercising the dev server and the depl
   - `daily-forecast` — pg_cron-invoked daily (12:15 UTC), sends the opt-in morning forecast digest: `daily_forecast_recipients()` RPC → 0.1° location buckets → one NWS point-forecast fetch + one `messages` row (`source='forecast'`, `audience_spec={subscribers:[…]}`) per bucket → `enqueue_message_system`. Opt-in lives in `alert_preferences.daily_forecast`, toggled from the Telegram ⚙️ Alerts menu. Requires `NWS_USER_AGENT`; optional `CRON_INVOKER_JWT`.
   - `couplet-poll` (F9) — pg_cron-invoked every 1 min, POSTs to the Fly.io renderer's `/couplets/scan` per Mid-South NEXRAD site, upserts detections into `public.radar_couplets` via `radar_couplets_upsert` RPC. Track IDs (e.g. `KNQA-A`) are assigned by 5 km / 12 min spatial-temporal match to prior detections. Renders on `/radar` when **Rotation IDs** is toggled on. Requires `RENDERER_BASE_URL` + `RENDERER_TOKEN`. Renderer-side detector lives in `_renderer/couplet_detect.py`.
   - Shared helpers are duplicated under each function’s `_shared/` (`serviceClient()`, `json()`, Telegram helpers) so deploy bundles resolve `./_shared/*.ts` (parent-folder imports are omitted from the upload).
+- **Worker process** (`worker/`) — a single supervised Node service (Fly.io) running the 14 cron-invoked polling/dispatch jobs in one scheduler loop, replacing the pg_cron → `pg_net.http_post` → Edge Function hop for those jobs. Job code is ported verbatim from `supabase/functions/` by `scripts/port-edge-to-worker.mjs` (`npm run worker:port` re-syncs while both implementations coexist). Intentional divergences: `nws-poll` runs on a 30s schedule instead of the self-reinvoking follow-up poll, and `telegram-send-worker` runs as a continuous drain loop (no 1-minute floor). `telegram-webhook` and `signup` stay as Edge Functions (public HTTPS endpoints). Cutover/rollback runbook: `worker/README.md` + `worker/cutover.sql` / `worker/rollback.sql`. Runs still log to `function_runs`, so `/health` is unchanged.
 - **Audience resolution** is a single SQL function `public.resolve_audience(spec jsonb)` called from both the compose preview and the queue-insertion server action. **Never re-implement audience logic in TS** — the design guarantees preview-count = queued-count.
 - **Cron** lives in migration `..._cron.sql`. Schedules invoke Edge Functions via `pg_net.http_post` using a `cron_invoker_jwt` stored in Vault.
 

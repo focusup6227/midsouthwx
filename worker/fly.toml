@@ -1,0 +1,34 @@
+# Fly.io config for the midsouthwx worker. Deploy from the worker/ directory:
+#   fly launch --no-deploy   (first time; pick a name/org, keep this file)
+#   fly secrets set SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... \
+#     TELEGRAM_BOT_TOKEN=... NWS_USER_AGENT=... \
+#     DEEPSEEK_API_KEY=... RENDERER_BASE_URL=... RENDERER_TOKEN=... \
+#     OPERATOR_TELEGRAM_CHAT_ID=... PUBLIC_SITE_URL=... CRON_INVOKER_JWT=...
+#   fly deploy
+#
+# This is a singleton: exactly one machine, never zero, never two. The DB-side
+# claim RPCs (FOR UPDATE SKIP LOCKED) make a brief two-instance overlap during
+# deploys safe, but there is no reason to run more than one.
+app = "midsouthwx-worker"
+primary_region = "atl"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "20s"
+  method = "GET"
+  path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
