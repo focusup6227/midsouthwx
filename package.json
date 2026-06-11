@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit && npm --prefix worker run typecheck",
     "worker:port": "node scripts/port-edge-to-worker.mjs",
     "db:reset": "supabase db reset",
+    "test:db": "bash scripts/test-db.sh",
     "db:push": "supabase db push",
     "db:diff": "supabase db diff",
     "fn:deploy": "supabase functions deploy",

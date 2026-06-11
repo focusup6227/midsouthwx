@@ -29,7 +29,7 @@ node scripts/set-operator-password.mjs <new-password> [email]
 node scripts/gen-icons.mjs
 ```
 
-There is no test suite. Verify changes by exercising the dev server and the deployed Edge Functions directly.
+The SQL that decides who gets alerted is tested: `npm run test:db` runs the pgTAP suite in `supabase/tests/database/` (covers `resolve_audience`, `enqueue_message_system`, `claim_outbound_batch`) against a scratch database — it applies **all** migrations to a vanilla Postgres 16 + PostGIS + pgTAP server using the platform shims in `supabase/tests/shim/`, no Supabase image needed (set `PGTEST_ADMIN_URL` if the server isn't on the local socket). Add a test here whenever you touch audience resolution or the queue RPCs. There are no TS/UI tests; verify app changes by exercising the dev server and the deployed Edge Functions directly.
 
 ## Architecture
 
