@@ -17,11 +17,11 @@ select plan(16);
 -- Memphis-ish coordinates. sub1 active w/ location, sub2 paused, sub3 active
 -- without any location, sub4 unsubscribed, sub5 active far away (Nashville).
 insert into public.subscribers (id, display_name, status, telegram_chat_id, location) values
-  ('a0000000-0000-0000-0000-000000000001', 'Active Memphis',  'active',       101, extensions.st_setsrid(extensions.st_makepoint(-90.05::double precision, 35.15::double precision), 4326)::geography),
-  ('a0000000-0000-0000-0000-000000000002', 'Paused Memphis',  'paused',       102, extensions.st_setsrid(extensions.st_makepoint(-90.06::double precision, 35.14::double precision), 4326)::geography),
+  ('a0000000-0000-0000-0000-000000000001', 'Active Memphis',  'active',       101, st_setsrid(st_makepoint(-90.05::double precision, 35.15::double precision), 4326)::geography),
+  ('a0000000-0000-0000-0000-000000000002', 'Paused Memphis',  'paused',       102, st_setsrid(st_makepoint(-90.06::double precision, 35.14::double precision), 4326)::geography),
   ('a0000000-0000-0000-0000-000000000003', 'Active NoLoc',    'active',       103, null),
-  ('a0000000-0000-0000-0000-000000000004', 'Unsubscribed',    'unsubscribed', 104, extensions.st_setsrid(extensions.st_makepoint(-90.05::double precision, 35.15::double precision), 4326)::geography),
-  ('a0000000-0000-0000-0000-000000000005', 'Active Nashville','active',       105, extensions.st_setsrid(extensions.st_makepoint(-86.78::double precision, 36.16::double precision), 4326)::geography);
+  ('a0000000-0000-0000-0000-000000000004', 'Unsubscribed',    'unsubscribed', 104, st_setsrid(st_makepoint(-90.05::double precision, 35.15::double precision), 4326)::geography),
+  ('a0000000-0000-0000-0000-000000000005', 'Active Nashville','active',       105, st_setsrid(st_makepoint(-86.78::double precision, 36.16::double precision), 4326)::geography);
 
 insert into public.custom_groups (id, name) values
   ('b0000000-0000-0000-0000-000000000001', 'test group');
