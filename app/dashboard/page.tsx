@@ -100,21 +100,30 @@ export default async function DashboardHome({
         </div>
       ) : null}
 
+      {(pendingNws ?? 0) > 0 ? (
+        <Link
+          href="/nws"
+          className="flex items-center justify-between gap-3 rounded-lg border border-wx-accent/60 bg-wx-accent/10 px-4 py-3 text-sm font-medium text-wx-accent hover:bg-wx-accent/20"
+        >
+          <span>
+            {pendingNws} NWS alert{pendingNws === 1 ? '' : 's'} awaiting approval
+          </span>
+          <span>Review →</span>
+        </Link>
+      ) : null}
+
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Tile href="/subscribers" title="Active subscribers" value={activeSubs ?? 0} />
         <Tile href="/inbox" title="Unread replies" value={unread ?? 0} />
+        <Tile
+          href="/nws"
+          title="NWS pending"
+          value={pendingNws ?? 0}
+          hint={(pendingNws ?? 0) > 0 ? 'Awaiting approval' : 'All clear'}
+        />
         <Tile href="/groups" title="Groups" value={groupCount ?? 0} hint="Manage custom audiences" />
         <Tile href="/radar" title="Radar" value="View" hint="NEXRAD + draw alerts" />
-        <Tile href="/settings" title="Settings" value="·" hint="Bot, templates, profile" />
       </div>
-
-      <section className="card p-5 space-y-3">
-        <h2 className="font-semibold">Invite operator</h2>
-        <p className="text-sm text-wx-mute">
-          Send a Supabase invite email. After they accept, they are enrolled as an operator the same way as your account.
-        </p>
-        <InviteOperatorForm />
-      </section>
 
       <section className="card p-5">
         <div className="flex items-center justify-between mb-3">
@@ -124,16 +133,23 @@ export default async function DashboardHome({
         {recent?.length ? (
           <ul className="divide-y divide-wx-line">
             {recent.map((m) => (
-              <li key={m.id} className="py-3 flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="truncate">{m.body_md.slice(0, 80)}</div>
-                  <div className="text-xs text-wx-mute">
-                    {m.status} · {m.recipient_count} recipients
+              <li key={m.id}>
+                <Link
+                  href={`/alerts/${m.id}`}
+                  className="py-3 flex items-center justify-between gap-4 hover:bg-wx-ink/40 transition rounded-lg -mx-2 px-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate" title={m.body_md}>
+                      {m.body_md.slice(0, 120)}
+                    </div>
+                    <div className="text-xs text-wx-mute">
+                      {m.status} · {m.recipient_count} recipients
+                    </div>
                   </div>
-                </div>
-                <div className="text-xs text-wx-mute whitespace-nowrap">
-                  {new Date(m.sent_at ?? m.created_at).toLocaleString()}
-                </div>
+                  <div className="text-xs text-wx-mute whitespace-nowrap">
+                    {new Date(m.sent_at ?? m.created_at).toLocaleString()}
+                  </div>
+                </Link>
               </li>
             ))}
           </ul>
@@ -141,6 +157,16 @@ export default async function DashboardHome({
           <p className="text-wx-mute text-sm">No alerts yet. Send your first one →</p>
         )}
       </section>
+
+      <details className="card p-5">
+        <summary className="cursor-pointer font-semibold">Invite operator</summary>
+        <div className="mt-3 space-y-3">
+          <p className="text-sm text-wx-mute">
+            Send a Supabase invite email. After they accept, they are enrolled as an operator the same way as your account.
+          </p>
+          <InviteOperatorForm />
+        </div>
+      </details>
     </DashShell>
   );
 }

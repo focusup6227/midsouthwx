@@ -11,6 +11,7 @@ import NwsRefresher from './NwsRefresher';
 import RunButtons from './RunButtons';
 import NwsAlertFilters, { type NwsListFilters } from './NwsAlertFilters';
 import DashShell from '@/components/DashShell';
+import ActionForm from '@/components/ActionForm';
 import {
   NWS_SEVERITIES,
   NWS_STATUSES,
@@ -371,7 +372,12 @@ export default async function NwsPage({
 
         <div className="border border-wx-line rounded-lg p-4 space-y-3 bg-wx-bg/40">
           <h3 className="text-sm font-medium">New rule</h3>
-          <form action={createAutoRule} className="grid gap-3 sm:grid-cols-2">
+          <ActionForm
+            action={createAutoRule}
+            successMessage="Rule created"
+            resetOnSuccess
+            className="grid gap-3 sm:grid-cols-2"
+          >
             <label className="block text-sm">
               <span className="text-wx-mute">Event pattern</span>
               <input name="event_pattern" className="mt-1 w-full input" placeholder="Tornado Warning" required />
@@ -422,7 +428,7 @@ export default async function NwsPage({
                 Add rule
               </button>
             </div>
-          </form>
+          </ActionForm>
         </div>
 
         {!rules?.length ? (
@@ -446,12 +452,16 @@ export default async function NwsPage({
                     <div className="font-medium">{rule.event_pattern}</div>
                     <div className="flex flex-wrap items-center gap-4 text-sm">
                       <RuleToggle ruleId={rule.id} enabled={rule.enabled} />
-                      <form action={deleteAutoRuleAction}>
+                      <ActionForm
+                        action={deleteAutoRuleAction}
+                        successMessage="Rule deleted"
+                        confirmMessage={`Delete rule "${rule.event_pattern}"? Matching alerts will no longer auto-route.`}
+                      >
                         <input type="hidden" name="id" value={rule.id} />
                         <button type="submit" className="text-wx-danger text-sm underline">
                           Delete
                         </button>
-                      </form>
+                      </ActionForm>
                     </div>
                   </div>
                   <div className="text-xs text-wx-mute flex flex-wrap gap-3">
@@ -480,7 +490,11 @@ export default async function NwsPage({
 
                   <details className="text-sm">
                     <summary className="cursor-pointer text-wx-accent">Edit</summary>
-                    <form action={updateAutoRule} className="grid gap-3 sm:grid-cols-2 mt-3">
+                    <ActionForm
+                      action={updateAutoRule}
+                      successMessage="Rule saved"
+                      className="grid gap-3 sm:grid-cols-2 mt-3"
+                    >
                       <input type="hidden" name="rule_id" value={rule.id} />
                       <label className="block text-sm sm:col-span-2">
                         <span className="text-wx-mute">Event pattern</span>
@@ -549,7 +563,7 @@ export default async function NwsPage({
                           Save changes
                         </button>
                       </div>
-                    </form>
+                    </ActionForm>
                   </details>
                 </li>
               );

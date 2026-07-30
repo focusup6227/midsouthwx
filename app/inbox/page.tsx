@@ -2,6 +2,7 @@ import { supabaseServer } from '@/lib/supabase/server';
 import Link from 'next/link';
 import InboxRefresher from './InboxRefresher';
 import DashShell from '@/components/DashShell';
+import MarkAllReadButton from './MarkAllReadButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,8 +40,14 @@ export default async function InboxPage() {
     if (!latestByConv.has(r.conversation_id)) latestByConv.set(r.conversation_id, r);
   }
 
+  const unreadConvos = (convos ?? []).filter((c) => c.unread_count > 0).length;
+
   return (
-    <DashShell title="Inbox" width="narrow">
+    <DashShell
+      title="Inbox"
+      width="narrow"
+      actions={<MarkAllReadButton unreadConvos={unreadConvos} />}
+    >
       <InboxRefresher />
       <section className="card divide-y divide-wx-line">
         {convos?.length ? (

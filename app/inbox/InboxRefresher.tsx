@@ -24,7 +24,18 @@ export default function InboxRefresher() {
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'replies' },
-        scheduleRefresh,
+        (payload) => {
+          // Distress replies skip the debounce — during an active event the
+          // operator needs the red badge the moment it lands.
+          const row = payload.new as { is_distress?: boolean } | null;
+          if (row?.is_distress) {
+            if (timer) clearTimeout(timer);
+            timer = null;
+            router.refresh();
+          } else {
+            scheduleRefresh();
+          }
+        },
       )
       .on(
         'postgres_changes',

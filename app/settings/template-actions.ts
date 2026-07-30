@@ -33,37 +33,54 @@ function parseTemplateForm(formData: FormData) {
   };
 }
 
-export async function createTemplate(formData: FormData): Promise<void> {
-  const supa = await requireOperator();
-  const row = parseTemplateForm(formData);
-  const { error } = await supa.from('templates').insert(row);
-  if (error) throw new Error(error.message);
+type TemplateResult = { ok: true } | { error: string };
+
+function revalidateTemplateConsumers() {
   revalidatePath('/settings');
   revalidatePath('/compose');
   revalidatePath('/schedule');
 }
 
-export async function updateTemplate(formData: FormData): Promise<void> {
-  const id = String(formData.get('id') ?? '');
-  if (!z.string().uuid().safeParse(id).success) throw new Error('Invalid template id');
-
-  const supa = await requireOperator();
-  const row = parseTemplateForm(formData);
-  const { error } = await supa.from('templates').update(row).eq('id', id);
-  if (error) throw new Error(error.message);
-  revalidatePath('/settings');
-  revalidatePath('/compose');
-  revalidatePath('/schedule');
+export async function createTemplate(formData: FormData): Promise<TemplateResult> {
+  try {
+    const supa = await requireOperator();
+    const row = parseTemplateForm(formData);
+    const { error } = await supa.from('templates').insert(row);
+    if (error) return { error: error.message };
+    revalidateTemplateConsumers();
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
-export async function deleteTemplate(formData: FormData): Promise<void> {
+export async function updateTemplate(formData: FormData): Promise<TemplateResult> {
   const id = String(formData.get('id') ?? '');
-  if (!z.string().uuid().safeParse(id).success) throw new Error('Invalid template id');
+  if (!z.string().uuid().safeParse(id).success) return { error: 'Invalid template id' };
 
-  const supa = await requireOperator();
-  const { error } = await supa.from('templates').delete().eq('id', id);
-  if (error) throw new Error(error.message);
-  revalidatePath('/settings');
-  revalidatePath('/compose');
-  revalidatePath('/schedule');
+  try {
+    const supa = await requireOperator();
+    const row = parseTemplateForm(formData);
+    const { error } = await supa.from('templates').update(row).eq('id', id);
+    if (error) return { error: error.message };
+    revalidateTemplateConsumers();
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function deleteTemplate(formData: FormData): Promise<TemplateResult> {
+  const id = String(formData.get('id') ?? '');
+  if (!z.string().uuid().safeParse(id).success) return { error: 'Invalid template id' };
+
+  try {
+    const supa = await requireOperator();
+    const { error } = await supa.from('templates').delete().eq('id', id);
+    if (error) return { error: error.message };
+    revalidateTemplateConsumers();
+    return { ok: true };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
 }

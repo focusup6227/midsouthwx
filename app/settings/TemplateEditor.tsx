@@ -5,6 +5,7 @@ import {
   deleteTemplate,
   updateTemplate,
 } from './template-actions';
+import ActionForm from '@/components/ActionForm';
 
 type Template = {
   id: string;
@@ -38,7 +39,7 @@ export default function TemplateEditor({ templates }: { templates: Template[] })
                     <span className="text-xs text-wx-mute font-normal">{t.category}</span>
                   ) : null}
                 </summary>
-                <form action={updateTemplate} className="mt-3 space-y-2">
+                <ActionForm action={updateTemplate} successMessage={`Template "${t.name}" saved`} className="mt-3 space-y-2">
                   <input type="hidden" name="id" value={t.id} />
                   <input className="input" name="name" defaultValue={t.name} required />
                   <input
@@ -67,19 +68,21 @@ export default function TemplateEditor({ templates }: { templates: Template[] })
                   <div className="flex gap-2">
                     <button type="submit" className="btn-ghost text-sm">Save</button>
                   </div>
-                </form>
-                <form action={deleteTemplate} className="mt-2">
+                </ActionForm>
+                <ActionForm
+                  action={deleteTemplate}
+                  successMessage="Template deleted"
+                  confirmMessage={`Delete template "${t.name}"?`}
+                  className="mt-2"
+                >
                   <input type="hidden" name="id" value={t.id} />
                   <button
                     type="submit"
                     className="btn-ghost text-xs text-wx-danger border-wx-danger/40"
-                    onClick={(e) => {
-                      if (!confirm(`Delete template "${t.name}"?`)) e.preventDefault();
-                    }}
                   >
                     Delete
                   </button>
-                </form>
+                </ActionForm>
               </details>
             </li>
           ))}
@@ -90,7 +93,7 @@ export default function TemplateEditor({ templates }: { templates: Template[] })
 
       <details className="text-sm">
         <summary className="cursor-pointer text-wx-accent font-medium">Add template</summary>
-        <form action={createTemplate} className="mt-3 space-y-2">
+        <ActionForm action={createTemplate} successMessage="Template created" resetOnSuccess className="mt-3 space-y-2">
           <input className="input" name="name" placeholder="Template name" required />
           <input className="input" name="category" placeholder="category (optional)" />
           <textarea
@@ -110,7 +113,7 @@ export default function TemplateEditor({ templates }: { templates: Template[] })
             Variables: {'{{headline}}'}, {'{{event}}'}, {'{{area_desc}}'}, {'{{expires_at}}'}
           </p>
           <button type="submit" className="btn text-sm">Add template</button>
-        </form>
+        </ActionForm>
       </details>
     </div>
   );

@@ -11,6 +11,15 @@ function regionFilterJson(regionIds: string[]): Record<string, unknown> | null {
   return { region_ids: regionIds };
 }
 
+const RuleSchema = z.object({
+  event_pattern: z.string().min(1).max(500),
+  min_severity: z.string().max(50),
+  mode: z.enum(['auto', 'review', 'ignore']),
+  template_id: z.string(),
+  region_ids: z.array(z.string().uuid()),
+});
+type RuleFields = z.infer<typeof RuleSchema>;
+
 function parseRuleForm(formData: FormData) {
   const region_ids = formData
     .getAll('region_ids')
@@ -23,114 +32,92 @@ function parseRuleForm(formData: FormData) {
     template_id: String(formData.get('template_id') ?? '').trim(),
     region_ids,
   };
-  const Schema = z.object({
-    event_pattern: z.string().min(1).max(500),
-    min_severity: z.string().max(50),
-    mode: z.enum(['auto', 'review', 'ignore']),
-    template_id: z.string(),
-    region_ids: z.array(z.string().uuid()),
-  });
-  return Schema.safeParse(raw);
+  return RuleSchema.safeParse(raw);
 }
 
-export async function createAutoRule(formData: FormData): Promise<void> {
+type RuleActionResult = { ok: true } | { error: string };
+
+function resolveRuleFields(
+  formData: FormData,
+): { error: string } | { data: RuleFields; minSeverity: string | null; templateId: string | null } {
   const parsed = parseRuleForm(formData);
   if (!parsed.success) {
-    console.warn('[nws] createAutoRule validation failed');
-    return;
+    return { error: 'Check the rule fields — event pattern is required (max 500 chars).' };
   }
   const minSeverity = parsed.data.min_severity.length ? parsed.data.min_severity : null;
   let templateId: string | null = null;
   if (parsed.data.template_id.length) {
     const t = uuid.safeParse(parsed.data.template_id);
-    if (!t.success) {
-      console.warn('[nws] createAutoRule invalid template id');
-      return;
-    }
+    if (!t.success) return { error: 'Invalid template selection.' };
     templateId = t.data;
   }
   if (parsed.data.mode !== 'ignore' && !templateId) {
-    console.warn('[nws] createAutoRule template required for auto/review');
-    return;
+    return { error: 'Auto and review rules need a template — pick one or set mode to Ignore.' };
   }
+  return { data: parsed.data, minSeverity, templateId };
+}
+
+export async function createAutoRule(formData: FormData): Promise<RuleActionResult> {
+  const fields = resolveRuleFields(formData);
+  if ('error' in fields) return fields;
 
   const supa = supabaseServer();
   const { error } = await supa.from('auto_alert_rules').insert({
-    event_pattern: parsed.data.event_pattern,
-    min_severity: minSeverity,
-    mode: parsed.data.mode,
-    region_filter: regionFilterJson(parsed.data.region_ids),
-    template_id: templateId,
+    event_pattern: fields.data.event_pattern,
+    min_severity: fields.minSeverity,
+    mode: fields.data.mode,
+    region_filter: regionFilterJson(fields.data.region_ids),
+    template_id: fields.templateId,
     enabled: true,
   });
   if (error) {
     console.error('[nws] createAutoRule', error.message);
-    return;
+    return { error: `Could not create rule: ${error.message}` };
   }
   revalidatePath('/nws');
+  return { ok: true };
 }
 
-export async function updateAutoRule(formData: FormData): Promise<void> {
+export async function updateAutoRule(formData: FormData): Promise<RuleActionResult> {
   const idParse = uuid.safeParse(String(formData.get('rule_id') ?? ''));
-  if (!idParse.success) {
-    console.warn('[nws] updateAutoRule invalid rule id');
-    return;
-  }
+  if (!idParse.success) return { error: 'Invalid rule id.' };
 
-  const parsed = parseRuleForm(formData);
-  if (!parsed.success) {
-    console.warn('[nws] updateAutoRule validation failed');
-    return;
-  }
-  const minSeverity = parsed.data.min_severity.length ? parsed.data.min_severity : null;
-  let templateId: string | null = null;
-  if (parsed.data.template_id.length) {
-    const t = uuid.safeParse(parsed.data.template_id);
-    if (!t.success) {
-      console.warn('[nws] updateAutoRule invalid template id');
-      return;
-    }
-    templateId = t.data;
-  }
-  if (parsed.data.mode !== 'ignore' && !templateId) {
-    console.warn('[nws] updateAutoRule template required for auto/review');
-    return;
-  }
+  const fields = resolveRuleFields(formData);
+  if ('error' in fields) return fields;
 
   const supa = supabaseServer();
   const { error } = await supa
     .from('auto_alert_rules')
     .update({
-      event_pattern: parsed.data.event_pattern,
-      min_severity: minSeverity,
-      mode: parsed.data.mode,
-      region_filter: regionFilterJson(parsed.data.region_ids),
-      template_id: templateId,
+      event_pattern: fields.data.event_pattern,
+      min_severity: fields.minSeverity,
+      mode: fields.data.mode,
+      region_filter: regionFilterJson(fields.data.region_ids),
+      template_id: fields.templateId,
     })
     .eq('id', idParse.data);
 
   if (error) {
     console.error('[nws] updateAutoRule', error.message);
-    return;
+    return { error: `Could not save rule: ${error.message}` };
   }
   revalidatePath('/nws');
+  return { ok: true };
 }
 
-export async function deleteAutoRuleAction(formData: FormData): Promise<void> {
+export async function deleteAutoRuleAction(formData: FormData): Promise<RuleActionResult> {
   const idRaw = String(formData.get('id') ?? '');
   const idParse = uuid.safeParse(idRaw);
-  if (!idParse.success) {
-    console.warn('[nws] deleteAutoRule invalid id');
-    return;
-  }
+  if (!idParse.success) return { error: 'Invalid rule id.' };
 
   const supa = supabaseServer();
   const { error } = await supa.from('auto_alert_rules').delete().eq('id', idParse.data);
   if (error) {
     console.error('[nws] deleteAutoRule', error.message);
-    return;
+    return { error: `Could not delete rule: ${error.message}` };
   }
   revalidatePath('/nws');
+  return { ok: true };
 }
 
 export async function setAutoRuleEnabled(ruleId: string, enabled: boolean): Promise<void> {

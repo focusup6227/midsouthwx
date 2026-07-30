@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { approveNwsMessage, rejectNwsMessage } from './actions';
+import { toast } from '@/components/toast';
 
 type Props = {
   messageId: string;
@@ -20,14 +21,23 @@ function secondsRemaining(iso: string | null): number {
 export default function NwsApproveButtons({ messageId, autoSendAt = null }: Props) {
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<'approved' | 'rejected' | null>(null);
   const [remaining, setRemaining] = useState<number>(() => secondsRemaining(autoSendAt));
   const autoFiredRef = useRef(false);
 
-  function run(fn: typeof approveNwsMessage) {
+  function run(fn: typeof approveNwsMessage, outcome: 'approved' | 'rejected') {
     setErr(null);
+    // Disarm the auto-send countdown — a manual action supersedes it.
+    autoFiredRef.current = true;
     startTransition(async () => {
       const res = await fn(messageId);
-      if ('error' in res && res.error) setErr(res.error);
+      if ('error' in res && res.error) {
+        setErr(res.error);
+        toast.error(res.error);
+      } else {
+        setDone(outcome);
+        toast.success(outcome === 'approved' ? 'Alert approved & queued' : 'Alert rejected');
+      }
     });
   }
 
@@ -50,14 +60,35 @@ export default function NwsApproveButtons({ messageId, autoSendAt = null }: Prop
         clearInterval(id);
         startTransition(async () => {
           const res = await approveNwsMessage(messageId);
-          if ('error' in res && res.error) setErr(res.error);
+          if ('error' in res && res.error) {
+            setErr(res.error);
+            toast.error(res.error);
+          } else {
+            setDone('approved');
+            toast.success('Alert auto-sent');
+          }
         });
       }
     }, 500);
     return () => clearInterval(id);
   }, [autoSendAt, messageId, startTransition]);
 
-  const countdownActive = !!autoSendAt && remaining > 0;
+  const countdownActive = !!autoSendAt && remaining > 0 && !done;
+
+  if (done) {
+    return (
+      <div
+        className={`rounded border px-2.5 py-1.5 text-sm font-semibold ${
+          done === 'approved'
+            ? 'border-wx-ok/50 bg-wx-ok/10 text-wx-ok'
+            : 'border-wx-line bg-wx-ink text-wx-mute'
+        }`}
+        role="status"
+      >
+        {done === 'approved' ? '✓ Approved & queued' : 'Rejected'}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-2">
@@ -75,15 +106,15 @@ export default function NwsApproveButtons({ messageId, autoSendAt = null }: Prop
           type="button"
           className="btn"
           disabled={pending}
-          onClick={() => run(approveNwsMessage)}
+          onClick={() => run(approveNwsMessage, 'approved')}
         >
-          {countdownActive ? 'Send now' : 'Approve & queue'}
+          {pending ? 'Working…' : countdownActive ? 'Send now' : 'Approve & queue'}
         </button>
         <button
           type="button"
           className="btn-ghost text-wx-danger border border-wx-danger/40"
           disabled={pending}
-          onClick={() => run(rejectNwsMessage)}
+          onClick={() => run(rejectNwsMessage, 'rejected')}
         >
           Reject
         </button>

@@ -11,6 +11,10 @@ import MobileNavOverlay from './MobileNavOverlay';
 import MobileNavMenu from './MobileNavMenu';
 import OpsStatusBadges from './OpsStatusBadges';
 import NavLinks from './NavLinks';
+import MoreMenu from './MoreMenu';
+import CommandPalette from './CommandPalette';
+import Toaster from './Toaster';
+import { PRIMARY_NAV, SECONDARY_NAV } from './nav-data';
 
 type Props = {
   title?: string;
@@ -46,37 +50,14 @@ export default async function DashShell({
 }: Props) {
   const field = await isFieldMode();
 
-  type NavLink = { href: string; label: string; extra?: ReactNode };
-  const primary: NavLink[] = [
-    { href: '/compose', label: 'Compose' },
-    { href: '/inbox', label: 'Inbox' },
-    { href: '/schedule', label: 'Schedule' },
-    { href: '/nws', label: 'NWS' },
-    { href: '/radar', label: 'Radar' },
-    { href: '/briefing', label: 'Briefing' },
-    { href: '/forecast/workflow', label: 'Forecast' },
-    { href: '/broadcast', label: 'Broadcast' },
-    { href: '/map', label: 'Map' },
-  ];
-
-  const secondary: NavLink[] = [
-    { href: '/subscribers', label: 'Subscribers' },
-    { href: '/groups', label: 'Groups' },
-    { href: '/regions', label: 'Regions' },
-    { href: '/alerts', label: 'Alerts' },
-    { href: '/reports', label: 'Reports' },
-    { href: '/forecast/skill', label: 'Forecast skill' },
-    { href: '/analytics/warnings', label: 'Verification' },
-    { href: '/checkins', label: 'Check-ins' },
-    { href: '/log', label: 'Log' },
-    { href: '/health', label: 'Health' },
-    { href: '/settings', label: 'Settings' },
-  ];
+  const primary = PRIMARY_NAV;
+  const secondary = SECONDARY_NAV;
 
   return (
     <>
       <SevereAlertAudio />
       <StormReportAudio />
+      <Toaster />
       {mobileCompact ? (
         <>
           <MobileNavOverlay primary={primary} secondary={secondary} field={field} />
@@ -99,23 +80,9 @@ export default async function DashShell({
           <div className="ml-auto flex items-center gap-2">
             <OpsStatusBadges />
             <HealthIndicator />
+            <CommandPalette />
             <NotificationPermissionButton />
-            <details className="relative hidden md:block">
-              <summary className="cursor-pointer list-none px-2.5 py-1 text-sm text-wx-mute hover:text-wx-fg">
-                More ▾
-              </summary>
-              <div className="absolute right-0 mt-1 w-44 rounded-lg border border-wx-line bg-wx-card py-1 shadow-lg">
-                {secondary.map((l) => (
-                  <Link
-                    key={l.href}
-                    href={l.href}
-                    className="block px-3 py-1.5 text-sm text-wx-fg hover:bg-wx-ink"
-                  >
-                    {l.label}
-                  </Link>
-                ))}
-              </div>
-            </details>
+            <MoreMenu links={secondary} />
             <FieldModeToggle active={field} />
             <MobileNavMenu links={[...primary, ...secondary]} />
           </div>

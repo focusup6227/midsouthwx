@@ -5,6 +5,18 @@ import { previewAudience, sendAndRedirect, draftWithAI, type AudienceSpecT, type
 import { sendTestAlertAndRedirect } from './test-actions';
 import { uploadComposeMedia } from './media-actions';
 import { templateHasVariables, TEMPLATE_VARIABLES } from '@/lib/templates/fill';
+import { toast } from '@/components/toast';
+
+// Unsent work survives a tab close / crash. Content only — audience ids can
+// go stale between sessions, so they're deliberately not persisted.
+const DRAFT_KEY = 'compose-draft-v1';
+type SavedDraft = {
+  body: string;
+  quickReplies: { label: string; data: string }[];
+  checkinMode: boolean;
+  templateId: string;
+  savedAt: number;
+};
 
 type Template = {
   id: string;
@@ -79,8 +91,44 @@ export default function ComposeForm({
   const [mediaUploading, setMediaUploading] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
+  const [savedDraft, setSavedDraft] = useState<SavedDraft | null>(null);
+  const [counting, setCounting] = useState(false);
+  const previewSeq = useRef(0);
 
   const showTemplateVars = useMemo(() => templateHasVariables(body), [body]);
+
+  // Offer to restore an unsent draft — but never when /compose was launched
+  // with content from radar/NWS, which takes priority.
+  const launchedExternally = Boolean(initialBody || initialGeometry || initialHazard || initialNwsId);
+  useEffect(() => {
+    if (launchedExternally) return;
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw) as SavedDraft;
+      if (d && typeof d.body === 'string' && d.body.trim()) setSavedDraft(d);
+    } catch {
+      /* corrupted draft — ignore */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced draft autosave.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        if (body.trim()) {
+          const d: SavedDraft = { body, quickReplies, checkinMode, templateId, savedAt: Date.now() };
+          localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+        } else {
+          localStorage.removeItem(DRAFT_KEY);
+        }
+      } catch {
+        /* storage full/unavailable — autosave is best-effort */
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [body, quickReplies, checkinMode, templateId]);
 
   useEffect(() => {
     if (initialGeometry) {
@@ -169,34 +217,63 @@ export default function ComposeForm({
     setPreviewCount(null);
   };
 
-  const onPreview = () => {
-    setError(null);
-    startTransition(async () => {
+  const bodyReady = body.trim().length > 0;
+  const audienceReady = kind === 'all' || (kind === 'geometry' ? !!geometry : ids.size > 0);
+  const audienceSummary =
+    kind === 'all'
+      ? 'All active subscribers'
+      : kind === 'geometry'
+        ? geometry
+          ? 'Radar area'
+          : 'No radar area selected'
+        : ids.size > 0
+          ? `${ids.size} ${ids.size === 1 ? kind.slice(0, -1) : kind}`
+          : `No ${kind} selected`;
+
+  // Live recipient count: recompute (debounced) whenever the audience
+  // changes instead of making the operator click "Preview audience" after
+  // every checkbox. Sequence guard drops stale responses.
+  useEffect(() => {
+    if (!audienceReady) {
+      setPreviewCount(null);
+      setCounting(false);
+      return;
+    }
+    const seq = ++previewSeq.current;
+    setCounting(true);
+    const t = setTimeout(async () => {
       try {
         const n = await previewAudience(buildSpec());
-        setPreviewCount(n);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        if (previewSeq.current === seq) setPreviewCount(n);
+      } catch {
+        if (previewSeq.current === seq) setPreviewCount(null);
+      } finally {
+        if (previewSeq.current === seq) setCounting(false);
       }
-    });
-  };
+    }, 400);
+    return () => clearTimeout(t);
+    // buildSpec reads only kind/ids/geometry, all in the dep list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, ids, geometry, audienceReady]);
 
   const onSend = () => {
     setError(null);
-    if (!body.trim()) {
+    if (!bodyReady) {
       setError('Body cannot be empty');
       return;
     }
-    if (kind !== 'all' && kind !== 'geometry' && ids.size === 0) {
-      setError('Select at least one ' + kind.slice(0, -1));
-      return;
-    }
-    if (kind === 'geometry' && !geometry) {
-      setError('No area selected from radar');
+    if (!audienceReady) {
+      setError(
+        kind === 'geometry' ? 'No area selected from radar' : 'Select at least one ' + kind.slice(0, -1),
+      );
       return;
     }
     startTransition(async () => {
       try {
+        // The alert is on its way — the draft did its job.
+        try {
+          localStorage.removeItem(DRAFT_KEY);
+        } catch {}
         await sendAndRedirect({
           body_md: body,
           audience_spec: buildSpec(),
@@ -212,7 +289,9 @@ export default function ComposeForm({
           nws_id: initialNwsId ?? undefined,
         });
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        toast.error(msg);
       }
     });
   };
@@ -240,6 +319,41 @@ export default function ComposeForm({
 
   return (
     <div className="space-y-5">
+      {savedDraft && !body.trim() ? (
+        <div className="card flex flex-wrap items-center justify-between gap-3 border-wx-accent/40 p-3 text-sm">
+          <span>
+            Unsent draft from {new Date(savedDraft.savedAt).toLocaleString()} —{' '}
+            <span className="text-wx-mute">“{savedDraft.body.slice(0, 60)}{savedDraft.body.length > 60 ? '…' : ''}”</span>
+          </span>
+          <span className="flex gap-2">
+            <button
+              type="button"
+              className="btn-ghost text-xs"
+              onClick={() => {
+                setBody(savedDraft.body);
+                setQuickReplies(savedDraft.quickReplies ?? []);
+                setCheckinMode(Boolean(savedDraft.checkinMode));
+                setTemplateId(savedDraft.templateId ?? '');
+                setSavedDraft(null);
+              }}
+            >
+              Restore
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs text-wx-mute"
+              onClick={() => {
+                try {
+                  localStorage.removeItem(DRAFT_KEY);
+                } catch {}
+                setSavedDraft(null);
+              }}
+            >
+              Discard
+            </button>
+          </span>
+        </div>
+      ) : null}
       <section className="card p-5 space-y-3">
         <label className="block text-xs uppercase tracking-wide text-wx-mute">Template</label>
         {autoTemplateNote ? (
@@ -351,10 +465,17 @@ export default function ComposeForm({
                     const fd = new FormData();
                     fd.set('file', file);
                     const res = await uploadComposeMedia(fd);
-                    if (res.ok) setMedia({ url: res.url, type: res.type });
-                    else setMediaError(res.error);
+                    if (res.ok) {
+                      setMedia({ url: res.url, type: res.type });
+                      toast.success(`Attachment ready (${res.type})`);
+                    } else {
+                      setMediaError(res.error);
+                      toast.error(res.error);
+                    }
                   } catch (err) {
-                    setMediaError(err instanceof Error ? err.message : String(err));
+                    const msg = err instanceof Error ? err.message : String(err);
+                    setMediaError(msg);
+                    toast.error(msg);
                   } finally {
                     setMediaUploading(false);
                     if (mediaInputRef.current) mediaInputRef.current.value = '';
@@ -522,49 +643,78 @@ export default function ComposeForm({
           </>
         )}
 
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            type="button"
-            className="btn-ghost"
-            onClick={onPreview}
-            disabled={pending}
-          >
-            Preview audience
-          </button>
-          {previewCount !== null && (
-            <span className="text-sm">
-              <strong>{previewCount}</strong> recipient{previewCount === 1 ? '' : 's'}
-            </span>
-          )}
-        </div>
       </section>
 
-      {error && (
-        <div className="card p-3 border-wx-danger text-wx-danger text-sm">{error}</div>
-      )}
-
-      <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          className="btn-ghost"
-          disabled={pending || !body.trim()}
-          onClick={() => {
-            setError(null);
-            startTransition(async () => {
-              try {
-                await sendTestAlertAndRedirect({ body_md: body, media });
-              } catch (e) {
-                setError(e instanceof Error ? e.message : String(e));
+      {/* Sticky action bar: readiness + live recipient count + send, always
+          visible — no more scrolling past four sections to find the button. */}
+      <div className="sticky bottom-0 z-20 -mx-3 border-t border-wx-line bg-wx-ink/95 px-3 py-3 backdrop-blur sm:mx-0 sm:rounded-xl sm:border">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span
+              className={`rounded-full border px-2 py-0.5 ${
+                bodyReady ? 'border-wx-ok/50 text-wx-ok' : 'border-wx-danger/50 text-wx-danger'
+              }`}
+            >
+              {bodyReady ? '✓ Body' : 'Body empty'}
+            </span>
+            <span
+              className={`rounded-full border px-2 py-0.5 ${
+                audienceReady ? 'border-wx-ok/50 text-wx-ok' : 'border-wx-danger/50 text-wx-danger'
+              }`}
+            >
+              {audienceReady ? `✓ ${audienceSummary}` : audienceSummary}
+            </span>
+            <span className="text-wx-mute" aria-live="polite">
+              {counting
+                ? 'counting…'
+                : previewCount !== null
+                  ? `${previewCount} recipient${previewCount === 1 ? '' : 's'}`
+                  : ''}
+            </span>
+          </div>
+          <div className="ml-auto flex gap-2">
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={pending || !bodyReady}
+              onClick={() => {
+                setError(null);
+                startTransition(async () => {
+                  try {
+                    await sendTestAlertAndRedirect({ body_md: body, media });
+                  } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    setError(msg);
+                    toast.error(msg);
+                  }
+                });
+              }}
+              title="Send to your own subscriber row only — full pipeline, no fan-out"
+            >
+              {pending ? 'Sending…' : '🧪 Test to me'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={onSend}
+              disabled={pending || !bodyReady || !audienceReady}
+              title={
+                !bodyReady
+                  ? 'Write a message body first'
+                  : !audienceReady
+                    ? 'Pick an audience first'
+                    : undefined
               }
-            });
-          }}
-          title="Send to your own subscriber row only — full pipeline, no fan-out"
-        >
-          {pending ? 'Sending…' : '🧪 Test to me'}
-        </button>
-        <button type="button" className="btn" onClick={onSend} disabled={pending}>
-          {pending ? 'Sending…' : 'Send now'}
-        </button>
+            >
+              {pending ? 'Sending…' : 'Send now'}
+            </button>
+          </div>
+        </div>
+        {error ? (
+          <p role="alert" className="mt-2 text-sm text-wx-danger">
+            {error}
+          </p>
+        ) : null}
       </div>
     </div>
   );

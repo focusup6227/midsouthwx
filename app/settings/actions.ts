@@ -18,24 +18,25 @@ export async function setPassword(formData: FormData): Promise<{ ok: true } | { 
   return { ok: true };
 }
 
-export async function updateOperator(formData: FormData) {
+export async function updateOperator(formData: FormData): Promise<{ ok: true } | { error: string }> {
   const display_name = String(formData.get('display_name') ?? '').trim() || null;
   const chatRaw = String(formData.get('telegram_chat_id') ?? '').trim();
   const telegram_chat_id = chatRaw ? Number(chatRaw) : null;
   if (chatRaw && !Number.isFinite(telegram_chat_id)) {
-    throw new Error('telegram_chat_id must be a number');
+    return { error: 'Telegram chat id must be a number' };
   }
 
   const supa = supabaseServer();
   const { data: userRes } = await supa.auth.getUser();
   const userId = userRes.user?.id;
-  if (!userId) throw new Error('not authenticated');
+  if (!userId) return { error: 'Not authenticated' };
 
   const { error } = await supa
     .from('operators')
     .update({ display_name, telegram_chat_id })
     .eq('user_id', userId);
-  if (error) throw new Error(error.message);
+  if (error) return { error: error.message };
 
   revalidatePath('/settings');
+  return { ok: true };
 }

@@ -11,15 +11,16 @@ const STATUS_COLOR: Record<string, string> = {
   unsubscribed: 'text-wx-danger',
 };
 
-export default async function SubscribersPage({
-  searchParams,
-}: {
-  searchParams: { status?: string; region?: string };
-}) {
+type Params = { status?: string; region?: string; q?: string; linked?: string };
+
+export default async function SubscribersPage({ searchParams }: { searchParams: Params }) {
   const supa = supabaseServer();
 
   const status = searchParams.status;
   const regionId = searchParams.region;
+  // Strip characters that would break the PostgREST or() filter syntax.
+  const search = (searchParams.q ?? '').replace(/[%_,()]/g, '').trim().slice(0, 64);
+  const linked = searchParams.linked === '1' ? true : searchParams.linked === '0' ? false : null;
 
   let regionInfo: { id: string; name: string } | null = null;
   let subscriberIdsForRegion: string[] | null = null;
@@ -40,6 +41,13 @@ export default async function SubscribersPage({
   if (status && ['pending', 'active', 'paused', 'unsubscribed'].includes(status)) {
     q = q.eq('status', status);
   }
+  if (search) {
+    const filters = [`display_name.ilike.%${search}%`, `telegram_username.ilike.%${search}%`];
+    if (/^\d+$/.test(search)) filters.push(`zip.like.${search}%`);
+    q = q.or(filters.join(','));
+  }
+  if (linked === true) q = q.not('telegram_chat_id', 'is', null);
+  if (linked === false) q = q.is('telegram_chat_id', null);
   if (subscriberIdsForRegion) {
     if (subscriberIdsForRegion.length === 0) {
       q = q.eq('id', '00000000-0000-0000-0000-000000000000');
@@ -49,18 +57,38 @@ export default async function SubscribersPage({
   }
   const { data: subs } = await q;
 
-  const baseParams = (next: { status?: string; region?: string }) => {
+  const baseParams = (next: Params) => {
     const params = new URLSearchParams();
     if (next.status) params.set('status', next.status);
     if (next.region) params.set('region', next.region);
+    if (next.q) params.set('q', next.q);
+    if (next.linked !== undefined && next.linked !== '') params.set('linked', next.linked);
     const qs = params.toString();
     return qs ? `/subscribers?${qs}` : '/subscribers';
   };
 
+  const current: Params = {
+    status,
+    region: regionId,
+    q: search || undefined,
+    linked: searchParams.linked,
+  };
+
   const filterLink = (val: string | undefined, label: string) => (
     <Link
-      href={baseParams({ status: val, region: regionId })}
+      href={baseParams({ ...current, status: val })}
       className={`btn-ghost text-sm ${status === val || (!status && !val) ? 'border-wx-accent text-wx-accent' : ''}`}
+    >
+      {label}
+    </Link>
+  );
+
+  const linkedLink = (val: string | undefined, label: string) => (
+    <Link
+      href={baseParams({ ...current, linked: val })}
+      className={`btn-ghost text-sm ${
+        searchParams.linked === val || (!searchParams.linked && !val) ? 'border-wx-accent text-wx-accent' : ''
+      }`}
     >
       {label}
     </Link>
@@ -81,7 +109,7 @@ export default async function SubscribersPage({
             </Link>
           </div>
           <Link
-            href={baseParams({ status })}
+            href={baseParams({ ...current, region: undefined })}
             className="text-xs text-wx-mute hover:text-wx-fg"
           >
             Clear ✕
@@ -89,12 +117,42 @@ export default async function SubscribersPage({
         </div>
       ) : null}
 
-      <div className="flex gap-2 flex-wrap">
+      <form action="/subscribers" className="flex flex-wrap items-center gap-2">
+        {status ? <input type="hidden" name="status" value={status} /> : null}
+        {regionId ? <input type="hidden" name="region" value={regionId} /> : null}
+        {searchParams.linked ? <input type="hidden" name="linked" value={searchParams.linked} /> : null}
+        <input
+          type="search"
+          name="q"
+          defaultValue={search}
+          placeholder="Search name, @username, or ZIP…"
+          className="input w-full max-w-sm"
+          aria-label="Search subscribers"
+        />
+        <button type="submit" className="btn-ghost text-sm">
+          Search
+        </button>
+        {search ? (
+          <Link href={baseParams({ ...current, q: undefined })} className="text-xs text-wx-mute hover:text-wx-fg">
+            Clear ✕
+          </Link>
+        ) : null}
+      </form>
+
+      <div className="flex flex-wrap items-center gap-2">
         {filterLink(undefined, 'All')}
         {filterLink('active', 'Active')}
         {filterLink('pending', 'Pending')}
         {filterLink('paused', 'Paused')}
         {filterLink('unsubscribed', 'Unsubscribed')}
+        <span className="mx-1 h-5 w-px bg-wx-line" aria-hidden />
+        {linkedLink(undefined, 'Any Telegram')}
+        {linkedLink('1', 'Linked')}
+        {linkedLink('0', 'Unlinked')}
+        <span className="ml-auto text-xs text-wx-mute">
+          {subs?.length ?? 0}
+          {(subs?.length ?? 0) === 500 ? '+' : ''} shown
+        </span>
       </div>
 
       <section className="card divide-y divide-wx-line">
@@ -108,6 +166,9 @@ export default async function SubscribersPage({
               <div className="min-w-0">
                 <div className="font-medium truncate flex items-center gap-2">
                   {s.display_name}
+                  {s.telegram_username ? (
+                    <span className="text-xs font-normal text-wx-mute">@{s.telegram_username}</span>
+                  ) : null}
                   {!s.location && (
                     <span
                       className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-wx-danger/40 text-wx-danger"
@@ -120,7 +181,9 @@ export default async function SubscribersPage({
                 <div className="text-xs text-wx-mute mt-0.5">
                   <span className={STATUS_COLOR[s.status] ?? ''}>{s.status}</span>
                   {' · '}
-                  {s.telegram_chat_id ? 'linked' : 'not linked'}
+                  <span className={s.telegram_chat_id ? '' : 'text-wx-danger'}>
+                    {s.telegram_chat_id ? 'linked' : 'not linked'}
+                  </span>
                   {s.zip ? ` · ZIP ${s.zip}` : ''}
                   {s.county_fips ? ` · FIPS ${s.county_fips}` : ''}
                 </div>
@@ -133,9 +196,13 @@ export default async function SubscribersPage({
         ) : (
           <div className="p-5 space-y-3">
             <p className="text-wx-mute text-sm">
-              {regionInfo ? 'No subscribers in this region.' : 'No subscribers yet.'}
+              {search
+                ? `No subscribers match “${search}”.`
+                : regionInfo
+                  ? 'No subscribers in this region.'
+                  : 'No subscribers yet.'}
             </p>
-            {!regionInfo && (
+            {!regionInfo && !search && (
               <p className="text-sm">
                 <Link href="/subscribers/invite" className="text-wx-accent">
                   Invite your first subscriber →

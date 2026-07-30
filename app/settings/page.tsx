@@ -5,6 +5,7 @@ import IntegrationEndpoints from './IntegrationEndpoints';
 import TemplateEditor from './TemplateEditor';
 import { SEVERITY_OPTIONS } from './integration-constants';
 import DashShell from '@/components/DashShell';
+import ActionForm from '@/components/ActionForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,7 @@ export default async function SettingsPage() {
     <DashShell title="Settings" width="narrow">
       <section className="card p-5 space-y-3">
         <h2 className="font-semibold">Operator profile</h2>
-        <form action={updateOperator} className="space-y-3">
+        <ActionForm action={updateOperator} successMessage="Profile saved" className="space-y-3">
           <label className="block">
             <span className="block text-xs uppercase tracking-wide text-wx-mute mb-1">
               Display name
@@ -63,7 +64,7 @@ export default async function SettingsPage() {
           <div className="flex justify-end">
             <button className="btn" type="submit">Save</button>
           </div>
-        </form>
+        </ActionForm>
       </section>
 
       <section className="card p-5 space-y-3">
