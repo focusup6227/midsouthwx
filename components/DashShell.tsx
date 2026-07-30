@@ -13,6 +13,7 @@ import OpsStatusBadges from './OpsStatusBadges';
 import NavLinks from './NavLinks';
 import MoreMenu from './MoreMenu';
 import CommandPalette from './CommandPalette';
+import MobileTabBar from './MobileTabBar';
 import Toaster from './Toaster';
 import { PRIMARY_NAV, SECONDARY_NAV } from './nav-data';
 
@@ -67,7 +68,7 @@ export default async function DashShell({
         </>
       ) : null}
       <header
-        className={`sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur ${
+        className={`sticky top-0 z-30 border-b border-wx-line bg-wx-ink/95 backdrop-blur pt-[env(safe-area-inset-top)] ${
           mobileCompact ? 'hidden tallmd:block' : ''
         }`}
       >
@@ -91,7 +92,8 @@ export default async function DashShell({
       {bare ? (
         <main className="w-full">{children}</main>
       ) : (
-      <main className={`mx-auto ${WIDTHS[width]} space-y-4 p-3 sm:space-y-6 sm:p-6`}>
+      // pb-20 clears the mobile tab bar (h-14 + safe area); desktop reverts.
+      <main className={`mx-auto ${WIDTHS[width]} space-y-4 p-3 pb-20 sm:space-y-6 sm:p-6 md:pb-6`}>
         {(title || actions || backHref) && (
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
@@ -108,6 +110,9 @@ export default async function DashShell({
         {children}
       </main>
       )}
+      {/* Thumb-reach primary nav. Full-bleed pages (radar/map) keep their own
+          floating chrome instead — the bar would collide with the timeline. */}
+      {!bare && !mobileCompact ? <MobileTabBar /> : null}
     </>
   );
 }

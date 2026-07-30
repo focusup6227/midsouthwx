@@ -43,7 +43,7 @@ export default function OpsStatusBadges({ floating = false }: { floating?: boole
   if (pendingNws === 0 && distress === 0) return null;
 
   const wrap = floating
-    ? 'tallmd:hidden fixed top-3 right-[6.5rem] z-[60] flex items-center gap-1.5'
+    ? 'tallmd:hidden fixed top-[max(0.75rem,env(safe-area-inset-top))] right-[6.5rem] z-[60] flex items-center gap-1.5'
     : 'flex items-center gap-1.5';
 
   return (

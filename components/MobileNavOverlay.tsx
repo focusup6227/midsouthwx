@@ -39,7 +39,7 @@ export default function MobileNavOverlay({ primary, secondary, field }: Props) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="tallmd:hidden fixed top-3 right-14 z-[60] inline-flex items-center justify-center w-9 h-9 rounded-lg bg-wx-card/95 border border-wx-line backdrop-blur-sm shadow-lg text-wx-fg"
+        className="tallmd:hidden fixed top-[max(0.75rem,env(safe-area-inset-top))] right-14 z-[60] inline-flex items-center justify-center w-9 h-9 rounded-lg bg-wx-card/95 border border-wx-line backdrop-blur-sm shadow-lg text-wx-fg"
         aria-label="Open menu"
         aria-expanded={open}
       >

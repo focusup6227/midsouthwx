@@ -27,6 +27,9 @@ export const viewport: Viewport = {
   themeColor: '#0b1220',
   width: 'device-width',
   initialScale: 1,
+  // Extend into the notch/home-indicator areas in standalone PWA mode;
+  // components pad with env(safe-area-inset-*) where it matters.
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

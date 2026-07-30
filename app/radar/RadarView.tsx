@@ -4162,7 +4162,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         {/* Products rail (left). Narrower + tighter padding on phones so the
             draw toolbar to its right has room to breathe on a 375px viewport. */}
         {!uiHidden && (
-          <div className="products-rail absolute top-3 left-3 md:top-4 md:left-4 w-[52px] md:w-[68px] bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl p-1 md:p-1.5 flex flex-col gap-0.5 z-20">
+          <div className="products-rail absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 md:top-4 md:left-4 w-[52px] md:w-[68px] bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl p-1 md:p-1.5 flex flex-col gap-0.5 z-20">
             {(Object.keys(PRODUCTS) as ProductKey[])
               // 'rotation' (MRMS Az-Shear) retired — dead THREDDS source. Hidden
               // from the rail; use ProbSevere + Rotation IDs for rotation.
@@ -4213,7 +4213,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             primary tools collapse into a single Tools popover (+ a compact
             "N alerts" button) so the top of the map isn't a wall of chrome. */}
         {!uiHidden && (
-          <div className="absolute top-3 left-[72px] md:top-4 md:left-[100px] flex gap-1.5 md:gap-2 items-center z-30">
+          <div className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-[72px] md:top-4 md:left-[100px] flex gap-1.5 md:gap-2 items-center z-30">
             {/* Mobile: Tools menu trigger + popover */}
             <div className="md:hidden relative">
               <button
@@ -4455,7 +4455,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
               onClick={() => setAlertsSheetOpen(false)}
             />
-            <div className="absolute bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 flex flex-col gap-2 wx-scroll md:left-auto md:right-4 md:bottom-4 md:w-[400px] md:rounded-2xl md:border">
+            <div className="absolute bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 pb-[max(1rem,env(safe-area-inset-bottom))] flex flex-col gap-2 wx-scroll md:left-auto md:right-4 md:bottom-4 md:w-[400px] md:rounded-2xl md:border">
               <button
                 onClick={() => setAlertsSheetOpen(false)}
                 className="absolute top-1.5 right-1.5 w-7 h-7 inline-flex items-center justify-center rounded-md text-wx-mute hover:text-wx-fg hover:bg-wx-ink"
@@ -4665,7 +4665,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         )}
 
         {selection && (
-          <div className="absolute bottom-2 left-2 right-2 md:bottom-4 md:left-4 md:right-auto md:w-[320px] p-4 md:p-5 bg-wx-card border border-wx-line rounded-xl z-30">
+          <div className="absolute bottom-[max(0.5rem,env(safe-area-inset-bottom))] left-2 right-2 md:bottom-4 md:left-4 md:right-auto md:w-[320px] p-4 md:p-5 bg-wx-card border border-wx-line rounded-xl z-30">
             <div className="flex items-start justify-between">
               <div>
                 <div className="text-[11px] uppercase tracking-[0.06em] text-wx-mute font-semibold">Audience in area</div>
@@ -4723,7 +4723,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         <button
           type="button"
           onClick={() => setUiHidden((v) => !v)}
-          className="absolute top-3 right-3 md:top-auto md:bottom-4 md:right-4 z-30 w-9 h-9 inline-flex items-center justify-center rounded-lg bg-wx-card border border-wx-line text-wx-mute hover:text-wx-fg hover:border-wx-accent"
+          className="absolute top-[max(0.75rem,env(safe-area-inset-top))] right-3 md:top-auto md:bottom-4 md:right-4 z-30 w-9 h-9 inline-flex items-center justify-center rounded-lg bg-wx-card border border-wx-line text-wx-mute hover:text-wx-fg hover:border-wx-accent"
           aria-label={uiHidden ? 'Show UI (H)' : 'Hide UI (H)'}
           title={uiHidden ? 'Show UI (H)' : 'Hide UI (H)'}
           aria-pressed={uiHidden}
@@ -4773,7 +4773,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             .filter((x): x is { idx: number; label: string } => x != null);
 
           return (
-            <div className="absolute bottom-2 md:bottom-4 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[min(880px,calc(100%-380px))] md:min-w-[520px] z-30">
+            <div className="absolute bottom-[max(0.5rem,env(safe-area-inset-bottom))] md:bottom-4 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[min(880px,calc(100%-380px))] md:min-w-[520px] z-30">
               <div className="bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl px-2.5 md:px-4 py-1.5 md:py-3.5 flex items-center gap-2 md:gap-3.5">
                 <div className="flex items-center gap-1">
                   <button
@@ -4926,7 +4926,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         })()}
 
         {!useLibreWxR && !(useLevel2 && selectedSite) && (
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30">
+          <div className="absolute bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-30">
             <div className="bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl px-4 py-2 text-[11px] text-wx-mute">
               Live frame · {frameTimeLabel}
             </div>
@@ -5141,8 +5141,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                     title={`${site.code} · ${site.name}, ${site.state}`}
                     className={`relative inline-flex items-center whitespace-nowrap rounded-full font-mono font-semibold border backdrop-blur-sm transition ${
                       isActive
-                        ? 'bg-wx-accent text-black border-wx-accent scale-105 px-2.5 py-1 text-[11px] shadow-lg'
-                        : 'bg-wx-card border-wx-line text-wx-mute hover:text-wx-fg hover:border-wx-accent px-2 py-0.5 text-[10px]'
+                        ? 'bg-wx-accent text-black border-wx-accent scale-105 px-2.5 py-1.5 md:py-1 text-[11px] shadow-lg'
+                        : 'bg-wx-card border-wx-line text-wx-mute hover:text-wx-fg hover:border-wx-accent px-2 py-1.5 md:py-0.5 text-[10px]'
                     }`}
                   >
                     {sitePillLabel(site, viewState.zoom)}

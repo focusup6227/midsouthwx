@@ -11,6 +11,13 @@ body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
 .btn-ghost { background: transparent; border: 1px solid theme(colors.wx.line); color: theme(colors.wx.fg); padding: 0.5rem 1rem; border-radius: 8px; }
 .input { background: theme(colors.wx.ink); border: 1px solid theme(colors.wx.line); color: theme(colors.wx.fg); padding: 0.5rem 0.75rem; border-radius: 8px; width: 100%; }
 
+/* iOS Safari auto-zooms the whole page when a focused input's font-size is
+   under 16px. Every .input/select/textarea renders at >=16px on phones so
+   tapping a field never yanks the viewport; desktop keeps the compact size. */
+@media (max-width: 767px) {
+  .input, select.input, textarea.input, input.input { font-size: 16px; }
+}
+
 /* --- Radar page accents --------------------------------------------------- */
 @keyframes wx-pulse {
   0%   { box-shadow: 0 0 0 0   rgba(16,185,129,0.55); }

@@ -95,7 +95,7 @@ export default function Level2LoopBar({
   const loading = loopEnabled && progress != null && progress.done < progress.total;
 
   return (
-    <div className="absolute bottom-2 md:bottom-4 left-1/2 -translate-x-1/2 z-30 w-[min(560px,calc(100vw-16px))]">
+    <div className="absolute bottom-[max(0.5rem,env(safe-area-inset-bottom))] md:bottom-4 left-1/2 -translate-x-1/2 z-30 w-[min(560px,calc(100vw-16px))]">
       <div className="bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl px-3 py-2 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px]">
         <button
           type="button"

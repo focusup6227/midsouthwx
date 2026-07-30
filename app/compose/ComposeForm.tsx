@@ -646,8 +646,9 @@ export default function ComposeForm({
       </section>
 
       {/* Sticky action bar: readiness + live recipient count + send, always
-          visible — no more scrolling past four sections to find the button. */}
-      <div className="sticky bottom-0 z-20 -mx-3 border-t border-wx-line bg-wx-ink/95 px-3 py-3 backdrop-blur sm:mx-0 sm:rounded-xl sm:border">
+          visible — no more scrolling past four sections to find the button.
+          bottom-14 on mobile clears the fixed tab bar; desktop sits flush. */}
+      <div className="sticky bottom-14 z-20 -mx-3 border-t border-wx-line bg-wx-ink/95 px-3 py-3 backdrop-blur sm:mx-0 sm:rounded-xl sm:border md:bottom-0">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span
