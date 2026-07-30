@@ -132,6 +132,179 @@ export async function draftForecast(input: DraftForecastInput): Promise<DraftFor
   };
 }
 
+// ── Draft-time situation preview ─────────────────────────────────────────
+// The same forecast_context() snapshot the AI sees, trimmed for a sidebar
+// panel — so the operator reads SPC/AFD/alerts/LSRs on the form instead of
+// tab-hopping to /forecast/data. No model call, no thermo sampling: fast.
+
+export type SituationPreview = {
+  spc: { day: number; label: string | null; overlap: string[] }[];
+  afd: { wfo: string | null; issued_at: string | null; synopsis: string | null } | null;
+  alerts: { event: string; headline: string | null }[];
+  alerts_total: number;
+  lsr_total: number;
+  lsrs_by_hazard: Record<string, number>;
+  suggested: Hazard[];
+};
+
+const SEVERE_LABELS = new Set(['SLGT', 'ENH', 'MDT', 'HIGH']);
+const TOR_LABELS = new Set(['MDT', 'HIGH']);
+
+function suggestHazards(ctx: {
+  overlap1: string[];
+  alerts: { event?: string | null }[];
+  lsrHazards: string[];
+}): Hazard[] {
+  const out = new Set<Hazard>();
+  if (ctx.overlap1.some((l) => SEVERE_LABELS.has(l))) out.add('severe');
+  if (ctx.overlap1.some((l) => TOR_LABELS.has(l))) out.add('tornado');
+  for (const a of ctx.alerts) {
+    const e = (a.event ?? '').toLowerCase();
+    if (e.includes('tornado')) out.add('tornado');
+    else if (e.includes('severe')) out.add('severe');
+    else if (e.includes('flood')) out.add('flood');
+    else if (e.includes('wind')) out.add('wind');
+    else if (e.includes('heat')) out.add('heat');
+    else if (e.includes('winter') || e.includes('ice') || e.includes('snow')) out.add('winter');
+  }
+  for (const h of ctx.lsrHazards) {
+    const l = h.toLowerCase();
+    if (l.includes('tornado')) out.add('tornado');
+    else if (l.includes('hail') || l.includes('severe')) out.add('severe');
+    else if (l.includes('wind')) out.add('wind');
+    else if (l.includes('flood')) out.add('flood');
+  }
+  return [...out];
+}
+
+export async function previewForecastContext(input: {
+  area: z.infer<typeof PolygonGeoJSON>;
+}): Promise<SituationPreview> {
+  const area = PolygonGeoJSON.parse(input.area);
+  const supa = supabaseServer();
+  const { data, error } = await supa.rpc('forecast_context', {
+    p_area: area,
+    p_lookback_hours: 24,
+  });
+  if (error) throw new Error(error.message);
+  const ctx = (data ?? {}) as ForecastContext & { spc_overlap?: Record<string, string[]> };
+
+  const overlap = ctx.spc_overlap ?? {};
+  const spc = [1, 2, 3].map((day) => {
+    const row = (ctx.spc ?? []).find((s) => s.day_number === day);
+    return {
+      day,
+      label: row?.highest_label ?? null,
+      overlap: overlap[String(day)] ?? [],
+    };
+  });
+
+  const lsrsByHazard: Record<string, number> = {};
+  for (const l of ctx.lsrs ?? []) {
+    const h = l.hazard ?? 'other';
+    lsrsByHazard[h] = (lsrsByHazard[h] ?? 0) + 1;
+  }
+
+  return {
+    spc,
+    afd: ctx.afd
+      ? {
+          wfo: ctx.afd.wfo ?? null,
+          issued_at: ctx.afd.issued_at ?? null,
+          synopsis: ctx.afd.ai_summary ?? ctx.afd.synopsis ?? null,
+        }
+      : null,
+    alerts: (ctx.alerts ?? []).slice(0, 5).map((a) => ({
+      event: a.event ?? 'Alert',
+      headline: a.headline ?? null,
+    })),
+    alerts_total: (ctx.alerts ?? []).length,
+    lsr_total: (ctx.lsrs ?? []).length,
+    lsrs_by_hazard: lsrsByHazard,
+    suggested: suggestHazards({
+      overlap1: overlap['1'] ?? [],
+      alerts: ctx.alerts ?? [],
+      lsrHazards: Object.keys(lsrsByHazard),
+    }),
+  };
+}
+
+// Recent areas for one-click carry-forward — redrawing the same Mid-South
+// polygon every morning was pure friction.
+export type RecentArea = {
+  id: string;
+  title: string;
+  created_at: string;
+  area: GeoJSON.Polygon;
+};
+
+export async function recentForecastAreas(): Promise<RecentArea[]> {
+  const supa = supabaseServer();
+  const { data: rows } = await supa
+    .from('forecasts')
+    .select('id, title, created_at')
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  const out: RecentArea[] = [];
+  for (const f of rows ?? []) {
+    const { data: area } = await supa.rpc('forecast_area_geojson', { p_id: f.id });
+    if (!area) continue;
+    const g = area as GeoJSON.Polygon | GeoJSON.MultiPolygon;
+    // Stored as MultiPolygon; the form draws a single ring.
+    const poly: GeoJSON.Polygon =
+      g.type === 'MultiPolygon'
+        ? { type: 'Polygon', coordinates: g.coordinates[0] ?? [] }
+        : g;
+    if (!poly.coordinates?.length) continue;
+    out.push({ id: f.id, title: f.title, created_at: f.created_at, area: poly });
+  }
+  return out;
+}
+
+// 90-day per-hazard skill so confidence is calibrated against the operator's
+// own track record while drafting, not remembered vaguely.
+export type HazardSkill = {
+  hits: number;
+  misses: number;
+  false_alarms: number;
+  pod: number | null;
+  far: number | null;
+};
+
+export async function hazardSkillSummary(): Promise<Record<string, HazardSkill>> {
+  const supa = supabaseServer();
+  const since = new Date(Date.now() - 90 * 86400_000).toISOString();
+  const { data } = await supa
+    .from('forecasts')
+    .select('verification')
+    .not('verification', 'is', null)
+    .gte('created_at', since)
+    .limit(400);
+
+  const agg: Record<string, HazardSkill> = {};
+  const bump = (h: string, k: 'hits' | 'misses' | 'false_alarms') => {
+    agg[h] ??= { hits: 0, misses: 0, false_alarms: 0, pod: null, far: null };
+    agg[h][k]++;
+  };
+  for (const row of data ?? []) {
+    const v = row.verification as {
+      matched_hazards?: string[];
+      missed_hazards?: string[];
+      false_alarm_hazards?: string[];
+    } | null;
+    if (!v) continue;
+    for (const h of v.matched_hazards ?? []) bump(h, 'hits');
+    for (const h of v.missed_hazards ?? []) bump(h, 'misses');
+    for (const h of v.false_alarm_hazards ?? []) bump(h, 'false_alarms');
+  }
+  for (const s of Object.values(agg)) {
+    s.pod = s.hits + s.misses > 0 ? s.hits / (s.hits + s.misses) : null;
+    s.far = s.hits + s.false_alarms > 0 ? s.false_alarms / (s.hits + s.false_alarms) : null;
+  }
+  return agg;
+}
+
 // Hand-off to /compose: builds the same query-param contract /compose already
 // accepts (geo + hazard + body — see app/compose/page.tsx:14-80). We pass the
 // area as a Polygon (single outer ring) which normalizeGeometry wraps into

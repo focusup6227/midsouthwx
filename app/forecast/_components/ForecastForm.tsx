@@ -7,9 +7,19 @@ import { useRouter } from 'next/navigation';
 import Map, { Source, Layer, type MapRef, type MapMouseEvent } from 'react-map-gl';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { Sparkles, Trash2, Check, X, Wand2 } from 'lucide-react';
+import { Sparkles, Trash2, Check, X, Wand2, History } from 'lucide-react';
 import { mapboxAccessToken, mapboxStyleUrl } from '@/lib/supabase/env';
-import { saveForecast, draftForecast } from '../actions';
+import { supabaseBrowser } from '@/lib/supabase/client';
+import {
+  saveForecast,
+  draftForecast,
+  previewForecastContext,
+  recentForecastAreas,
+  hazardSkillSummary,
+  type SituationPreview,
+  type RecentArea,
+  type HazardSkill,
+} from '../actions';
 
 // Hazard catalog mirrors compose page (app/compose/page.tsx:44). When we
 // hand off to /compose later only one hazard maps to a template, but the
@@ -87,6 +97,73 @@ export default function ForecastForm({ initialArea }: Props) {
   const [aiDraft, setAiDraft] = useState<unknown | null>(null);
   const [aiSourceRefs, setAiSourceRefs] = useState<Record<string, unknown> | null>(null);
   const aiActive = aiDraft !== null;
+
+  // Draft-time context: situation snapshot + live audience reach for the
+  // drawn polygon, recent areas for carry-forward, 90-day per-hazard skill.
+  const [situation, setSituation] = useState<SituationPreview | null>(null);
+  const [situationLoading, setSituationLoading] = useState(false);
+  const [audience, setAudience] = useState<{ total: number; tn: number; ms: number; ar: number } | null>(null);
+  const [recentAreas, setRecentAreas] = useState<RecentArea[]>([]);
+  const [skill, setSkill] = useState<Record<string, HazardSkill>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    void hazardSkillSummary().then((s) => { if (!cancelled) setSkill(s); }).catch(() => {});
+    if (!initialArea) {
+      void recentForecastAreas().then((a) => { if (!cancelled) setRecentAreas(a); }).catch(() => {});
+    }
+    return () => { cancelled = true; };
+  }, [initialArea]);
+
+  // Refresh situation + audience whenever the polygon changes (debounced —
+  // Redraw → Complete cycles shouldn't stack requests).
+  useEffect(() => {
+    if (!polygon) {
+      setSituation(null);
+      setAudience(null);
+      return;
+    }
+    let cancelled = false;
+    setSituationLoading(true);
+    const t = setTimeout(async () => {
+      const supa = supabaseBrowser();
+      const [sit, aud] = await Promise.all([
+        previewForecastContext({ area: polygon }).catch(() => null),
+        supa
+          .rpc('resolve_audience_breakdown', {
+            spec: { geometry: { type: 'Polygon', coordinates: polygon.coordinates } },
+          })
+          .then(
+            (r) => (r.error ? null : (r.data as { total?: number; tn?: number; ms?: number; ar?: number })),
+            () => null,
+          ),
+      ]);
+      if (cancelled) return;
+      setSituation(sit);
+      setAudience(
+        aud
+          ? { total: Number(aud.total ?? 0), tn: Number(aud.tn ?? 0), ms: Number(aud.ms ?? 0), ar: Number(aud.ar ?? 0) }
+          : null,
+      );
+      setSituationLoading(false);
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [polygon]);
+
+  const loadArea = (a: RecentArea) => {
+    setPolygon(a.area);
+    setPoints([]);
+    setDrawing(false);
+    const ring = a.area.coordinates[0] ?? [];
+    let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+    for (const [lng, lat] of ring) {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+    mapRef.current?.getMap()?.fitBounds([[minLng, minLat], [maxLng, maxLat]], { padding: 60, duration: 500 });
+  };
 
   // Warn before the tab/window closes with unsaved work. "Dirty" = anything
   // the operator actively produced (typed text, drawn polygon, AI draft) —
@@ -308,6 +385,23 @@ export default function ForecastForm({ initialArea }: Props) {
               <div className="mt-1 text-wx-fg">
                 Click to add vertices. {points.length} placed · {points.length >= 3 ? 'ready to close' : 'need ≥3'}.
               </div>
+              {points.length === 0 && recentAreas.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  <div className="text-[10px] uppercase tracking-wider text-wx-mute">or reuse an area</div>
+                  {recentAreas.slice(0, 3).map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => loadArea(a)}
+                      className="flex w-full items-center gap-1.5 rounded-md border border-wx-line px-2 py-1 text-left text-[11px] text-wx-fg hover:border-wx-accent"
+                      title={new Date(a.created_at).toLocaleString()}
+                    >
+                      <History size={11} className="shrink-0 text-wx-mute" />
+                      <span className="truncate">{a.title}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <div className="mt-2 flex gap-1.5">
                 <button
                   type="button"
@@ -340,6 +434,17 @@ export default function ForecastForm({ initialArea }: Props) {
               <div className="mt-1 text-wx-fg">
                 Polygon · {polygon ? polygon.coordinates[0].length - 1 : 0} vertices
               </div>
+              {audience ? (
+                <div className="mt-1 text-[11px]">
+                  <span className="font-bold text-wx-accent">{audience.total}</span>{' '}
+                  <span className="text-wx-mute">
+                    subscriber{audience.total === 1 ? '' : 's'} reached
+                    {audience.total > 0 ? ` · TN ${audience.tn} · MS ${audience.ms} · AR ${audience.ar}` : ''}
+                  </span>
+                </div>
+              ) : situationLoading ? (
+                <div className="mt-1 text-[11px] text-wx-mute">counting audience…</div>
+              ) : null}
               <button
                 type="button"
                 onClick={restartDraw}
@@ -353,6 +458,83 @@ export default function ForecastForm({ initialArea }: Props) {
       </div>
 
       <div className="flex flex-col gap-3 rounded-lg border border-wx-line bg-wx-card p-4">
+        {polygon ? (
+          <div className="rounded-md border border-wx-line bg-wx-ink/50 p-2.5 text-[11.5px]">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="font-semibold uppercase tracking-wider text-[10px] text-wx-mute">
+                Situation in area
+              </span>
+              {situationLoading ? (
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-wx-accent" />
+              ) : null}
+            </div>
+            {situation ? (
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap gap-1.5">
+                  {situation.spc.map((d) => (
+                    <span
+                      key={d.day}
+                      className={`rounded border px-1.5 py-0.5 font-mono text-[10px] ${
+                        d.overlap.some((l) => ['MDT', 'HIGH'].includes(l))
+                          ? 'border-red-500/60 text-red-300'
+                          : d.overlap.some((l) => ['SLGT', 'ENH'].includes(l))
+                            ? 'border-orange-500/60 text-orange-300'
+                            : 'border-wx-line text-wx-mute'
+                      }`}
+                      title={`SPC Day ${d.day} — area overlaps: ${d.overlap.join(', ') || 'none'}`}
+                    >
+                      D{d.day} {d.overlap.length ? d.overlap[d.overlap.length - 1] : d.label ?? '—'}
+                    </span>
+                  ))}
+                  <span className="rounded border border-wx-line px-1.5 py-0.5 font-mono text-[10px] text-wx-mute">
+                    {situation.alerts_total} alert{situation.alerts_total === 1 ? '' : 's'} · {situation.lsr_total} LSR
+                  </span>
+                </div>
+                {situation.afd?.synopsis ? (
+                  <details>
+                    <summary className="cursor-pointer text-wx-mute">
+                      AFD {situation.afd.wfo ?? ''} synopsis
+                    </summary>
+                    <p className="mt-1 max-h-28 overflow-y-auto whitespace-pre-wrap text-wx-fg/85 wx-scroll">
+                      {situation.afd.synopsis}
+                    </p>
+                  </details>
+                ) : null}
+                {situation.alerts.length > 0 ? (
+                  <ul className="space-y-0.5 text-wx-fg/85">
+                    {situation.alerts.map((a, i) => (
+                      <li key={i} className="truncate" title={a.headline ?? ''}>
+                        · {a.event}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {situation.suggested.length > 0 ? (
+                  <div className="flex flex-wrap items-center gap-1.5 border-t border-wx-line pt-1.5">
+                    <span className="text-[10px] uppercase tracking-wider text-wx-mute">Suggested:</span>
+                    {situation.suggested.map((h) => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => setHazards((prev) => new Set(prev).add(h as HazardKey))}
+                        disabled={hazards.has(h as HazardKey)}
+                        className="rounded border border-wx-accent/60 px-1.5 py-0.5 text-[10px] font-semibold text-wx-accent hover:bg-wx-accent/10 disabled:border-wx-line disabled:text-wx-mute"
+                        title="Add this hazard (from SPC overlap / active alerts / recent reports)"
+                      >
+                        + {h}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : situationLoading ? (
+              <p className="text-wx-mute">Reading SPC · AFD · alerts · LSRs…</p>
+            ) : (
+              <p className="text-wx-mute">Situation data unavailable.</p>
+            )}
+          </div>
+        ) : null}
+
         <label className="flex flex-col gap-1 text-xs">
           <span className="font-semibold uppercase tracking-wider text-wx-mute">Title</span>
           <input
@@ -388,6 +570,26 @@ export default function ForecastForm({ initialArea }: Props) {
               );
             })}
           </div>
+          {(() => {
+            // 90-day track record for the selected hazards — calibrate the
+            // confidence pick against how these calls have actually verified.
+            const rows = Array.from(hazards)
+              .map((h) => ({ h, s: skill[h] }))
+              .filter((r): r is { h: HazardKey; s: HazardSkill } => Boolean(r.s));
+            if (rows.length === 0) return null;
+            return (
+              <div className="mt-0.5 font-mono text-[10px] text-wx-mute">
+                90d:{' '}
+                {rows.map(({ h, s }, i) => (
+                  <span key={h} title={`${s.hits} hits · ${s.misses} misses · ${s.false_alarms} false alarms`}>
+                    {i > 0 ? ' · ' : ''}
+                    {h} POD {s.pod != null ? Math.round(s.pod * 100) + '%' : '—'} FAR{' '}
+                    {s.far != null ? Math.round(s.far * 100) + '%' : '—'}
+                  </span>
+                ))}
+              </div>
+            );
+          })()}
         </fieldset>
 
         <label className="flex flex-col gap-1 text-xs">
