@@ -25,6 +25,8 @@ import orjson
 PYART_FIELDS = {
     "refl": "reflectivity",
     "vel": "velocity",
+    "srm": "storm_relative_velocity",         # derived: dealiased vel minus storm motion
+    "sw": "spectrum_width",                   # raw Level II moment: turbulence / TDS support
     "cc": "cross_correlation_ratio",
     "zdr": "differential_reflectivity",       # dual-pol: hail / debris / drop size
     "kdp": "specific_differential_phase",     # dual-pol: rain rate / heavy-rain cores
@@ -35,6 +37,8 @@ PYART_FIELDS = {
 COLOR_RANGES = {
     "refl": (-32.0, 95.0),   # dBZ
     "vel": (-64.0, 64.0),    # m/s
+    "srm": (-64.0, 64.0),    # m/s (storm-relative)
+    "sw": (0.0, 16.0),       # m/s spectrum width
     "cc": (0.0, 1.05),       # ρhv
     "zdr": (-4.0, 8.0),      # dB (ZDR)
     "kdp": (-1.0, 5.0),      # deg/km (KDP)
@@ -47,6 +51,8 @@ COLOR_RANGES = {
 MASK_THRESHOLDS = {
     "refl": 5.0,
     "vel": None,
+    "srm": None,
+    "sw": None,
     "cc": 0.2,
     "zdr": None,
     "kdp": None,

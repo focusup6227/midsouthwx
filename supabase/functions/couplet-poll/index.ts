@@ -44,6 +44,10 @@ type Detection = {
   shear_kt: number;
   range_km: number;
   azimuth_deg: number;
+  // TDS support sampled renderer-side; null when dual-pol was unavailable.
+  tds?: boolean | null;
+  min_cc?: number | null;
+  refl_dbz?: number | null;
 };
 
 type CoupletScanResponse = {
@@ -116,6 +120,9 @@ async function scanOneSite(
         p_volume_filename: data.volume_filename,
         p_volume_time_utc: data.volume_time_utc,
         p_scan_age_seconds: data.scan_age_seconds,
+        p_tds: d.tds ?? null,
+        p_min_cc: d.min_cc ?? null,
+        p_refl_dbz: d.refl_dbz ?? null,
       });
       if (error) {
         console.error('radar_couplets_upsert', site, error.message);

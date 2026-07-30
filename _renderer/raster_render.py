@@ -125,7 +125,23 @@ _PALETTES: dict[str, list[tuple[float, str]]] = {
         (4.0, "#f97316"),
         (5.0, "#ec4899"),   # extreme rain rate
     ],
+    # Spectrum width in m/s. Quiet flow stays dark; widths above ~8 m/s
+    # (strong turbulence / TDS support) run hot.
+    "sw": [
+        (0.0, "#111827"),
+        (2.0, "#1e3a8a"),
+        (4.0, "#0ea5e9"),
+        (6.0, "#10b981"),
+        (8.0, "#facc15"),
+        (10.0, "#f97316"),
+        (12.0, "#ef4444"),
+        (16.0, "#d946ef"),
+    ],
 }
+
+# Storm-relative velocity shares the velocity ramp — same units, same
+# inbound/outbound semantics, just motion-subtracted.
+_PALETTES["srm"] = _PALETTES["vel"]
 
 _KM_PER_DEG_LAT = 111.0
 

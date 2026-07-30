@@ -177,6 +177,11 @@ class Detection(BaseModel):
     shear_kt: float
     range_km: float
     azimuth_deg: float
+    # Tornado-debris-signature support: CC/refl sampled in a small window
+    # around the couplet. tds=None when dual-pol data was unavailable.
+    tds: bool | None = None
+    min_cc: float | None = None
+    refl_dbz: float | None = None
 
 
 class CoupletScanResponse(BaseModel):
@@ -280,6 +285,11 @@ def _scan_for_couplets(
     gate_lat = gate_lat[sort_idx]
     gate_lon = gate_lon[sort_idx]
 
+    # Dual-pol fields for the TDS check, sorted identically to vel so the
+    # detection's (ray, gate) indices line up.
+    cc = _field_sweep(radar, sweep_idx, "cross_correlation_ratio", sort_idx)
+    refl = _field_sweep(radar, sweep_idx, "reflectivity", sort_idx)
+
     n_rays, n_gates = vel.shape
     if n_rays < 2:
         return [], 0
@@ -326,11 +336,73 @@ def _scan_for_couplets(
                 "shear_kt": shear_kt,
                 "range_km": float(rng_km[j]),
                 "azimuth_deg": mid_az,
+                # Carried through clustering for the TDS window sample;
+                # stripped before the response.
+                "_ray": int(i),
+                "_gate": int(j),
             })
 
     raw_count = len(candidates)
     clustered = _cluster_detections(candidates, CLUSTER_RADIUS_KM)
+
+    # TDS check per surviving detection: a debris signature is anomalously
+    # low correlation (lofted non-meteorological scatterers) inside real
+    # precip echo, colocated with the rotation. CC < 0.80 + refl > 30 dBZ in
+    # a ±2-ray / ±3-gate window is the standard first-pass criterion.
+    for d in clustered:
+        i, j = d.pop("_ray"), d.pop("_gate")
+        stats = _tds_stats(cc, refl, i, j)
+        d.update(stats)
+    for d in candidates:
+        d.pop("_ray", None)
+        d.pop("_gate", None)
     return clustered, raw_count
+
+
+def _field_sweep(
+    radar: Any, sweep_idx: int, name: str, sort_idx: np.ndarray
+) -> np.ndarray | None:
+    """A field's sweep slice re-ordered by the same azimuth sort as vel."""
+    if name not in radar.fields:
+        return None
+    start = radar.sweep_start_ray_index["data"][sweep_idx]
+    end = radar.sweep_end_ray_index["data"][sweep_idx]
+    data = radar.fields[name]["data"][start : end + 1, :]
+    if data.shape[0] != len(sort_idx):
+        return None
+    return data[sort_idx]
+
+
+def _tds_stats(
+    cc: np.ndarray | None, refl: np.ndarray | None, ray: int, gate: int
+) -> dict[str, float | bool | None]:
+    """Sample min CC / max refl in a small window around a couplet gate."""
+
+    def _window_vals(arr: np.ndarray | None) -> np.ndarray | None:
+        if arr is None:
+            return None
+        r0, r1 = max(0, ray - 2), min(arr.shape[0], ray + 4)
+        g0, g1 = max(0, gate - 3), min(arr.shape[1], gate + 4)
+        win = arr[r0:r1, g0:g1]
+        if hasattr(win, "mask"):
+            vals = np.asarray(win[~np.ma.getmaskarray(win)])
+        else:
+            vals = np.asarray(win).ravel()
+        vals = vals[np.isfinite(vals)]
+        return vals if vals.size else None
+
+    cc_vals = _window_vals(cc)
+    refl_vals = _window_vals(refl)
+    min_cc = float(cc_vals.min()) if cc_vals is not None else None
+    refl_max = float(refl_vals.max()) if refl_vals is not None else None
+    tds: bool | None = None
+    if min_cc is not None and refl_max is not None:
+        tds = bool(min_cc < 0.80 and refl_max > 30.0)
+    return {
+        "tds": tds,
+        "min_cc": round(min_cc, 3) if min_cc is not None else None,
+        "refl_dbz": round(refl_max, 1) if refl_max is not None else None,
+    }
 
 
 def _cluster_detections(
