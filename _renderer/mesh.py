@@ -37,7 +37,7 @@ router = APIRouter()
 
 RENDERER_TOKEN = os.environ.get("RENDERER_TOKEN", "")
 
-MRMS_BASE = "https://mrms.ncep.noaa.gov/data/2D"
+MRMS_BASE = "https://mrms.ncep.noaa.gov/2D"
 
 # Mid-South service area with generous margins (west, east, south, north).
 BBOX = (-98.0, -80.0, 29.0, 40.0)
@@ -71,7 +71,8 @@ async def mesh(req: MeshRequest, authorization: str = Header(default="")) -> dic
     url = f"{MRMS_BASE}/{product}/MRMS_{product}.latest.grib2.gz"
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # follow_redirects: NOAA has moved this path before (/data/2D → /2D).
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             r = await client.get(url)
             r.raise_for_status()
             grib_bytes = gzip.decompress(r.content)
