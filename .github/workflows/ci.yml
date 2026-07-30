@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    name: Typecheck · Lint · Build
+    runs-on: ubuntu-latest
+    env:
+      # Dummy values — every page is force-dynamic, so the build never talks
+      # to Supabase; these just satisfy client-factory reads.
+      NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx next lint --max-warnings=200
+      - run: npm run build
+
+  db:
+    name: Send-pipeline SQL tests (pgTAP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Start local stack (db only)
+        run: supabase db start
+      - name: Run pgTAP tests
+        run: supabase test db
+
+  renderer:
+    name: Renderer syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m py_compile _renderer/*.py
