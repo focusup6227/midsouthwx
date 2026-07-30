@@ -1,6 +1,7 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import ServiceWorkerRegistrar from './ServiceWorkerRegistrar';
+import ErrorReporter from '@/components/ErrorReporter';
 
 export const metadata: Metadata = {
   title: 'MidSouthWX',
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <ServiceWorkerRegistrar />
+        <ErrorReporter />
       </body>
     </html>
   );

@@ -69,15 +69,24 @@ function statusFor(h: Health, expectedMin?: number): { label: string; cls: strin
 export default async function HealthPage() {
   const supa = supabaseServer();
 
-  const [healthRes, cronRes, queueRes] = await Promise.all([
+  const [healthRes, cronRes, queueRes, clientErrRes] = await Promise.all([
     supa.rpc('function_health'),
     supa.rpc('cron_jobs_listing'),
     supa.rpc('outbound_queue_depth'),
+    supa
+      .from('client_errors')
+      .select('id, message, url, occurred_at')
+      .gte('occurred_at', new Date(Date.now() - 24 * 3600 * 1000).toISOString())
+      .order('occurred_at', { ascending: false })
+      .limit(20),
   ]);
 
   const healthRows: Health[] = (healthRes.data ?? []) as Health[];
   const cronRows: Cron[] = (cronRes.data ?? []) as Cron[];
   const queueRows: QueueRow[] = (queueRes.data ?? []) as QueueRow[];
+  const clientErrors = (clientErrRes.data ?? []) as {
+    id: number; message: string; url: string | null; occurred_at: string;
+  }[];
 
   const cronByJob = new Map(cronRows.map((c) => [c.jobname, c]));
 
@@ -218,6 +227,34 @@ export default async function HealthPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="font-semibold">
+          Client errors · last 24 h
+          {clientErrors.length > 0 ? (
+            <span className="ml-2 rounded-full bg-wx-danger/20 px-2 py-0.5 text-xs font-bold text-wx-danger">
+              {clientErrors.length}
+            </span>
+          ) : null}
+        </h2>
+        {clientErrors.length === 0 ? (
+          <p className="text-sm text-wx-mute">No browser errors reported. Quiet is good.</p>
+        ) : (
+          <div className="card divide-y divide-wx-line">
+            {clientErrors.map((e) => (
+              <div key={e.id} className="flex items-baseline justify-between gap-4 p-3 text-sm">
+                <span className="min-w-0">
+                  <span className="break-words">{e.message}</span>
+                  {e.url ? <span className="ml-2 font-mono text-xs text-wx-mute">{e.url}</span> : null}
+                </span>
+                <span className="shrink-0 text-xs text-wx-mute">
+                  {new Date(e.occurred_at).toLocaleString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </DashShell>
   );

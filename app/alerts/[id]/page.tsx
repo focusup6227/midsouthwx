@@ -4,6 +4,7 @@ import NwsApproveButtons from '@/app/nws/NwsApproveButtons';
 import CheckinTally from './CheckinTally';
 import CheckinRecipients from './CheckinRecipients';
 import CheckinMap from './CheckinMap';
+import DeliveryPanel, { type FailedRow } from './DeliveryPanel';
 import DashShell from '@/components/DashShell';
 
 // Auto safety-button warnings (tornado/severe/flood) get treated as
@@ -19,14 +20,6 @@ function isAutoWxCheckin(source: string, event: string | null | undefined): bool
 }
 
 export const dynamic = 'force-dynamic';
-
-const STATUS_COLOR: Record<string, string> = {
-  pending: 'text-wx-mute',
-  sending: 'text-wx-accent',
-  sent: 'text-wx-ok',
-  failed: 'text-wx-danger',
-  skipped: 'text-wx-mute',
-};
 
 type Spec = { all?: boolean; groups?: string[]; regions?: string[]; subscribers?: string[] };
 
@@ -76,7 +69,11 @@ export default async function AlertDetail({ params }: { params: { id: string } }
     spec.subscribers?.length
       ? supa.from('subscribers').select('id, display_name').in('id', spec.subscribers)
       : Promise.resolve({ data: [] as { id: string; display_name: string }[] }),
-    supa.from('outbound_queue').select('status').eq('message_id', params.id),
+    supa
+      .from('outbound_queue')
+      .select('status, subscriber_id, last_error, subscribers(display_name, telegram_chat_id)')
+      .eq('message_id', params.id)
+      .limit(2000),
     // Pull responses unconditionally — tiny table, simpler to filter on the
     // render side via `hasCheckin` below than to thread the source check
     // into this Promise.all in two passes.
@@ -94,11 +91,28 @@ export default async function AlertDetail({ params }: { params: { id: string } }
   const tally: Record<string, number> = {};
   for (const r of queueRes.data ?? []) tally[r.status] = (tally[r.status] ?? 0) + 1;
 
+  const failedRows: FailedRow[] = (queueRes.data ?? [])
+    .filter((r) => r.status === 'failed')
+    .map((r) => {
+      const sub = Array.isArray(r.subscribers) ? r.subscribers[0] : r.subscribers;
+      return {
+        subscriberId: r.subscriber_id,
+        name: (sub as { display_name?: string } | null)?.display_name ?? 'Unknown',
+        linked: Boolean((sub as { telegram_chat_id?: number | null } | null)?.telegram_chat_id),
+        error: r.last_error,
+      };
+    });
+
   const checkinTally: Record<string, number> = {};
   for (const r of checkinRes.data ?? []) {
     const code = r.response_code ?? '(other)';
     checkinTally[code] = (checkinTally[code] ?? 0) + 1;
   }
+
+  const hasCheckin = msg.source === 'checkin' || isAutoWxCheckin(msg.source, nwsRow?.event);
+  // Sent recipients who never tapped a check-in button.
+  const respondedCount = (checkinRes.data ?? []).length;
+  const nonResponderCount = Math.max(0, (tally.sent ?? 0) - respondedCount);
 
   return (
     <DashShell title="Alert detail" backHref="/alerts" width="narrow">
@@ -176,20 +190,13 @@ export default async function AlertDetail({ params }: { params: { id: string } }
         )}
       </section>
 
-      <section className="card p-5 space-y-3">
-        <h2 className="font-semibold">Delivery</h2>
-        {Object.keys(tally).length === 0 ? (
-          <p className="text-wx-mute text-sm">No outbound rows yet.</p>
-        ) : (
-          <div className="flex flex-wrap gap-4 text-sm">
-            {Object.entries(tally).map(([status, n]) => (
-              <span key={status} className={STATUS_COLOR[status] ?? ''}>
-                {status}: <strong className="text-wx-fg">{n}</strong>
-              </span>
-            ))}
-          </div>
-        )}
-      </section>
+      <DeliveryPanel
+        messageId={msg.id}
+        tally={tally}
+        failed={failedRows}
+        nonResponderCount={nonResponderCount}
+        isCheckin={hasCheckin}
+      />
 
       {(extLogRes.data?.length ?? 0) > 0 && (
         <section className="card p-5 space-y-3">
@@ -220,7 +227,7 @@ export default async function AlertDetail({ params }: { params: { id: string } }
         </section>
       )}
 
-      {(msg.source === 'checkin' || isAutoWxCheckin(msg.source, nwsRow?.event)) && (
+      {hasCheckin && (
         <>
           <CheckinTally
             messageId={msg.id}

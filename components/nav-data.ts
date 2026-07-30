@@ -37,5 +37,6 @@ export const EXTRA_PALETTE_NAV: NavItem[] = [
   { href: '/regions/import', label: 'Import regions', keywords: 'shapefile upload' },
   { href: '/subscribers/invite', label: 'Invite subscriber', keywords: 'add person signup' },
   { href: '/broadcast/teleprompter', label: 'Teleprompter', keywords: 'script prompter' },
+  { href: '/analytics/couplets', label: 'Rotation validation', keywords: 'couplet tds hit rate far verification' },
   { href: '/forecast/templates', label: 'Forecast templates', keywords: '' },
 ];

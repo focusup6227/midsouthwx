@@ -18,6 +18,17 @@ type SavedDraft = {
   savedAt: number;
 };
 
+// Offline outbox: a send that failed on a dead cell connection is parked here
+// with its FULL audience selection. Deliberately never auto-sent — a stale
+// life-safety alert firing late is worse than none. The operator restores,
+// reviews, and re-sends explicitly once back online.
+const OUTBOX_KEY = 'compose-outbox-v1';
+type OutboxEntry = SavedDraft & {
+  kind: Kind;
+  ids: string[];
+  geometry: any;
+};
+
 type Template = {
   id: string;
   name: string;
@@ -92,8 +103,37 @@ export default function ComposeForm({
   const [mediaError, setMediaError] = useState<string | null>(null);
   const mediaInputRef = useRef<HTMLInputElement | null>(null);
   const [savedDraft, setSavedDraft] = useState<SavedDraft | null>(null);
+  const [outbox, setOutbox] = useState<OutboxEntry | null>(null);
   const [counting, setCounting] = useState(false);
   const previewSeq = useRef(0);
+
+  // Surface any offline-parked alert immediately, and nudge when the
+  // connection comes back.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(OUTBOX_KEY);
+      if (raw) {
+        const o = JSON.parse(raw) as OutboxEntry;
+        if (o && typeof o.body === 'string' && o.body.trim()) setOutbox(o);
+      }
+    } catch {}
+    const onOnline = () => {
+      try {
+        if (localStorage.getItem(OUTBOX_KEY)) {
+          toast.info('Back online — you have a queued alert in the offline outbox');
+        }
+      } catch {}
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  }, []);
+
+  const clearOutbox = () => {
+    try {
+      localStorage.removeItem(OUTBOX_KEY);
+    } catch {}
+    setOutbox(null);
+  };
 
   const showTemplateVars = useMemo(() => templateHasVariables(body), [body]);
 
@@ -270,9 +310,11 @@ export default function ComposeForm({
     }
     startTransition(async () => {
       try {
-        // The alert is on its way — the draft did its job.
+        // The alert is on its way — the draft/outbox did their job. (If the
+        // send fails offline below, the outbox is re-written.)
         try {
           localStorage.removeItem(DRAFT_KEY);
+          localStorage.removeItem(OUTBOX_KEY);
         } catch {}
         await sendAndRedirect({
           body_md: body,
@@ -290,6 +332,33 @@ export default function ComposeForm({
         });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        // Dead connection: park the whole alert (content + audience) in the
+        // offline outbox instead of losing it. Explicit re-send only.
+        const looksOffline =
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? true
+            : /failed to fetch|network|load failed|fetch failed/i.test(msg);
+        if (looksOffline) {
+          const entry: OutboxEntry = {
+            body,
+            quickReplies,
+            checkinMode,
+            templateId,
+            kind,
+            ids: [...ids],
+            geometry,
+            savedAt: Date.now(),
+          };
+          try {
+            localStorage.setItem(OUTBOX_KEY, JSON.stringify(entry));
+            setOutbox(entry);
+          } catch {}
+          const offlineMsg =
+            'No connection — the alert was saved to the offline outbox. It will NOT auto-send; review and resend when you have signal.';
+          setError(offlineMsg);
+          toast.error(offlineMsg);
+          return;
+        }
         setError(msg);
         toast.error(msg);
       }
@@ -319,6 +388,50 @@ export default function ComposeForm({
 
   return (
     <div className="space-y-5">
+      {outbox ? (() => {
+        const ageMin = Math.round((Date.now() - outbox.savedAt) / 60000);
+        const stale = ageMin >= 30;
+        return (
+          <div className={`card flex flex-wrap items-center justify-between gap-3 p-3 text-sm ${stale ? 'border-wx-danger/60' : 'border-wx-accent/60'}`}>
+            <span className="min-w-0">
+              <strong className={stale ? 'text-wx-danger' : 'text-wx-accent'}>
+                Offline outbox
+              </strong>{' '}
+              — alert queued {ageMin < 1 ? 'moments' : `${ageMin} min`} ago while offline.{' '}
+              <span className="text-wx-mute">
+                “{outbox.body.slice(0, 60)}{outbox.body.length > 60 ? '…' : ''}”
+              </span>
+              {stale ? (
+                <span className="block text-xs text-wx-danger">
+                  Over 30 minutes old — verify the situation is still current before sending.
+                </span>
+              ) : null}
+            </span>
+            <span className="flex gap-2">
+              <button
+                type="button"
+                className="btn text-xs"
+                onClick={() => {
+                  setBody(outbox.body);
+                  setQuickReplies(outbox.quickReplies ?? []);
+                  setCheckinMode(Boolean(outbox.checkinMode));
+                  setTemplateId(outbox.templateId ?? '');
+                  setKind(outbox.kind ?? 'all');
+                  setIds(new Set(outbox.ids ?? []));
+                  setGeometry(outbox.geometry ?? null);
+                  clearOutbox();
+                  toast.info('Outbox restored — review the audience count, then Send now');
+                }}
+              >
+                Restore &amp; review
+              </button>
+              <button type="button" className="btn-ghost text-xs text-wx-mute" onClick={clearOutbox}>
+                Discard
+              </button>
+            </span>
+          </div>
+        );
+      })() : null}
       {savedDraft && !body.trim() ? (
         <div className="card flex flex-wrap items-center justify-between gap-3 border-wx-accent/40 p-3 text-sm">
           <span>
