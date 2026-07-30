@@ -4,7 +4,7 @@
 
 import type * as React from 'react';
 import {
-  CloudLightning, Radio, Wind, Atom, RotateCw, Satellite, Droplets, CloudRain,
+  CloudLightning, Radio, Wind, Atom, RotateCw, Satellite, Droplets, CloudRain, Waves,
 } from 'lucide-react';
 
 // Three providers, picked per product based on which one actually publishes that
@@ -18,7 +18,7 @@ import {
 //     Composite-only; resolves the latest dataset URL through /api/radar/mrms-latest.
 //   - Fly.io Level II renderer — single-site Correlation Coefficient (ρhv) and the
 //     Hi-Res reflectivity/velocity options.
-export type ProductKey = 'composite' | 'reflectivity' | 'velocity' | 'correlation' | 'zdr' | 'kdp' | 'rotation' | 'satellite';
+export type ProductKey = 'composite' | 'reflectivity' | 'velocity' | 'sw' | 'correlation' | 'zdr' | 'kdp' | 'rotation' | 'satellite';
 
 export type ProductMeta = {
   label: string;
@@ -31,6 +31,7 @@ export const PRODUCTS: Record<ProductKey, ProductMeta> = {
   composite:    { label: 'Composite Reflectivity', short: 'CREF', modes: { composite: true,  site: false }, icon: CloudLightning },
   reflectivity: { label: 'Base Reflectivity',      short: 'BREF', modes: { composite: true,  site: true  }, icon: Radio },
   velocity:     { label: 'Storm-Rel Velocity',     short: 'SRV',  modes: { composite: false, site: true  }, icon: Wind },
+  sw:           { label: 'Spectrum Width',         short: 'SW',   modes: { composite: false, site: true  }, icon: Waves },
   correlation:  { label: 'Correlation Coeff',      short: 'CC',   modes: { composite: false, site: true  }, icon: Atom },
   zdr:          { label: 'Differential Refl (ZDR)', short: 'ZDR', modes: { composite: false, site: true  }, icon: Droplets },
   kdp:          { label: 'Specific Diff Phase (KDP)', short: 'KDP', modes: { composite: false, site: true }, icon: CloudRain },

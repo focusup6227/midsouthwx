@@ -66,9 +66,12 @@ const KEY_MAP = {
   showTrafficCams:    'cams',
 } as const satisfies Record<keyof RadarUrlState, string>;
 
-const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'correlation', 'zdr', 'kdp', 'rotation', 'satellite']);
+const VALID_PRODUCTS = new Set(['composite', 'reflectivity', 'velocity', 'sw', 'correlation', 'zdr', 'kdp', 'rotation', 'satellite']);
 const VALID_SAT_SOURCES = new Set([
   'lwxr', 'goes-cleanir', 'goes-geocolor', 'goes-visible', 'goes-airmass', 'goes-dust', 'goes-firetemp',
+  // IEM water-vapor bands were missing here — a shared /radar?sat=iem-wv-mid
+  // link silently fell back to LibreWxR.
+  'iem-wv-upper', 'iem-wv-mid', 'iem-wv-lower',
 ]);
 
 export function parseRadarUrl(search: string): Partial<RadarUrlState> {

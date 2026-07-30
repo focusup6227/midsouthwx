@@ -60,13 +60,13 @@ export const CC_STOPS: [number, string][] = [
 // ZDR is rendered via the PNG path (useL2Png), so these GeoJSON paint helpers
 // never actually run for 'zdr' — the union just keeps the types aligned with
 // level2Product. (ZDR falls through to the CC stops here but is unreachable.)
-export function buildFillColorExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp', _vmin: number, _vmax: number): any {
+export function buildFillColorExpr(product: 'refl' | 'vel' | 'srm' | 'sw' | 'cc' | 'zdr' | 'kdp', _vmin: number, _vmax: number): any {
   // The renderer stores raw values in properties.v (dBZ for refl, m/s for vel,
   // dimensionless for cc), so the interpolate stops compare against raw scale
   // too. (Earlier code normalized to a 0–255 byte scale to match the original
   // PNG renderer's quantization — no longer applicable now that we use
   // GeoJSON polygons with real values.)
-  const stops = product === 'refl' ? REFL_STOPS : product === 'vel' ? VEL_STOPS : CC_STOPS;
+  const stops = product === 'refl' ? REFL_STOPS : product === 'vel' || product === 'srm' ? VEL_STOPS : CC_STOPS;
   const out: any[] = ['interpolate', ['linear'], ['get', 'v']];
   let lastQ = -Infinity;
   for (const [val, hex] of stops) {
@@ -78,7 +78,7 @@ export function buildFillColorExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp
   return out;
 }
 
-export function buildFillOpacityExpr(product: 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp', userOpacity: number,
+export function buildFillOpacityExpr(product: 'refl' | 'vel' | 'srm' | 'sw' | 'cc' | 'zdr' | 'kdp', userOpacity: number,
                                      _vmin: number, _vmax: number): any {
   if (product !== 'refl') return userOpacity;
   // Light rain (5 dBZ) shows at half opacity; full opacity by 20 dBZ. Below

@@ -50,10 +50,11 @@ import {
   STORM_REPORTS_KEY,
   STORM_REPORT_CLUSTERS_KEY,
 } from './_hooks/useRadarData';
-import { useSWRConfig } from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 import RadarInspector, { type InspectorTab } from './_components/RadarInspector';
 import QuickComposePanel from './_components/QuickComposePanel';
 import RecentSends from './_components/RecentSends';
+import ProductLegend from './_components/ProductLegend';
 import {
   PRODUCTS,
   GOES_SOURCES,
@@ -79,6 +80,10 @@ import {
 } from './_components/SelectedEntityCards';
 import { parseRadarUrl, useRadarUrlSync } from './_hooks/useRadarUrlState';
 import { useLevel2Data } from './_hooks/useLevel2Data';
+import { useLevel2Loop } from './_hooks/useLevel2Loop';
+import { useMultiProbe } from './_hooks/useMultiProbe';
+import Level2LoopBar, { type StormMotion } from './_components/Level2LoopBar';
+import QuadPane from './_components/QuadPane';
 import { useLwxrTimeline, type LibreWxRFrame } from './_hooks/useLwxrTimeline';
 import { MODEL_OVERLAYS, type ModelOverlayKey } from '@/lib/radar/models';
 import {
@@ -489,6 +494,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // chips collapse into a single "N alerts" button that opens a bottom sheet.
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [alertsSheetOpen, setAlertsSheetOpen] = useState(false);
+  // '?' opens a keyboard-shortcut reference card.
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [showSitePills, setShowSitePills] = useState(urlInitial.showSitePills ?? true);
   const [showLightning, setShowLightning] = useState(urlInitial.showLightning ?? false);
   // F9: NEXRAD velocity-couplet rotation IDs. Default off — these are noisy
@@ -639,17 +646,19 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     return { type: 'FeatureCollection' as const, features };
   }, [probSevereTop, probSevereTrend]);
 
-  // F10: MRMS MESH (Max Estimated Size of Hail) overlay. Translucent raster
-  // layered on top of whatever the operator's looking at — keeps the
-  // reflectivity context while showing where hail has actually fallen in
-  // the last 30/60/120 min. 30 min is the operational default.
-  // MESH (MRMS Max Estimated Size of Hail) overlay retired alongside rotation —
-  // same dead THREDDS source. Per-cell hail size now lives in the ProbSevere
-  // readout (MESH in inches). State kept (read-only) for URL back-compat; the
-  // hook is hard-gated off so it never polls the decommissioned endpoint.
-  const [showMesh] = useState(urlInitial.showMesh ?? false);
-  const [meshWindow] = useState<30 | 60 | 120>(urlInitial.meshWindow ?? 30);
-  const meshUrlPath: string | null = null;
+  // F10 (revived): MRMS MESH (Max Estimated Size of Hail) overlay. The old
+  // THREDDS WMS source died; the renderer now rasterizes NOAA's public MRMS
+  // GRIB feed (30/60/120 min windows) into a transparent PNG. Translucent
+  // raster layered on whatever the operator's looking at — reflectivity
+  // context stays legible while hail swaths show where it actually fell.
+  const [showMesh, setShowMesh] = useState(urlInitial.showMesh ?? false);
+  const [meshWindow, setMeshWindow] = useState<30 | 60 | 120>(urlInitial.meshWindow ?? 30);
+  const meshSwr = useSWR<{ image_url?: string; bounds?: { north: number; south: number; east: number; west: number }; valid_time?: string; error?: string }>(
+    showMesh ? `/api/radar/mesh?window=${meshWindow}` : null,
+    (u: string) => fetch(u).then((r) => r.json()),
+    { refreshInterval: 120_000, revalidateOnFocus: false },
+  );
+  const meshOverlay = meshSwr.data && !meshSwr.data.error && meshSwr.data.image_url ? meshSwr.data : null;
 
   // F12: METAR surface obs. Compact "station plot lite" — temp-colored pin,
   // wind arrow (rotated to direction wind is going TOWARD), and a text
@@ -682,6 +691,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // the operator has a single "data" pane and a "compare" pane.
   const [splitProduct, setSplitProduct] = useState<ProductKey | null>(null);
   const altMapRef = useRef<MapRef>(null);
+
+  // Quad view: classic warn-op 2×2 (main product + SRV + CC + ZDR), all
+  // camera-synced. Desktop-only; mutually exclusive with split view.
+  const [quadMode, setQuadMode] = useState(false);
+  const quadVelRef = useRef<MapRef>(null);
+  const quadCcRef = useRef<MapRef>(null);
+  const quadZdrRef = useRef<MapRef>(null);
 
   // Forecast model overlay. When set, renders an additional raster source on
   // top of radar tiles (below admin/labels) with its own opacity + forecast
@@ -1195,14 +1211,23 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // interactions disabled in its <Map> props so the operator can only drive
   // the camera from the left pane.
   useEffect(() => {
-    if (!splitProduct) return;
-    const m = altMapRef.current?.getMap();
-    if (!m) return;
-    m.jumpTo({
-      center: [viewState.longitude, viewState.latitude],
-      zoom: viewState.zoom,
-    });
-  }, [splitProduct, viewState.longitude, viewState.latitude, viewState.zoom]);
+    if (!splitProduct && !quadMode) return;
+    const refs = splitProduct ? [altMapRef] : [quadVelRef, quadCcRef, quadZdrRef];
+    for (const r of refs) {
+      const m = r.current?.getMap();
+      if (!m) continue;
+      m.jumpTo({
+        center: [viewState.longitude, viewState.latitude],
+        zoom: viewState.zoom,
+      });
+    }
+  }, [splitProduct, quadMode, viewState.longitude, viewState.latitude, viewState.zoom]);
+
+  // Quad needs a site; drop out if it goes away, and never combine with split.
+  useEffect(() => {
+    if (quadMode && !selectedSite) setQuadMode(false);
+    if (quadMode && splitProduct) setSplitProduct(null);
+  }, [quadMode, selectedSite, splitProduct]);
 
   // Auto-clear split when its preconditions break:
   //   - no site selected (CONUS / LibreWxR mode), or
@@ -1220,8 +1245,19 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     }
   }, [splitProduct, selectedSite, effectiveProduct]);
 
+  // Storm motion for SRM — when set, velocity requests the renderer's
+  // dealiased storm-relative product instead of raw radial velocity.
+  const [stormMotion, setStormMotion] = useState<StormMotion>(null);
+  const stormUV = useMemo(() => {
+    if (!stormMotion) return null;
+    const ms = stormMotion.speedKt * 0.514444;
+    const toward = (((stormMotion.fromDeg + 180) % 360) * Math.PI) / 180;
+    return { u: Math.round(ms * Math.sin(toward) * 10) / 10, v: Math.round(ms * Math.cos(toward) * 10) / 10 };
+  }, [stormMotion]);
+
   const level2Product =
-    effectiveProduct === 'velocity' ? 'vel'
+    effectiveProduct === 'velocity' ? (stormUV ? 'srm' : 'vel')
+    : effectiveProduct === 'sw' ? 'sw'
     : effectiveProduct === 'correlation' ? 'cc'
     : effectiveProduct === 'zdr' ? 'zdr'
     : effectiveProduct === 'kdp' ? 'kdp'
@@ -1230,6 +1266,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     effectiveProduct === 'correlation'
     || effectiveProduct === 'zdr'
     || effectiveProduct === 'kdp'
+    || effectiveProduct === 'sw'
     || (hiRes && (effectiveProduct === 'reflectivity' || effectiveProduct === 'velocity'))
   );
   // CC + ZDR always use the PNG path. A super-res dual-pol sweep produces
@@ -1237,7 +1274,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // download on cell and parse on the phone (manifests as "stuck loading").
   // PNG renders the same gates as a single ~300 KB raster, no pointer readout
   // but the operator cares about pattern (debris ball, hail/ZDR signature).
-  const useL2Png = pngFallback || effectiveProduct === 'correlation' || effectiveProduct === 'zdr' || effectiveProduct === 'kdp';
+  const useL2Png = pngFallback || effectiveProduct === 'correlation' || effectiveProduct === 'zdr' || effectiveProduct === 'kdp' || effectiveProduct === 'sw';
 
   const selectProduct = useCallback((k: ProductKey) => {
     const meta = PRODUCTS[k];
@@ -1270,7 +1307,66 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     product: level2Product,
     selectedElevation,
     usePng: useL2Png,
+    stormUV,
   });
+
+  // Hi-res time loop over the last ~45 min of archived volumes.
+  const [loopEnabled, setLoopEnabled] = useState(false);
+  const [loopFrameIdx, setLoopFrameIdx] = useState(0);
+  const [loopPlaying, setLoopPlaying] = useState(false);
+  const {
+    frames: loopFrames,
+    progress: loopProgress,
+    error: loopError,
+  } = useLevel2Loop({
+    enabled: loopEnabled && useLevel2,
+    site: selectedSite,
+    product: level2Product,
+    sweepIndex: resolvedSweepIndex,
+    composite: isComposite,
+    stormUV: level2Product === 'srm' ? stormUV : null,
+  });
+  const loopActive = loopEnabled && useLevel2 && loopFrames.length > 0;
+  const loopFrame = loopActive ? loopFrames[Math.min(loopFrameIdx, loopFrames.length - 1)] : null;
+
+  // Quad view data: PNG overlays for the three companion panes. Cached
+  // renders make these cheap after first activation; disabled entirely when
+  // quad is off.
+  const quadVel = useLevel2Data({
+    enabled: quadMode && !!selectedSite,
+    site: selectedSite,
+    product: stormUV ? 'srm' : 'vel',
+    selectedElevation,
+    usePng: true,
+    stormUV,
+  });
+  const quadCc = useLevel2Data({
+    enabled: quadMode && !!selectedSite,
+    site: selectedSite,
+    product: 'cc',
+    selectedElevation,
+    usePng: true,
+  });
+  const quadZdr = useLevel2Data({
+    enabled: quadMode && !!selectedSite,
+    site: selectedSite,
+    product: 'zdr',
+    selectedElevation,
+    usePng: true,
+  });
+
+  // Multi-product cursor probe (refl + vel + CC at once).
+  const [probeEnabled, setProbeEnabled] = useState(false);
+  const { sampleAll: probeSampleAll, ready: probeReady } = useMultiProbe({
+    enabled: probeEnabled && useLevel2,
+    site: selectedSite,
+    sweepIndex: resolvedSweepIndex,
+    composite: isComposite,
+  });
+  useEffect(() => {
+    // Start at the newest frame whenever the loop (re)builds.
+    setLoopFrameIdx((i) => Math.min(i, Math.max(0, loopFrames.length - 1)));
+  }, [loopFrames.length]);
 
   // ── Timeline frames ──────────────────────────────────────────────────
   // LibreWxR drives the timeline for two CONUS-only products: 'composite' (its
@@ -1481,11 +1577,23 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   }, [splitProduct, selectedSite, tileCacheKey]);
 
   const level2GeoJSONSource = useMemo(() => {
-    if (!useLevel2 || useL2Png || !level2GeoJSON) return null;
+    // Loop mode always paints PNG frames — suppress the geojson layer.
+    if (!useLevel2 || useL2Png || loopActive || !level2GeoJSON) return null;
     return { type: 'geojson' as const, data: level2GeoJSON };
-  }, [useLevel2, useL2Png, level2GeoJSON]);
+  }, [useLevel2, useL2Png, loopActive, level2GeoJSON]);
 
   const level2ImageSource = useMemo(() => {
+    // Loop frame takes priority over the live single-frame overlay.
+    if (loopFrame) {
+      const { north, south, east, west } = loopFrame.bounds;
+      return {
+        type: 'image' as const,
+        url: loopFrame.imageUrl,
+        coordinates: [
+          [west, north], [east, north], [east, south], [west, south],
+        ] as [number, number][],
+      };
+    }
     if (!useLevel2 || !useL2Png || !level2Overlay?.image_url) return null;
     const { north, south, east, west } = level2Overlay.bounds;
     return {
@@ -1495,7 +1603,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         [west, north], [east, north], [east, south], [west, south],
       ] as [number, number][],
     };
-  }, [useLevel2, useL2Png, level2Overlay]);
+  }, [useLevel2, useL2Png, level2Overlay, loopFrame]);
 
   // Live + Level II opacity are kept up-to-date imperatively (see the
   // useEffect just below this block), so these layer configs intentionally
@@ -1999,6 +2107,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           volume_count: Number(props?.volume_count ?? 1),
           lat: Number(lat),
           lon: Number(lon),
+          tds: props?.tds == null ? null : Boolean(props.tds),
+          track_tds: Boolean(props?.track_tds),
+          min_cc: props?.min_cc == null ? null : Number(props.min_cc),
+          refl_dbz: props?.refl_dbz == null ? null : Number(props.refl_dbz),
         });
         return;
       }
@@ -2089,6 +2201,39 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     setShowProbSevere(next);
     setShowCouplets(next);
     setShowLightning(next);
+  };
+
+  // Warn-ops presets: one click to the standard product + overlay stack for
+  // a threat type, instead of assembling it from five separate toggles.
+  const applyPreset = (p: 'tornado' | 'hail' | 'flood') => {
+    setNowcastOn(false);
+    setShowNws(true);
+    if (p === 'tornado') {
+      // Low-tilt velocity + rotation IDs + ProbTor + lightning.
+      selectProduct('velocity');
+      setSelectedElevation(0.5);
+      setHiRes(true);
+      setShowCouplets(true);
+      setShowProbSevere(true);
+      setShowLightning(true);
+      setShowMesh(false);
+    } else if (p === 'hail') {
+      // ZDR (near-zero cores = hail) + MESH swaths + ProbHail.
+      selectProduct('zdr');
+      setSelectedElevation(0.5);
+      setShowMesh(true);
+      setMeshWindow(30);
+      setShowProbSevere(true);
+      setShowCouplets(false);
+      setShowLightning(false);
+    } else {
+      // Flood: clean CONUS composite + warnings, storm-scale noise off.
+      selectProduct('composite');
+      setShowMesh(false);
+      setShowProbSevere(false);
+      setShowCouplets(false);
+      setShowLightning(false);
+    }
   };
 
   // Extract a single outer ring from a warning's GeoJSON geometry for use as
@@ -2243,19 +2388,37 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
   // 'H' toggles hide-all-UI mode. Lives in its own effect (not the LWXR
   // playback handler above) so it works in every product/mode, not only
-  // when a timeline is available.
+  // when a timeline is available. Digits 1-7 switch products (rail order),
+  // '?' opens the shortcut reference.
   useEffect(() => {
+    const hotkeyProducts = (Object.keys(PRODUCTS) as ProductKey[]).filter((k) => k !== 'rotation');
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement | null;
       const tag = tgt?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tgt?.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'h' || e.key === 'H') {
         e.preventDefault();
         setUiHidden((v) => !v);
+      } else if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+      } else if (/^[1-8]$/.test(e.key)) {
+        const k = hotkeyProducts[Number(e.key) - 1];
+        if (!k) return;
+        const meta = PRODUCTS[k];
+        const allowed = selectedSite ? meta.modes.site : meta.modes.composite;
+        // Site-only products are allowed from CONUS view too — selectProduct
+        // auto-picks the nearest site, mirroring a rail click.
+        if (allowed || meta.modes.site) {
+          e.preventDefault();
+          selectProduct(k);
+        }
       } else if (e.key === 'Escape') {
         // Esc cancels any in-progress draw or clears the active selection.
         // setState calls are no-ops when there's nothing to clear, so it's
         // safe to fire unconditionally.
+        setShortcutsOpen(false);
         setDrawMode('none');
         setPolygonPoints([]);
         setSelection(null);
@@ -2264,7 +2427,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [selectProduct, selectedSite]);
 
   // Audience breakdown is resolved server-side now — the old version bucketed
   // subscribers by name substring ("memphis"/"bartlett" → memphis bucket) which
@@ -2578,6 +2741,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     if (effectiveProduct === 'velocity' && useLevel2) return `${(hoverPixel.sample * 1.94384).toFixed(0)} kt`;
     if (effectiveProduct === 'zdr') return `${hoverPixel.sample.toFixed(1)} dB`;
     if (effectiveProduct === 'kdp') return `${hoverPixel.sample.toFixed(1)} °/km`;
+    if (effectiveProduct === 'sw') return `${hoverPixel.sample.toFixed(1)} m/s SW`;
     return `${hoverPixel.sample.toFixed(0)} dBZ`;
   }, [hoverPixel, effectiveProduct, useLevel2]);
 
@@ -2621,8 +2785,8 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   return (
     <div className="h-[100dvh] tallmd:h-[calc(100dvh-3.25rem)] flex flex-col bg-wx-ink text-wx-fg [contain:layout_paint]">
       <div className="flex-1 relative overflow-hidden">
-        <div className={`absolute inset-0 ${splitProduct ? 'flex flex-row' : ''}`}>
-        <div className={splitProduct ? 'relative h-full flex-1 min-w-0' : 'relative h-full w-full'}>
+        <div className={`absolute inset-0 ${quadMode ? 'grid grid-cols-2 grid-rows-2' : splitProduct ? 'flex flex-row' : ''}`}>
+        <div className={quadMode ? 'relative min-h-0 min-w-0' : splitProduct ? 'relative h-full flex-1 min-w-0' : 'relative h-full w-full'}>
         <AnnotationToolbar {...annotations} />
         <Map
           ref={mapRef}
@@ -2710,7 +2874,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
           {level2ImageSource && (
             <Source
-              key={`level2png:${selectedSite}:${level2Product}:${level2Overlay?.scan_time}:${resolvedSweepIndex}:${isComposite ? 'c' : 'b'}`}
+              key={`level2png:${selectedSite}:${level2Product}:${loopFrame ? `loop-${loopFrame.scanTime}` : level2Overlay?.scan_time}:${resolvedSweepIndex}:${isComposite ? 'c' : 'b'}`}
               id={level2ImageSourceId}
               {...level2ImageSource}
             >
@@ -2751,23 +2915,18 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               the layer panel — the URL changes when the operator picks a
               different accumulation, which swaps the SWR key and remounts
               the source. */}
-          {showMesh && meshUrlPath && (
+          {showMesh && meshOverlay && (
             <Source
-              key={`mesh:${meshUrlPath}`}
+              key={`mesh:${meshOverlay.image_url}`}
               id="mesh-overlay-src"
-              type="raster"
-              tiles={[
-                `https://thredds.ucar.edu/thredds/wms/${meshUrlPath}` +
-                `?service=WMS&request=GetMap&version=1.3.0` +
-                `&layers=${encodeURIComponent('MaxEstimatedSizeofHail_altitude_above_msl')}` +
-                `&styles=raster%2Fdefault` +
-                `&colorscalerange=5%2C75` +
-                `&belowmincolor=transparent` +
-                `&format=image/png&transparent=true` +
-                `&width=256&height=256&crs=EPSG:3857` +
-                `&bbox={bbox-epsg-3857}`,
+              type="image"
+              url={meshOverlay.image_url!}
+              coordinates={[
+                [meshOverlay.bounds!.west, meshOverlay.bounds!.north],
+                [meshOverlay.bounds!.east, meshOverlay.bounds!.north],
+                [meshOverlay.bounds!.east, meshOverlay.bounds!.south],
+                [meshOverlay.bounds!.west, meshOverlay.bounds!.south],
               ]}
-              tileSize={256}
             >
               <Layer
                 id="mesh-overlay-layer"
@@ -3413,11 +3572,19 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, 4, 8, 7, 12, 11],
                 'circle-color': [
                   'case',
+                  // Debris signature trumps shear tiers — red regardless.
+                  ['==', ['get', 'track_tds'], true], '#ef4444',
                   ['>=', ['get', 'max_shear_kt'], 80], '#ef4444',
                   ['>=', ['get', 'max_shear_kt'], 60], '#d946ef',
                   '#f59e0b',
                 ] as any,
-                'circle-stroke-color': '#0b1220',
+                // White ring marks a TDS pin so it reads differently from a
+                // plain TVS-strength couplet even at small sizes.
+                'circle-stroke-color': [
+                  'case',
+                  ['==', ['get', 'track_tds'], true], '#ffffff',
+                  '#0b1220',
+                ] as any,
                 'circle-stroke-width': [
                   'interpolate', ['linear'],
                   ['get', 'volume_count'],
@@ -3953,22 +4120,63 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             </div>
           </div>
         )}
+        {quadMode && (
+          <>
+            <QuadPane
+              ref={quadVelRef}
+              styleUrl={styleUrl}
+              token={token}
+              initialViewState={viewState}
+              overlay={quadVel.overlay}
+              loading={quadVel.loading}
+              label={stormUV ? 'SRM' : 'SRV'}
+              site={selectedSite}
+              opacity={opacity / 100}
+            />
+            <QuadPane
+              ref={quadCcRef}
+              styleUrl={styleUrl}
+              token={token}
+              initialViewState={viewState}
+              overlay={quadCc.overlay}
+              loading={quadCc.loading}
+              label="CC"
+              site={selectedSite}
+              opacity={opacity / 100}
+            />
+            <QuadPane
+              ref={quadZdrRef}
+              styleUrl={styleUrl}
+              token={token}
+              initialViewState={viewState}
+              overlay={quadZdr.overlay}
+              loading={quadZdr.loading}
+              label="ZDR"
+              site={selectedSite}
+              opacity={opacity / 100}
+            />
+          </>
+        )}
         </div>
 
         {/* Products rail (left). Narrower + tighter padding on phones so the
             draw toolbar to its right has room to breathe on a 375px viewport. */}
         {!uiHidden && (
-          <div className="products-rail absolute top-3 left-3 md:top-4 md:left-4 w-[52px] md:w-[68px] bg-wx-card border border-wx-line rounded-xl p-1 md:p-1.5 flex flex-col gap-0.5 z-20">
+          <div className="products-rail absolute top-3 left-3 md:top-4 md:left-4 w-[52px] md:w-[68px] bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl p-1 md:p-1.5 flex flex-col gap-0.5 z-20">
             {(Object.keys(PRODUCTS) as ProductKey[])
               // 'rotation' (MRMS Az-Shear) retired — dead THREDDS source. Hidden
               // from the rail; use ProbSevere + Rotation IDs for rotation.
               .filter((k) => k !== 'rotation')
-              .map((k) => {
+              .map((k, hotkeyIdx) => {
               const p = PRODUCTS[k];
               const Icon = p.icon;
-              const allowed = selectedSite ? p.modes.site : p.modes.composite;
-              const disabled = !allowed;
+              // In CONUS view site-only products are still clickable —
+              // selectProduct auto-picks the nearest NEXRAD site and flies
+              // there, so there's no reason to force a manual site pick first.
+              const disabled = selectedSite ? !p.modes.site : false;
+              const jumpsToSite = !selectedSite && p.modes.site && !p.modes.composite;
               const active = effectiveProduct === k;
+              const hotkey = hotkeyIdx + 1;
               // Thin divider before each product group: Reflectivity (CREF/BREF)
               // | Velocity (SRV) | Dual-pol (CC/ZDR/KDP) | Satellite (SAT).
               const startsGroup = k === 'velocity' || k === 'correlation' || k === 'satellite';
@@ -3978,7 +4186,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 <button
                   onClick={() => !disabled && selectProduct(k)}
                   disabled={disabled}
-                  title={disabled ? (selectedSite ? 'Not available in single-site mode' : 'Pick a radar site to use this product') : p.label}
+                  title={
+                    disabled
+                      ? 'Not available in single-site mode'
+                      : `${p.label} (${hotkey})${jumpsToSite ? ' — selects nearest site' : ''}`
+                  }
                   className={`relative flex flex-col items-center justify-center gap-0.5 py-2.5 md:py-2 rounded-lg text-[10px] font-semibold tracking-wide transition ${active ? 'bg-wx-ink border border-wx-line text-wx-fg' : 'text-wx-mute hover:text-wx-fg'} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
                 >
                   {active && tilesLoading && (
@@ -4090,6 +4302,46 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               >
                 <Zap size={14} /> Nowcast
               </button>
+              <span className="mx-0.5 h-5 w-px bg-wx-line" aria-hidden />
+              <button
+                onClick={() => applyPreset('tornado')}
+                className="px-2.5 py-2 border border-wx-line bg-wx-card rounded-lg text-sm hover:border-red-500/60 hover:text-red-300"
+                title="Tornado preset: SRV 0.5° hi-res + rotation IDs + ProbSevere + lightning"
+              >
+                TOR
+              </button>
+              <button
+                onClick={() => applyPreset('hail')}
+                className="px-2.5 py-2 border border-wx-line bg-wx-card rounded-lg text-sm hover:border-emerald-500/60 hover:text-emerald-300"
+                title="Hail preset: ZDR + MESH hail swaths + ProbSevere"
+              >
+                HAIL
+              </button>
+              <button
+                onClick={() => applyPreset('flood')}
+                className="px-2.5 py-2 border border-wx-line bg-wx-card rounded-lg text-sm hover:border-sky-500/60 hover:text-sky-300"
+                title="Flood preset: CONUS composite + warnings, storm-scale overlays off"
+              >
+                FLD
+              </button>
+              <button
+                onClick={() => {
+                  if (!quadMode && !selectedSite) {
+                    const center: [number, number] = [viewState.longitude, viewState.latitude];
+                    const nearest = nearestSites(center, 1)[0] ?? NEXRAD_SITES_BY_CODE[DEFAULT_SITE_CODE];
+                    setSelectedSite(nearest.code);
+                    mapRef.current?.flyTo({ center: nearest.center, zoom: nearest.zoom, duration: 700 });
+                  }
+                  setQuadMode(!quadMode);
+                }}
+                className={`px-2.5 py-2 border rounded-lg text-sm ${
+                  quadMode ? 'bg-wx-accent text-black border-wx-accent' : 'bg-wx-card border-wx-line hover:border-wx-accent'
+                }`}
+                aria-pressed={quadMode}
+                title="Quad view: main product + SRV + CC + ZDR, camera-synced"
+              >
+                QUAD
+              </button>
             </div>
             {drawMode === 'polygon' && (
               <button onClick={completePolygon} disabled={polygonPoints.length < 3} className="px-3 py-2.5 md:py-2 bg-wx-card border border-wx-line rounded-lg text-sm disabled:opacity-50">Complete ({polygonPoints.length})</button>
@@ -4181,18 +4433,29 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 <span className="hidden md:inline">{w.label}</span>
               </button>
             ))}
+            {displayWarnings.length > 12 && (
+              <button
+                onClick={() => setAlertsSheetOpen(true)}
+                className="inline-flex shrink-0 items-center px-3 py-1.5 rounded-lg border border-wx-line bg-wx-card/95 backdrop-blur-sm text-sm font-medium text-wx-mute hover:text-wx-fg hover:border-wx-accent"
+                title="Show all active alerts"
+              >
+                +{displayWarnings.length - 12} more
+              </button>
+            )}
           </div>
         )}
 
-        {/* Mobile alerts sheet — the list behind the compact "N alerts" button.
-            Same tap target as a desktop chip: selects + flies to the warning. */}
+        {/* Alerts sheet — the full list behind the mobile "N alerts" button
+            and the desktop "+N more" overflow chip. Bottom sheet on phones,
+            bottom-right panel on desktop. Same tap target as a chip: selects
+            + flies to the warning. */}
         {!uiHidden && alertsSheetOpen && showNws && displayWarnings.length > 0 && (
-          <div className="md:hidden absolute inset-0 z-40">
+          <div className="absolute inset-0 z-40">
             <div
               className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
               onClick={() => setAlertsSheetOpen(false)}
             />
-            <div className="absolute bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 flex flex-col gap-2 wx-scroll">
+            <div className="absolute bottom-0 left-0 right-0 max-h-[70vh] rounded-t-2xl border-t border-x border-wx-line bg-wx-card overflow-y-auto p-4 pt-7 flex flex-col gap-2 wx-scroll md:left-auto md:right-4 md:bottom-4 md:w-[400px] md:rounded-2xl md:border">
               <button
                 onClick={() => setAlertsSheetOpen(false)}
                 className="absolute top-1.5 right-1.5 w-7 h-7 inline-flex items-center justify-center rounded-md text-wx-mute hover:text-wx-fg hover:bg-wx-ink"
@@ -4247,7 +4510,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             >
               <ChevronLeft size={14} className="text-wx-mute group-hover:text-wx-fg" />
               <div
-                className={`flex-1 w-2 my-1 rounded-sm ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(180deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(180deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(180deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(180deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'kdp' ? 'bg-[linear-gradient(180deg,#4b5563_0%,#1f2937_17%,#0ea5e9_25%,#10b981_33%,#84cc16_50%,#facc15_67%,#f97316_83%,#ec4899_100%)]' : effectiveProduct === 'satellite' ? 'bg-[linear-gradient(180deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]' : 'bg-[linear-gradient(180deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`}
+                className={`flex-1 w-2 my-1 rounded-sm ${effectiveProduct === 'velocity' ? 'bg-[linear-gradient(180deg,#16a34a_0%,#22d3ee_25%,#e5e7eb_50%,#fb7185_75%,#b91c1c_100%)]' : effectiveProduct === 'sw' ? 'bg-[linear-gradient(180deg,#111827_0%,#0ea5e9_30%,#facc15_55%,#ef4444_80%,#d946ef_100%)]' : effectiveProduct === 'rotation' ? 'bg-[linear-gradient(180deg,#1e1b4b_0%,#6d28d9_40%,#d946ef_70%,#fde047_100%)]' : effectiveProduct === 'correlation' ? 'bg-[linear-gradient(180deg,#1f2937_0%,#4b5563_30%,#6b7280_60%,#fbbf24_85%,#ef4444_100%)]' : effectiveProduct === 'zdr' ? 'bg-[linear-gradient(180deg,#5b21b6_0%,#6b7280_25%,#9ca3af_33%,#22d3ee_42%,#10b981_50%,#84cc16_58%,#facc15_67%,#f97316_75%,#ef4444_83%,#fbcfe8_100%)]' : effectiveProduct === 'kdp' ? 'bg-[linear-gradient(180deg,#4b5563_0%,#1f2937_17%,#0ea5e9_25%,#10b981_33%,#84cc16_50%,#facc15_67%,#f97316_83%,#ec4899_100%)]' : effectiveProduct === 'satellite' ? 'bg-[linear-gradient(180deg,#0f172a_0%,#475569_35%,#cbd5e1_70%,#f8fafc_100%)]' : 'bg-[linear-gradient(180deg,#3b82f6_0%,#22d3ee_15%,#10b981_30%,#84cc16_45%,#facc15_60%,#f97316_75%,#ef4444_88%,#d946ef_100%)]'}`}
               />
               <span className="font-mono text-[9px] text-wx-mute">{PRODUCTS[effectiveProduct].short}</span>
             </button>
@@ -4511,11 +4774,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
 
           return (
             <div className="absolute bottom-2 md:bottom-4 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[min(880px,calc(100%-380px))] md:min-w-[520px] z-30">
-              <div className="bg-wx-card border border-wx-line rounded-xl px-2.5 md:px-4 py-1.5 md:py-3.5 flex items-center gap-2 md:gap-3.5">
+              <div className="bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl px-2.5 md:px-4 py-1.5 md:py-3.5 flex items-center gap-2 md:gap-3.5">
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => { setPlaying(false); setFrame((f) => Math.max(0, f - 1)); }}
-                    className="hidden md:grid w-7 h-9 place-items-center text-wx-mute hover:text-wx-fg"
+                    className="grid w-6 md:w-7 h-8 md:h-9 place-items-center text-wx-mute hover:text-wx-fg"
                     title="Previous frame (←)"
                     aria-label="Previous frame"
                   >‹</button>
@@ -4528,7 +4791,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   </button>
                   <button
                     onClick={() => { setPlaying(false); setFrame((f) => Math.min(totalFrames - 1, f + 1)); }}
-                    className="hidden md:grid w-7 h-9 place-items-center text-wx-mute hover:text-wx-fg"
+                    className="grid w-6 md:w-7 h-8 md:h-9 place-items-center text-wx-mute hover:text-wx-fg"
                     title="Next frame (→)"
                     aria-label="Next frame"
                   >›</button>
@@ -4637,7 +4900,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                         : 'OBSERVED'}
                   </span>
                   <span className="text-[12px] md:text-[15px] font-bold tabular-nums">{frameTimeLabel}</span>
-                  <span className="hidden md:inline text-[11px] text-wx-mute tabular-nums">{relLabel}</span>
+                  <span className="text-[10px] md:text-[11px] text-wx-mute tabular-nums">{relLabel}</span>
                 </div>
 
                 {(() => {
@@ -4656,16 +4919,154 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 })()}
               </div>
               <div className="hidden md:block text-[10px] text-wx-mute text-center mt-1.5 font-mono">
-                Space play/pause · ← → step · Home/End · N to jump to NOW
+                Space play/pause · ← → step · N live · 1-8 products · ? all shortcuts
               </div>
             </div>
           );
         })()}
 
-        {!useLibreWxR && (
+        {!useLibreWxR && !(useLevel2 && selectedSite) && (
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30">
-            <div className="bg-wx-card border border-wx-line rounded-xl px-4 py-2 text-[11px] text-wx-mute">
+            <div className="bg-wx-card/95 backdrop-blur-sm border border-wx-line rounded-xl px-4 py-2 text-[11px] text-wx-mute">
               Live frame · {frameTimeLabel}
+            </div>
+          </div>
+        )}
+
+        {/* Level II products get the loop/tilt/SRM control bar instead of the
+            passive "Live frame" badge. */}
+        {!uiHidden && useLevel2 && selectedSite && (
+          <Level2LoopBar
+            scanTimeLabel={
+              level2Overlay?.scan_time
+                ? (() => {
+                    const t = new Date(level2Overlay.scan_time);
+                    const ageMin = Math.max(0, Math.round((Date.now() - t.getTime()) / 60000));
+                    return `Scan ${t.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · ${
+                      ageMin < 1 ? 'just now' : `${ageMin} min ago`
+                    }`;
+                  })()
+                : null
+            }
+            loopEnabled={loopEnabled}
+            setLoopEnabled={setLoopEnabled}
+            frames={loopFrames}
+            progress={loopProgress}
+            loopError={loopError}
+            frameIdx={loopFrameIdx}
+            setFrameIdx={setLoopFrameIdx}
+            playing={loopPlaying}
+            setPlaying={setLoopPlaying}
+            availableSweeps={availableSweeps}
+            selectedElevation={selectedElevation}
+            setSelectedElevation={setSelectedElevation}
+            isVelocity={effectiveProduct === 'velocity'}
+            stormMotion={stormMotion}
+            setStormMotion={setStormMotion}
+            probeEnabled={probeEnabled}
+            setProbeEnabled={setProbeEnabled}
+            probeReady={probeReady}
+          />
+        )}
+
+        {/* Level II render status — visible even with the inspector collapsed,
+            where these states were previously invisible. */}
+        {!uiHidden && useLevel2 && level2Loading && (
+          <div className="absolute bottom-16 md:bottom-20 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 rounded-lg border border-wx-accent/50 bg-wx-card/95 px-3 py-1.5 text-[11px] text-wx-accent backdrop-blur-sm">
+            <span className="w-2 h-2 rounded-full bg-wx-accent animate-pulse" />
+            Rendering hi-res sweep…{level2MaxAttempts > 1 ? ` (${level2Attempt}/${level2MaxAttempts})` : ''}
+          </div>
+        )}
+        {!uiHidden && useLevel2 && !level2Loading && level2Error && (
+          <div className="absolute bottom-16 md:bottom-20 left-1/2 -translate-x-1/2 z-30 max-w-[92vw] rounded-lg border border-wx-danger/60 bg-wx-card/95 px-3 py-1.5 text-[11px] text-wx-danger backdrop-blur-sm">
+            Hi-res render failed: {level2Error} — switch products or retry from the Source tab.
+          </div>
+        )}
+
+        {/* Always-on color legend for the active product (desktop). Mobile
+            skips it — the bottom edge is already owned by the timeline pill. */}
+        {!uiHidden && !selection && (
+          <div className="hidden md:flex absolute bottom-4 left-4 z-20 flex-col gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowMesh(!showMesh)}
+                className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${
+                  showMesh
+                    ? 'border-wx-accent bg-wx-accent/10 text-wx-accent'
+                    : 'border-wx-line bg-wx-card/95 text-wx-mute hover:text-wx-fg'
+                } backdrop-blur-sm`}
+                title="MRMS hail swaths (Max Estimated Size of Hail)"
+              >
+                MESH
+              </button>
+              {showMesh ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMeshWindow(meshWindow === 30 ? 60 : meshWindow === 60 ? 120 : 30)
+                  }
+                  className="rounded-md border border-wx-line bg-wx-card/95 px-2 py-1 text-[10px] font-mono text-wx-fg backdrop-blur-sm hover:border-wx-accent"
+                  title="Accumulation window"
+                >
+                  {meshWindow}m
+                </button>
+              ) : null}
+              {showMesh && meshOverlay?.valid_time ? (
+                <span className="rounded-md border border-wx-line bg-wx-card/95 px-2 py-1 text-[10px] font-mono text-wx-mute backdrop-blur-sm">
+                  {new Date(meshOverlay.valid_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </span>
+              ) : null}
+            </div>
+            <ProductLegend product={effectiveProduct} />
+          </div>
+        )}
+
+        {/* '?' keyboard-shortcut reference. */}
+        {shortcutsOpen && (
+          <div
+            className="fixed inset-0 z-[85] flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={() => setShortcutsOpen(false)}
+            role="presentation"
+          >
+            <div
+              className="w-[min(440px,92vw)] rounded-xl border border-wx-line bg-wx-card p-5"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Keyboard shortcuts"
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <span className="panel-title">Keyboard shortcuts</span>
+                <button
+                  onClick={() => setShortcutsOpen(false)}
+                  className="text-wx-mute hover:text-wx-fg"
+                  aria-label="Close shortcuts"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[13px]">
+                {(
+                  [
+                    ['Space', 'Play / pause the timeline'],
+                    ['← →', 'Step one frame back / forward'],
+                    ['Home / End', 'Jump to oldest / newest frame'],
+                    ['N', 'Jump to the live frame'],
+                    ['1 – 8', 'Switch product (rail order)'],
+                    ['H', 'Hide / show all UI chrome'],
+                    ['Esc', 'Cancel drawing / clear selection'],
+                    ['?', 'Toggle this reference'],
+                  ] as const
+                ).map(([key, desc]) => (
+                  <React.Fragment key={key}>
+                    <kbd className="justify-self-start rounded border border-wx-line bg-wx-ink px-1.5 py-0.5 font-mono text-[11px] text-wx-fg">
+                      {key}
+                    </kbd>
+                    <span className="text-wx-mute">{desc}</span>
+                  </React.Fragment>
+                ))}
+              </div>
             </div>
           </div>
         )}
@@ -4675,7 +5076,18 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           // mousemove → the chip flashes briefly then never clears since
           // there's no mouseleave on a finger lift.
           <div className="hidden md:block absolute bottom-4 right-4 font-mono text-[11px] bg-wx-card border border-wx-line rounded-md px-2.5 py-1.5 z-20 [@media(hover:none)]:hidden">
-            <span className="text-wx-mute">lat</span> {hoverPixel.lat.toFixed(3)} <span className="text-wx-mute">lon</span> {hoverPixel.lng.toFixed(3)} <span className="text-wx-mute">· </span>{sampleLabel}
+            <span className="text-wx-mute">lat</span> {hoverPixel.lat.toFixed(3)} <span className="text-wx-mute">lon</span> {hoverPixel.lng.toFixed(3)} <span className="text-wx-mute">· </span>
+            {probeEnabled && useLevel2
+              ? (() => {
+                  const s = probeSampleAll(hoverPixel.lng, hoverPixel.lat);
+                  const parts = [
+                    s.refl != null ? `${s.refl.toFixed(0)} dBZ` : null,
+                    s.vel != null ? `${(s.vel * 1.94384).toFixed(0)} kt` : null,
+                    s.cc != null ? `CC ${s.cc.toFixed(2)}` : null,
+                  ].filter(Boolean);
+                  return parts.length ? parts.join(' · ') : sampleLabel;
+                })()
+              : sampleLabel}
           </div>
         )}
 

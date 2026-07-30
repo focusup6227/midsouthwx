@@ -10,7 +10,7 @@ export const runtime = 'nodejs';
 
 import { NEXRAD_CODES } from '@/lib/radar/sites';
 
-const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'cc', 'zdr', 'kdp']);
+const ALLOWED_PRODUCTS = new Set(['refl', 'vel', 'srm', 'sw', 'cc', 'zdr', 'kdp']);
 const ALLOWED_FORMATS = new Set(['png', 'geojson']);
 
 const ALLOWED_SITES = new Set(NEXRAD_CODES);
@@ -46,6 +46,11 @@ export async function GET(
   const format = (req.nextUrl.searchParams.get('format') || 'png').toLowerCase();
   const sweepIndexRaw = req.nextUrl.searchParams.get('sweep_index');
   const sweepIndex = sweepIndexRaw != null ? Math.max(0, parseInt(sweepIndexRaw, 10) || 0) : 0;
+  // Loop prefetch: render a specific archived volume instead of the latest.
+  const volumeKey = req.nextUrl.searchParams.get('volume_key');
+  // SRM storm-motion vector (m/s east/north), forwarded only for product=srm.
+  const stormU = Number(req.nextUrl.searchParams.get('storm_u'));
+  const stormV = Number(req.nextUrl.searchParams.get('storm_v'));
 
   if (!ALLOWED_SITES.has(site)) {
     return NextResponse.json({ error: `unknown site '${site}'` }, { status: 404 });
@@ -80,6 +85,10 @@ export async function GET(
         composite,
         format,
         sweep_index: sweepIndex,
+        ...(volumeKey ? { volume_key: volumeKey } : {}),
+        ...(product === 'srm' && Number.isFinite(stormU) && Number.isFinite(stormV)
+          ? { storm_u: stormU, storm_v: stormV }
+          : {}),
       }),
       // Wake-up tolerance: 30 s is enough for a warm Fly machine to render
       // and ~3× a typical cold-start "hello" — we used to give 120 s here,

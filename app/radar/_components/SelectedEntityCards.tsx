@@ -77,6 +77,11 @@ export type SelectedCouplet = {
   volume_count: number;
   lat: number;
   lon: number;
+  // TDS: latest-scan flag + any-scan-in-window flag + supporting samples.
+  tds?: boolean | null;
+  track_tds?: boolean;
+  min_cc?: number | null;
+  refl_dbz?: number | null;
 };
 
 function CloseButton({ onClose }: { onClose: () => void }) {
@@ -306,6 +311,7 @@ export function MetarCard({ metar: m, onClose }: { metar: SelectedMetar; onClose
 // "Alert from this rotation" pre-fills compose with a circle around the meso,
 // ready to send.
 export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet; onClose: () => void }) {
+  const hasTds = Boolean(sc.tds || sc.track_tds);
   const intensity = sc.max_shear_kt >= 80
     ? { label: 'TVS-strength', cls: 'text-red-300', dot: 'bg-red-400' }
     : sc.max_shear_kt >= 60
@@ -319,7 +325,9 @@ export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet
   // threat tier. Tier breakpoints align with the pin's color (60 kt = meso,
   // 80 kt = TVS-strength) so the visual intensity and the language move
   // together.
-  const tier = sc.max_shear_kt >= 80
+  // A debris signature escalates straight to the top tier — lofted debris
+  // means a tornado is likely doing damage right now, whatever the shear says.
+  const tier = hasTds || sc.max_shear_kt >= 80
     ? 'tvs'
     : sc.max_shear_kt >= 60
     ? 'meso'
@@ -335,7 +343,9 @@ export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet
   const persistStr = sc.volume_count >= 3 ? ', persistent' : '';
   const body =
     tier === 'tvs'
-      ? `TORNADO LIKELY — strong rotation (${Math.round(sc.max_shear_kt)} kt gate-to-gate, ${ageStr}${persistStr}) on ${sc.site} radar at ${sc.track_id}. TAKE SHELTER NOW if you are in the affected area: lowest floor, interior room, away from windows. Stay sheltered until the threat passes.`
+      ? hasTds
+        ? `TORNADO ON THE GROUND LIKELY — radar shows a DEBRIS SIGNATURE with strong rotation (${Math.round(sc.max_shear_kt)} kt, ${ageStr}${persistStr}) on ${sc.site} radar at ${sc.track_id}. TAKE SHELTER NOW: lowest floor, interior room, away from windows. Stay sheltered until the threat passes.`
+        : `TORNADO LIKELY — strong rotation (${Math.round(sc.max_shear_kt)} kt gate-to-gate, ${ageStr}${persistStr}) on ${sc.site} radar at ${sc.track_id}. TAKE SHELTER NOW if you are in the affected area: lowest floor, interior room, away from windows. Stay sheltered until the threat passes.`
       : tier === 'meso'
       ? `Rotation observed — mesocyclone signature (${Math.round(sc.max_shear_kt)} kt, ${ageStr}${persistStr}) on ${sc.site} radar at ${sc.track_id}. Move to a safe shelter and monitor for a tornado warning. Do not wait for sirens.`
       : `Weak rotation under observation (${Math.round(sc.shear_kt)} kt, ${ageStr}) on ${sc.site} radar at ${sc.track_id}. Stay weather-aware and have a shelter plan ready in case it strengthens.`;
@@ -347,6 +357,14 @@ export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet
           <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
             <span className={`inline-block h-2 w-2 rounded-full ${intensity.dot}`} />
             Rotation ID · {sc.site}
+            {hasTds ? (
+              <span
+                className="rounded bg-red-500 px-1 py-px text-[9px] font-bold tracking-wider text-white animate-pulse"
+                title={`Tornado debris signature — CC ${sc.min_cc ?? '?'} inside ${sc.refl_dbz ?? '?'} dBZ echo`}
+              >
+                TDS
+              </span>
+            ) : null}
           </div>
           <div className="text-[14px] font-mono font-bold text-fuchsia-200 mt-0.5">
             {sc.track_id}
@@ -365,6 +383,15 @@ export function CoupletCard({ couplet: sc, onClose }: { couplet: SelectedCouplet
         <div><span className="text-wx-mute/70">az</span> {Math.round(sc.azimuth_deg)}°</div>
         <div><span className="text-wx-mute/70">tilt</span> {sc.elevation_deg.toFixed(1)}°</div>
         <div><span className="text-wx-mute/70">scans</span> {sc.volume_count}</div>
+        {sc.min_cc != null ? (
+          <div>
+            <span className="text-wx-mute/70">min CC</span>{' '}
+            <span className={sc.min_cc < 0.8 ? 'text-red-300 font-semibold' : ''}>{sc.min_cc.toFixed(2)}</span>
+          </div>
+        ) : null}
+        {sc.refl_dbz != null ? (
+          <div><span className="text-wx-mute/70">refl</span> {Math.round(sc.refl_dbz)} dBZ</div>
+        ) : null}
         {ageMin != null ? (
           <div className="col-span-2"><span className="text-wx-mute/70">first seen</span> {ageMin} min ago</div>
         ) : null}

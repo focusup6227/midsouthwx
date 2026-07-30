@@ -29,7 +29,7 @@ export type Level2Overlay = {
   vmax: number;
 };
 
-export type Level2Product = 'refl' | 'vel' | 'cc' | 'zdr' | 'kdp';
+export type Level2Product = 'refl' | 'vel' | 'srm' | 'sw' | 'cc' | 'zdr' | 'kdp';
 
 export const LEVEL2_MAX_ATTEMPTS = 3;
 
@@ -39,12 +39,15 @@ export function useLevel2Data({
   product,
   selectedElevation,
   usePng,
+  stormUV = null,
 }: {
   enabled: boolean;
   site: string | null;
   product: Level2Product;
   selectedElevation: number | 'composite';
   usePng: boolean;
+  /** Storm motion (m/s east/north) — forwarded for product 'srm'. */
+  stormUV?: { u: number; v: number } | null;
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +148,8 @@ export function useLevel2Data({
     // straight from the browser's HTTP cache (immutable, never expires) so
     // revisits paint in <1s while the fresh /api/radar/level2 call runs in
     // parallel and replaces the data once the latest scan finishes rendering.
-    const cacheKey = `radar:l2:${site}:${product}:${resolvedSweepIndex}:${isComposite ? 1 : 0}:${format}`;
+    const srmQs = product === 'srm' && stormUV ? `&storm_u=${stormUV.u}&storm_v=${stormUV.v}` : '';
+    const cacheKey = `radar:l2:${site}:${product}:${resolvedSweepIndex}:${isComposite ? 1 : 0}:${format}${srmQs}`;
     try {
       const raw = typeof window !== 'undefined' ? window.localStorage.getItem(cacheKey) : null;
       if (raw) {
@@ -193,7 +197,8 @@ export function useLevel2Data({
           + `?product=${product}`
           + `&format=${format}`
           + `&sweep_index=${resolvedSweepIndex}`
-          + (isComposite ? '&composite=1' : '');
+          + (isComposite ? '&composite=1' : '')
+          + srmQs;
         const res = await fetch(url, { cache: 'no-store', signal: abort.signal });
         const data = await res.json();
         if (cancelled) return;
@@ -273,7 +278,7 @@ export function useLevel2Data({
       pendingTimeouts.clear();
       abort.abort();
     };
-  }, [enabled, site, product, resolvedSweepIndex, isComposite, usePng]);
+  }, [enabled, site, product, resolvedSweepIndex, isComposite, usePng, stormUV]);
 
   return {
     overlay,
