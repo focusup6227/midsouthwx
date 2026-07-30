@@ -490,6 +490,28 @@ export default function ForecastForm({ initialArea }: Props) {
                     {situation.alerts_total} alert{situation.alerts_total === 1 ? '' : 's'} · {situation.lsr_total} LSR
                   </span>
                 </div>
+                {(situation.extended.some((d) => d.label) || situation.thunder) ? (
+                  <div className="font-mono text-[10px] text-wx-mute">
+                    {situation.extended.some((d) => d.label) ? (
+                      <>
+                        D4-8:{' '}
+                        {situation.extended
+                          .filter((d) => d.label)
+                          .map((d) => `D${d.day} ${d.label}`)
+                          .join(' · ')}
+                      </>
+                    ) : null}
+                    {situation.thunder ? (
+                      <span className={situation.thunder.max >= 50 ? 'text-wx-accent' : ''}>
+                        {situation.extended.some((d) => d.label) ? ' · ' : ''}
+                        thunder {situation.thunder.max}%
+                        {situation.thunder.peak_at
+                          ? ` @ ${new Date(situation.thunder.peak_at).toLocaleTimeString([], { hour: 'numeric' })}`
+                          : ''}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {situation.afd?.synopsis ? (
                   <details>
                     <summary className="cursor-pointer text-wx-mute">

@@ -103,3 +103,6 @@ verify_jwt = false
 
 [functions.daily-forecast]
 verify_jwt = false
+
+[functions.earthquake-poll]
+verify_jwt = false

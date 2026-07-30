@@ -14,11 +14,59 @@ type TrackRow = {
   had_tds: boolean;
   verified: boolean;
   warning_event: string | null;
+  center_lat: number | null;
+  center_lon: number | null;
 };
 
 function pct(part: number, total: number): string {
   if (total === 0) return '—';
   return `${Math.round((part / total) * 100)}%`;
+}
+
+type DatPoint = { lat: number; lon: number; stormdate: number; efscale: string | null };
+
+// Surveyed damage points from the NWS Damage Assessment Toolkit — actual
+// ground truth, unlike warnings (which are themselves forecasts). Mid-South
+// envelope, last p_days. Best-effort: an unreachable DAT just hides the column.
+async function fetchDatPoints(days: number): Promise<DatPoint[]> {
+  const since = Date.now() - days * 86400_000;
+  const params = new URLSearchParams({
+    f: 'json',
+    where: `stormdate >= ${since}`,
+    outFields: 'stormdate,efscale,lat,lon',
+    geometry: JSON.stringify({ xmin: -95, ymin: 31, xmax: -82, ymax: 38.5, spatialReference: { wkid: 4326 } }),
+    geometryType: 'esriGeometryEnvelope',
+    inSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    returnGeometry: 'false',
+    resultRecordCount: '2000',
+  });
+  try {
+    const res = await fetch(
+      `https://services.dat.noaa.gov/arcgis/rest/services/nws_damageassessmenttoolkit/DamageViewer/FeatureServer/0/query?${params}`,
+      { signal: AbortSignal.timeout(15_000), next: { revalidate: 3600 } },
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as { features?: { attributes: Record<string, unknown> }[] };
+    return (data.features ?? [])
+      .map((f) => ({
+        lat: Number(f.attributes.lat),
+        lon: Number(f.attributes.lon),
+        stormdate: Number(f.attributes.stormdate),
+        efscale: (f.attributes.efscale as string | null) ?? null,
+      }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+  } catch {
+    return [];
+  }
+}
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const rad = Math.PI / 180;
+  const a =
+    Math.sin(((lat2 - lat1) * rad) / 2) ** 2 +
+    Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(((lon2 - lon1) * rad) / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(a));
 }
 
 // Detection-quality report: how often did a flagged rotation end up inside /
@@ -32,8 +80,26 @@ export default async function CoupletValidationPage({
 }) {
   const days = Math.min(180, Math.max(1, parseInt(searchParams?.days ?? '30', 10) || 30));
   const supa = supabaseServer();
-  const { data, error } = await supa.rpc('couplet_validation_tracks', { p_days: days });
+  const [{ data, error }, datPoints] = await Promise.all([
+    supa.rpc('couplet_validation_tracks', { p_days: days }),
+    fetchDatPoints(days),
+  ]);
   const tracks = (data ?? []) as TrackRow[];
+
+  // DAT ground truth: a surveyed damage point within 15 km of the track
+  // centroid whose storm date falls in the track window (±6 h slack for
+  // date-only stamps).
+  const datConfirmed = (t: TrackRow): DatPoint | null => {
+    if (t.center_lat == null || t.center_lon == null) return null;
+    const from = new Date(t.first_seen_at).getTime() - 6 * 3600_000;
+    const to = new Date(t.last_seen_at).getTime() + 6 * 3600_000;
+    for (const p of datPoints) {
+      if (p.stormdate < from || p.stormdate > to) continue;
+      if (haversineKm(t.center_lat, t.center_lon, p.lat, p.lon) <= 15) return p;
+    }
+    return null;
+  };
+  const datHits = new Map(tracks.map((t) => [t.track_id, datConfirmed(t)]));
 
   const sites = [...new Set(tracks.map((t) => t.site))].sort();
   const bySite = (site: string) => tracks.filter((t) => t.site === site);
@@ -138,6 +204,7 @@ export default async function CoupletValidationPage({
                 <th className="pb-2">Scans</th>
                 <th className="pb-2">TDS</th>
                 <th className="pb-2">Outcome</th>
+                <th className="pb-2">DAT</th>
                 <th className="pb-2">Last seen</th>
               </tr>
             </thead>
@@ -154,6 +221,18 @@ export default async function CoupletValidationPage({
                     ) : (
                       <span className="text-wx-mute">no warning</span>
                     )}
+                  </td>
+                  <td className="py-2">
+                    {(() => {
+                      const d = datHits.get(t.track_id);
+                      return d ? (
+                        <span className="font-bold text-red-300" title="Surveyed damage within 15 km of the track">
+                          {d.efscale || 'confirmed'}
+                        </span>
+                      ) : (
+                        <span className="text-wx-mute">—</span>
+                      );
+                    })()}
                   </td>
                   <td className="py-2 text-xs text-wx-mute">
                     {new Date(t.last_seen_at).toLocaleString()}

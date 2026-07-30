@@ -22,3 +22,4 @@ eccodes==2.47.0
 # parcel theory, and indices. Pulls pint/pandas/scipy/pooch — numpy-1.26 + py3.12
 # compatible. Verified locally against live GFS columns.
 metpy==1.7.1
+pyshp==2.3.1

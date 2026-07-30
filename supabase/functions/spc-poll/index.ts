@@ -13,6 +13,13 @@ const SPC_URLS: { day: number; url: string }[] = [
   { day: 1, url: 'https://www.spc.noaa.gov/products/outlook/day1otlk_cat.lyr.geojson' },
   { day: 2, url: 'https://www.spc.noaa.gov/products/outlook/day2otlk_cat.lyr.geojson' },
   { day: 3, url: 'https://www.spc.noaa.gov/products/outlook/day3otlk_cat.lyr.geojson' },
+  // Extended outlooks are probabilistic (15%/30% polygons), same GeoJSON
+  // shape. Feature LABELs carry the probability string.
+  { day: 4, url: 'https://www.spc.noaa.gov/products/exper/day4-8/day4prob.lyr.geojson' },
+  { day: 5, url: 'https://www.spc.noaa.gov/products/exper/day4-8/day5prob.lyr.geojson' },
+  { day: 6, url: 'https://www.spc.noaa.gov/products/exper/day4-8/day6prob.lyr.geojson' },
+  { day: 7, url: 'https://www.spc.noaa.gov/products/exper/day4-8/day7prob.lyr.geojson' },
+  { day: 8, url: 'https://www.spc.noaa.gov/products/exper/day4-8/day8prob.lyr.geojson' },
 ];
 
 type FetchResult = { day: number; ok: boolean; features?: number; error?: string };

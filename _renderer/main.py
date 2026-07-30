@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from alert_loop import router as alert_loop_router
 from alert_snapshot import router as alert_snapshot_router
 from couplet_detect import router as couplet_router
+from ero import router as ero_router
 from glm import router as glm_router
 from mesh import router as mesh_router
 from model_render import router as model_router
@@ -75,6 +76,9 @@ app.include_router(sounding_router)
 
 # MRMS MESH hail-swath overlay (30/60/120 min windows). Same auth + cache.
 app.include_router(mesh_router)
+
+# WPC Excessive Rainfall Outlook Day 1 (shapefile -> GeoJSON). Same auth + cache.
+app.include_router(ero_router)
 
 # In-process lock per cache key so concurrent requests for the same scan
 # share one render instead of stampeding. Keyed by `cache_id`.

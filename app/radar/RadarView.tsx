@@ -71,12 +71,18 @@ import {
   MetarCard,
   CoupletCard,
   TrafficCamCard,
+  GaugeCard,
+  StormAttrCard,
+  IncidentCard,
   type SelectedLsr,
   type SelectedStormReport,
   type SelectedMping,
   type SelectedMetar,
   type SelectedCouplet,
   type SelectedTrafficCam,
+  type SelectedGauge,
+  type SelectedStormAttr,
+  type SelectedIncident,
 } from './_components/SelectedEntityCards';
 import { parseRadarUrl, useRadarUrlSync } from './_hooks/useRadarUrlState';
 import { useLevel2Data } from './_hooks/useLevel2Data';
@@ -476,6 +482,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
   // TDOT SmartWay traffic cameras — ground-truth layer, off by default.
   const [showTrafficCams, setShowTrafficCams] = useState(urlInitial.showTrafficCams ?? false);
   const [selectedTrafficCam, setSelectedTrafficCam] = useState<SelectedTrafficCam | null>(null);
+  const [selectedGauge, setSelectedGauge] = useState<SelectedGauge | null>(null);
+  const [selectedStormAttr, setSelectedStormAttr] = useState<SelectedStormAttr | null>(null);
+  const [selectedIncident, setSelectedIncident] = useState<SelectedIncident | null>(null);
   const subsCount = subsGeo.features?.length ?? 0;
 
   // Default the inspector closed on phones — the 304px panel would otherwise
@@ -659,6 +668,66 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     { refreshInterval: 120_000, revalidateOnFocus: false },
   );
   const meshOverlay = meshSwr.data && !meshSwr.data.error && meshSwr.data.image_url ? meshSwr.data : null;
+
+  // ── External situational layers (NWPS / IEM L3 / TDOT / WPC ERO) ────────
+  const EXT_EMPTY_FC = { type: 'FeatureCollection', features: [] } as GeoJSON.FeatureCollection;
+  const extFetcher = (u: string) => fetch(u).then((r) => r.json());
+
+  // NWPS river gauges — observed stage + flood category + forecast crest.
+  const [showGauges, setShowGauges] = useState(false);
+  const gaugesSwr = useSWR<GeoJSON.FeatureCollection & { error?: string }>(
+    showGauges ? '/api/radar/gauges' : null,
+    extFetcher,
+    { refreshInterval: 300_000, revalidateOnFocus: false },
+  );
+  const gaugesGeo = gaugesSwr.data && !gaugesSwr.data.error ? gaugesSwr.data : EXT_EMPTY_FC;
+
+  // NEXRAD Level III storm attributes (IEM): TVS/meso/hail/motion per cell.
+  const [showStormAttrs, setShowStormAttrs] = useState(false);
+  const stormAttrsSwr = useSWR<GeoJSON.FeatureCollection & { error?: string }>(
+    showStormAttrs ? '/api/radar/storm-attrs' : null,
+    extFetcher,
+    { refreshInterval: 120_000, revalidateOnFocus: false },
+  );
+  const stormAttrsGeo = stormAttrsSwr.data && !stormAttrsSwr.data.error ? stormAttrsSwr.data : EXT_EMPTY_FC;
+
+  // TDOT roadway incidents/closures.
+  const [showIncidents, setShowIncidents] = useState(false);
+  const incidentsSwr = useSWR<GeoJSON.FeatureCollection & { error?: string }>(
+    showIncidents ? '/api/radar/traffic-incidents' : null,
+    extFetcher,
+    { refreshInterval: 180_000, revalidateOnFocus: false },
+  );
+  const incidentsGeo = incidentsSwr.data && !incidentsSwr.data.error ? incidentsSwr.data : EXT_EMPTY_FC;
+
+  // WPC Excessive Rainfall Outlook Day 1 — pointer via the renderer, then
+  // gzipped GeoJSON from storage.
+  const [showEro, setShowEro] = useState(false);
+  const eroPtr = useSWR<{ geojson_url?: string; valid_date?: string; error?: string }>(
+    showEro ? '/api/radar/ero' : null,
+    extFetcher,
+    { refreshInterval: 1_800_000, revalidateOnFocus: false },
+  );
+  const [eroGeo, setEroGeo] = useState<GeoJSON.FeatureCollection | null>(null);
+  useEffect(() => {
+    const url = eroPtr.data?.geojson_url;
+    if (!showEro || !url) {
+      setEroGeo(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(url, { cache: 'force-cache' });
+        if (!r.ok || !r.body) return;
+        const text = await new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text();
+        if (!cancelled) setEroGeo(JSON.parse(text) as GeoJSON.FeatureCollection);
+      } catch {
+        /* layer stays empty */
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showEro, eroPtr.data?.geojson_url]);
 
   // F12: METAR surface obs. Compact "station plot lite" — temp-colored pin,
   // wind arrow (rotated to direction wind is going TOWARD), and a text
@@ -1354,6 +1423,25 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
     selectedElevation,
     usePng: true,
   });
+
+  // SRM autofill: strongest cell (by VIL) on the selected site from the L3
+  // storm-attribute feed supplies its motion vector (met convention: from).
+  const suggestStormMotion = useCallback((): StormMotion => {
+    if (!selectedSite) return null;
+    const site3 = selectedSite.slice(-3);
+    let best: { drct: number; sknt: number; score: number } | null = null;
+    for (const f of stormAttrsGeo.features ?? []) {
+      const p = f.properties as any;
+      const cellSite = String(p?.nexrad ?? '');
+      if (cellSite !== site3 && cellSite !== selectedSite) continue;
+      const sknt = Number(p?.sknt);
+      const drct = Number(p?.drct);
+      if (!Number.isFinite(sknt) || !Number.isFinite(drct) || sknt < 5) continue;
+      const score = Number(p?.vil ?? 0);
+      if (!best || score > best.score) best = { drct, sknt, score };
+    }
+    return best ? { speedKt: Math.round(best.sknt), fromDeg: Math.round(best.drct) } : null;
+  }, [selectedSite, stormAttrsGeo]);
 
   // Multi-product cursor probe (refl + vel + CC at once).
   const [probeEnabled, setProbeEnabled] = useState(false);
@@ -2111,6 +2199,66 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           track_tds: Boolean(props?.track_tds),
           min_cc: props?.min_cc == null ? null : Number(props.min_cc),
           refl_dbz: props?.refl_dbz == null ? null : Number(props.refl_dbz),
+        });
+        return;
+      }
+    }
+    // L3 storm-attribute cells — radar algorithm's own TVS/meso/hail read.
+    if (showStormAttrs) {
+      const saHits = hitsFor('storm-attr-pin');
+      if (saHits.length > 0) {
+        const p = saHits[0].properties as any;
+        setSelectedStormAttr({
+          storm_id: String(p?.storm_id ?? ''),
+          nexrad: String(p?.nexrad ?? ''),
+          tvs: String(p?.tvs ?? 'NONE'),
+          meso: String(p?.meso ?? 'NONE'),
+          posh: Number(p?.posh ?? 0),
+          poh: Number(p?.poh ?? 0),
+          max_size: Number(p?.max_size ?? 0),
+          vil: Number(p?.vil ?? 0),
+          max_dbz: Number(p?.max_dbz ?? 0),
+          top: Number(p?.top ?? 0),
+          drct: Number(p?.drct ?? 0),
+          sknt: Number(p?.sknt ?? 0),
+          valid: (p?.valid as string | null) ?? null,
+        });
+        return;
+      }
+    }
+    // NWPS river gauges.
+    if (showGauges) {
+      const gHits = hitsFor('gauge-pin');
+      if (gHits.length > 0) {
+        const p = gHits[0].properties as any;
+        setSelectedGauge({
+          lid: String(p?.lid ?? ''),
+          name: String(p?.name ?? ''),
+          observed: p?.observed == null ? null : Number(p.observed),
+          observed_unit: String(p?.observed_unit ?? 'ft'),
+          observed_at: (p?.observed_at as string | null) ?? null,
+          category: String(p?.category ?? 'no_flooding'),
+          forecast: p?.forecast == null ? null : Number(p.forecast),
+          forecast_category: (p?.forecast_category as string | null) ?? null,
+          forecast_at: (p?.forecast_at as string | null) ?? null,
+        });
+        return;
+      }
+    }
+    // TDOT roadway incidents.
+    if (showIncidents) {
+      const iHits = hitsFor('incident-pin');
+      if (iHits.length > 0) {
+        const p = iHits[0].properties as any;
+        setSelectedIncident({
+          id: Number(p?.id ?? 0),
+          type: String(p?.type ?? 'Incident'),
+          description: String(p?.description ?? ''),
+          impact: (p?.impact as string | null) ?? null,
+          county: (p?.county as string | null) ?? null,
+          closure: Boolean(p?.closure),
+          severe: Boolean(p?.severe),
+          began_at: (p?.began_at as string | null) ?? null,
         });
         return;
       }
@@ -2942,6 +3090,130 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               />
             </Source>
           )}
+
+          {/* WPC ERO Day 1 — flood-risk analog of the SPC wash, same layering
+              rationale (above radar, below warnings). */}
+          {showEro && eroGeo && (
+            <Source id="ero-source" type="geojson" data={eroGeo as any}>
+              <Layer
+                id="ero-fill"
+                {...overlayAnchor}
+                type="fill"
+                paint={{
+                  'fill-color': [
+                    'match', ['get', 'label'],
+                    'MRGL', '#22c55e',
+                    'SLGT', '#eab308',
+                    'MDT', '#ef4444',
+                    'HIGH', '#d946ef',
+                    '#64748b',
+                  ] as any,
+                  'fill-opacity': 0.14,
+                }}
+              />
+              <Layer
+                id="ero-line"
+                {...overlayAnchor}
+                type="line"
+                paint={{
+                  'line-color': [
+                    'match', ['get', 'label'],
+                    'MRGL', '#22c55e',
+                    'SLGT', '#eab308',
+                    'MDT', '#ef4444',
+                    'HIGH', '#d946ef',
+                    '#64748b',
+                  ] as any,
+                  'line-width': 1.5,
+                  'line-dasharray': [3, 2],
+                }}
+              />
+            </Source>
+          )}
+
+          {/* NWPS river gauges — dots colored by flood category. */}
+          <Source id="gauges-source" type="geojson" data={gaugesGeo as any}>
+            <Layer
+              id="gauge-pin"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showGauges ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 3, 9, 6, 12, 9],
+                'circle-color': [
+                  'match', ['get', 'category'],
+                  'major', '#d946ef',
+                  'moderate', '#ef4444',
+                  'minor', '#f97316',
+                  'action', '#eab308',
+                  '#38bdf8',
+                ] as any,
+                'circle-opacity': [
+                  'case', ['==', ['get', 'category'], 'no_flooding'], 0.55, 0.95,
+                ] as any,
+                'circle-stroke-color': '#0b1220',
+                'circle-stroke-width': 1,
+              }}
+            />
+          </Source>
+
+          {/* NEXRAD L3 storm attribute cells (IEM) — ring per cell, red when
+              the radar algorithm flags TVS, fuchsia for meso. */}
+          <Source id="storm-attrs-source" type="geojson" data={stormAttrsGeo as any}>
+            <Layer
+              id="storm-attr-pin"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showStormAttrs ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 4, 9, 7, 12, 10],
+                'circle-color': 'rgba(0,0,0,0)',
+                'circle-stroke-width': 2,
+                'circle-stroke-color': [
+                  'case',
+                  ['!=', ['get', 'tvs'], 'NONE'], '#ef4444',
+                  ['!=', ['get', 'meso'], 'NONE'], '#d946ef',
+                  ['>=', ['to-number', ['get', 'posh']], 50], '#f97316',
+                  '#94a3b8',
+                ] as any,
+              }}
+            />
+            <Layer
+              id="storm-attr-label"
+              {...overlayAnchor}
+              type="symbol"
+              layout={{
+                visibility: showStormAttrs ? 'visible' : 'none',
+                'text-field': ['get', 'storm_id'],
+                'text-size': 10,
+                'text-anchor': 'top',
+                'text-offset': [0, 0.9],
+                'text-font': ['DIN Pro Medium', 'Arial Unicode MS Regular'],
+              }}
+              paint={{ 'text-color': '#94a3b8', 'text-halo-color': '#0b1220', 'text-halo-width': 1 }}
+            />
+          </Source>
+
+          {/* TDOT roadway incidents — amber squares, red when closed. */}
+          <Source id="incidents-source" type="geojson" data={incidentsGeo as any}>
+            <Layer
+              id="incident-pin"
+              {...overlayAnchor}
+              type="circle"
+              layout={{ visibility: showIncidents ? 'visible' : 'none' }}
+              paint={{
+                'circle-radius': ['interpolate', ['linear'], ['zoom'], 5, 3, 9, 5.5, 12, 8],
+                'circle-color': [
+                  'case',
+                  ['get', 'closure'], '#ef4444',
+                  ['get', 'severe'], '#f97316',
+                  '#eab308',
+                ] as any,
+                'circle-stroke-color': '#0b1220',
+                'circle-stroke-width': 1,
+              }}
+            />
+          </Source>
 
           {/* F7: SPC categorical outlook layer. Below NWS warnings so an
               active warning polygon never gets obscured by the outlook
@@ -4963,6 +5235,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
             isVelocity={effectiveProduct === 'velocity'}
             stormMotion={stormMotion}
             setStormMotion={setStormMotion}
+            suggestMotion={suggestStormMotion}
+            cellsOn={showStormAttrs}
+            enableCells={() => setShowStormAttrs(true)}
             probeEnabled={probeEnabled}
             setProbeEnabled={setProbeEnabled}
             probeReady={probeReady}
@@ -5017,6 +5292,28 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   {new Date(meshOverlay.valid_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                 </span>
               ) : null}
+              {(
+                [
+                  { on: showGauges, set: setShowGauges, label: 'GAUGE', title: 'NWPS river gauges — stage + flood category + forecast crest' },
+                  { on: showStormAttrs, set: setShowStormAttrs, label: 'CELLS', title: 'NEXRAD L3 storm attributes — TVS/meso/hail per cell (IEM)' },
+                  { on: showIncidents, set: setShowIncidents, label: 'ROADS', title: 'TDOT roadway incidents & closures' },
+                  { on: showEro, set: setShowEro, label: 'ERO', title: `WPC Excessive Rainfall Outlook Day 1${eroPtr.data?.valid_date ? ` · ${eroPtr.data.valid_date}` : ''}` },
+                ] as const
+              ).map((c) => (
+                <button
+                  key={c.label}
+                  type="button"
+                  onClick={() => c.set(!c.on)}
+                  className={`rounded-md border px-2 py-1 text-[10px] font-semibold backdrop-blur-sm ${
+                    c.on
+                      ? 'border-wx-accent bg-wx-accent/10 text-wx-accent'
+                      : 'border-wx-line bg-wx-card/95 text-wx-mute hover:text-wx-fg'
+                  }`}
+                  title={c.title}
+                >
+                  {c.label}
+                </button>
+              ))}
             </div>
             <ProductLegend product={effectiveProduct} />
           </div>
@@ -5109,6 +5406,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
         {selectedMping && <MpingCard report={selectedMping} onClose={() => setSelectedMping(null)} />}
         {selectedMetar && <MetarCard metar={selectedMetar} onClose={() => setSelectedMetar(null)} />}
         {selectedTrafficCam && <TrafficCamCard cam={selectedTrafficCam} onClose={() => setSelectedTrafficCam(null)} />}
+        {selectedGauge && <GaugeCard gauge={selectedGauge} onClose={() => setSelectedGauge(null)} />}
+        {selectedStormAttr && <StormAttrCard cell={selectedStormAttr} onClose={() => setSelectedStormAttr(null)} />}
+        {selectedIncident && <IncidentCard incident={selectedIncident} onClose={() => setSelectedIncident(null)} />}
         {selectedCouplet && <CoupletCard couplet={selectedCouplet} onClose={() => setSelectedCouplet(null)} />}
 
         {/* NEXRAD site pills — one per radar location in the current view.

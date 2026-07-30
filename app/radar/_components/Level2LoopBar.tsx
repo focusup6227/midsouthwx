@@ -29,6 +29,9 @@ export default function Level2LoopBar({
   isVelocity,
   stormMotion,
   setStormMotion,
+  suggestMotion,
+  cellsOn,
+  enableCells,
   probeEnabled,
   setProbeEnabled,
   probeReady,
@@ -49,6 +52,10 @@ export default function Level2LoopBar({
   isVelocity: boolean;
   stormMotion: StormMotion;
   setStormMotion: (v: StormMotion) => void;
+  /** Motion vector from the strongest L3 cell on this site (null if none). */
+  suggestMotion: () => StormMotion;
+  cellsOn: boolean;
+  enableCells: () => void;
   probeEnabled: boolean;
   setProbeEnabled: (v: boolean) => void;
   probeReady: number;
@@ -214,6 +221,24 @@ export default function Level2LoopBar({
                     className="input w-16 px-1.5 py-0.5 text-[11px]"
                   />
                 </label>
+                <button
+                  type="button"
+                  className="btn-ghost w-full text-[11px] px-2 py-1"
+                  onClick={() => {
+                    if (!cellsOn) {
+                      enableCells();
+                      return;
+                    }
+                    const m = suggestMotion();
+                    if (m) {
+                      setSpeedInput(m.speedKt);
+                      setDirInput(m.fromDeg);
+                    }
+                  }}
+                  title={cellsOn ? 'Use the strongest L3 cell\u2019s motion on this site' : 'Enables the CELLS layer first \u2014 tap again once cells load'}
+                >
+                  {cellsOn ? 'From radar cells' : 'Enable cells for autofill'}
+                </button>
                 <div className="flex gap-1.5">
                   <button
                     type="button"

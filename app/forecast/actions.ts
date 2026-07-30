@@ -139,6 +139,10 @@ export async function draftForecast(input: DraftForecastInput): Promise<DraftFor
 
 export type SituationPreview = {
   spc: { day: number; label: string | null; overlap: string[] }[];
+  /** SPC Days 4-8 (probabilistic) — region-wide highest label per day. */
+  extended: { day: number; label: string | null }[];
+  /** NBM-derived thunder probability at the centroid over the next ~36 h. */
+  thunder: { max: number; peak_at: string | null } | null;
   afd: { wfo: string | null; issued_at: string | null; synopsis: string | null } | null;
   alerts: { event: string; headline: string | null }[];
   alerts_total: number;
@@ -146,6 +150,42 @@ export type SituationPreview = {
   lsrs_by_hazard: Record<string, number>;
   suggested: Hazard[];
 };
+
+async function sampleThunderProbability(
+  lat: number,
+  lng: number,
+): Promise<{ max: number; peak_at: string | null } | null> {
+  const ua = { 'User-Agent': process.env.NWS_USER_AGENT ?? 'midsouthwx' };
+  try {
+    const pt = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lng.toFixed(4)}`, {
+      headers: ua,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!pt.ok) return null;
+    const gridUrl = (await pt.json())?.properties?.forecastGridData as string | undefined;
+    if (!gridUrl) return null;
+    const grid = await fetch(gridUrl, { headers: ua, signal: AbortSignal.timeout(15_000) });
+    if (!grid.ok) return null;
+    const values = (await grid.json())?.properties?.probabilityOfThunder?.values as
+      | { validTime: string; value: number | null }[]
+      | undefined;
+    if (!values?.length) return null;
+    const cutoff = Date.now() + 36 * 3600_000;
+    let max = 0;
+    let peakAt: string | null = null;
+    for (const v of values) {
+      const t = new Date(v.validTime.split('/')[0]).getTime();
+      if (!Number.isFinite(t) || t > cutoff || v.value == null) continue;
+      if (v.value > max) {
+        max = v.value;
+        peakAt = v.validTime.split('/')[0];
+      }
+    }
+    return { max, peak_at: peakAt };
+  } catch {
+    return null;
+  }
+}
 
 const SEVERE_LABELS = new Set(['SLGT', 'ENH', 'MDT', 'HIGH']);
 const TOR_LABELS = new Set(['MDT', 'HIGH']);
@@ -199,6 +239,24 @@ export async function previewForecastContext(input: {
     };
   });
 
+  // Extended outlook + thunder trace fetched alongside (best-effort).
+  const ring = area.coordinates[0] ?? [];
+  const centroidLng = ring.reduce((s, p) => s + p[0], 0) / Math.max(1, ring.length);
+  const centroidLat = ring.reduce((s, p) => s + p[1], 0) / Math.max(1, ring.length);
+  const [extendedRows, thunder] = await Promise.all([
+    supa
+      .from('spc_outlooks')
+      .select('day_number, highest_label')
+      .gte('day_number', 4)
+      .order('day_number')
+      .then((r) => (r.error ? [] : r.data ?? []), () => []),
+    sampleThunderProbability(centroidLat, centroidLng),
+  ]);
+  const extended = extendedRows.map((r) => ({
+    day: r.day_number as number,
+    label: (r.highest_label as string | null) ?? null,
+  }));
+
   const lsrsByHazard: Record<string, number> = {};
   for (const l of ctx.lsrs ?? []) {
     const h = l.hazard ?? 'other';
@@ -207,6 +265,8 @@ export async function previewForecastContext(input: {
 
   return {
     spc,
+    extended,
+    thunder,
     afd: ctx.afd
       ? {
           wfo: ctx.afd.wfo ?? null,

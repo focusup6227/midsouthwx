@@ -91,6 +91,54 @@ function looksLikeDistress(text: string | undefined) {
   return DISTRESS_KEYWORDS.some((k) => distressKeywordMatch(t, k));
 }
 
+// Nearest open shelters from FEMA's National Shelter System feed. Queried
+// live on a 🆘 tap only — no polling, no persistence. ±1.2° envelope
+// (~120 km) around the subscriber, top 3 by distance.
+async function fetchOpenShelters(
+  lat: number,
+  lon: number,
+): Promise<{ name: string; address: string | null; city: string | null; distKm: number }[]> {
+  const params = new URLSearchParams({
+    f: 'json',
+    where: "shelter_status = 'OPEN'",
+    outFields: 'shelter_name,address,city,state,shelter_status',
+    geometry: JSON.stringify({
+      xmin: lon - 1.2, ymin: lat - 1.2, xmax: lon + 1.2, ymax: lat + 1.2,
+      spatialReference: { wkid: 4326 },
+    }),
+    geometryType: 'esriGeometryEnvelope',
+    inSR: '4326',
+    outSR: '4326',
+    spatialRel: 'esriSpatialRelIntersects',
+    returnGeometry: 'true',
+    resultRecordCount: '25',
+  });
+  const res = await fetch(
+    `https://gis.fema.gov/arcgis/rest/services/NSS/OpenShelters/MapServer/0/query?${params}`,
+    { signal: AbortSignal.timeout(8_000) },
+  );
+  if (!res.ok) return [];
+  const body = await res.json() as {
+    features?: { attributes: Record<string, unknown>; geometry?: { x: number; y: number } }[];
+  };
+  const toKm = (aLat: number, aLon: number) => {
+    const rad = Math.PI / 180;
+    const h = Math.sin(((aLat - lat) * rad) / 2) ** 2 +
+      Math.cos(lat * rad) * Math.cos(aLat * rad) * Math.sin(((aLon - lon) * rad) / 2) ** 2;
+    return 2 * 6371 * Math.asin(Math.sqrt(h));
+  };
+  return (body.features ?? [])
+    .filter((f) => f.geometry && Number.isFinite(f.geometry.x))
+    .map((f) => ({
+      name: String(f.attributes.shelter_name ?? 'Shelter'),
+      address: (f.attributes.address as string | null) ?? null,
+      city: (f.attributes.city as string | null) ?? null,
+      distKm: toKm(f.geometry!.y, f.geometry!.x),
+    }))
+    .sort((a, b) => a.distKm - b.distKm)
+    .slice(0, 3);
+}
+
 async function operatorChatId(supa: ReturnType<typeof serviceClient>): Promise<number> {
   const fromEnv = Number(Deno.env.get('OPERATOR_TELEGRAM_CHAT_ID') ?? 0);
   if (fromEnv) return fromEnv;
@@ -1193,6 +1241,36 @@ Deno.serve(async (req) => {
       }
 
       await tgAnswerCallbackQuery(token, cqId, 'Got it — thanks.');
+
+      // 🆘 follow-up: nearest open shelters from FEMA's live feed. Best-effort
+      // — a FEMA outage must never break the distress acknowledgement.
+      if (data === 'help' && sub) {
+        try {
+          const { data: pos } = await supa.rpc('subscriber_latlon', { p_id: sub.id });
+          const p = Array.isArray(pos) ? pos[0] : pos;
+          if (p && typeof p.lat === 'number' && typeof p.lon === 'number') {
+            const shelters = await fetchOpenShelters(p.lat, p.lon);
+            if (shelters.length > 0) {
+              const lines = shelters
+                .map(
+                  (s) =>
+                    `• <b>${s.name}</b> — ${s.address ?? ''}${s.city ? `, ${s.city}` : ''} (~${s.distKm.toFixed(0)} km)`,
+                )
+                .join('\n');
+              await tgSendMessage(token, {
+                chat_id: chatId,
+                parse_mode: 'HTML',
+                text:
+                  '🏠 <b>Nearest open shelters</b> (FEMA live data):\n' +
+                  lines +
+                  '\n\nOnly travel when it is safe to do so. If you are in immediate danger, call 911.',
+              });
+            }
+          }
+        } catch (e) {
+          console.error('[webhook] shelter lookup failed', e);
+        }
+      }
       return json({ ok: true });
     }
 

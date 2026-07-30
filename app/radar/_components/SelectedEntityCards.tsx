@@ -539,3 +539,159 @@ export function TrafficCamCard({ cam, onClose }: { cam: SelectedTrafficCam; onCl
     </div>
   );
 }
+
+// ── External situational layers ──────────────────────────────────────────
+
+export type SelectedGauge = {
+  lid: string;
+  name: string;
+  observed: number | null;
+  observed_unit: string;
+  observed_at: string | null;
+  category: string;
+  forecast: number | null;
+  forecast_category: string | null;
+  forecast_at: string | null;
+};
+
+const GAUGE_TONE: Record<string, string> = {
+  major: 'text-fuchsia-300',
+  moderate: 'text-red-300',
+  minor: 'text-orange-300',
+  action: 'text-yellow-200',
+};
+
+/** NWPS river gauge card: observed stage vs flood category + forecast crest. */
+export function GaugeCard({ gauge: g, onClose }: { gauge: SelectedGauge; onClose: () => void }) {
+  const tone = GAUGE_TONE[g.category] ?? 'text-sky-300';
+  return (
+    <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold">
+            River gauge · {g.lid}
+          </div>
+          <div className="text-[13px] font-semibold mt-0.5 leading-snug">{g.name}</div>
+        </div>
+        <CloseButton onClose={onClose} />
+      </div>
+      <div className="text-sm">
+        <span className={`font-bold ${tone}`}>
+          {g.observed != null ? `${g.observed.toFixed(1)} ${g.observed_unit}` : '—'}
+        </span>{' '}
+        <span className={`text-[11px] uppercase ${tone}`}>{g.category.replace('_', ' ')}</span>
+        {g.observed_at ? (
+          <span className="ml-1 text-[10px] text-wx-mute">
+            @ {new Date(g.observed_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          </span>
+        ) : null}
+      </div>
+      {g.forecast != null ? (
+        <div className="text-[11px] text-wx-mute">
+          Forecast crest{' '}
+          <span className={`font-semibold ${GAUGE_TONE[g.forecast_category ?? ''] ?? 'text-wx-fg'}`}>
+            {g.forecast.toFixed(1)} {g.observed_unit}
+            {g.forecast_category ? ` (${g.forecast_category})` : ''}
+          </span>
+          {g.forecast_at ? ` · ${new Date(g.forecast_at).toLocaleString()}` : ''}
+        </div>
+      ) : null}
+      <a
+        href={`https://water.noaa.gov/gauges/${g.lid}`}
+        target="_blank"
+        rel="noreferrer"
+        className="block text-[11px] text-wx-accent"
+      >
+        Full hydrograph on water.noaa.gov →
+      </a>
+    </div>
+  );
+}
+
+export type SelectedStormAttr = {
+  storm_id: string;
+  nexrad: string;
+  tvs: string;
+  meso: string;
+  posh: number;
+  poh: number;
+  max_size: number;
+  vil: number;
+  max_dbz: number;
+  top: number;
+  drct: number;
+  sknt: number;
+  valid: string | null;
+};
+
+/** NEXRAD Level III storm-attribute cell card (radar algorithm output). */
+export function StormAttrCard({ cell: c, onClose }: { cell: SelectedStormAttr; onClose: () => void }) {
+  const flag = c.tvs !== 'NONE' ? 'TVS' : c.meso !== 'NONE' ? `MESO ${c.meso}` : null;
+  return (
+    <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[300px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
+            L3 cell · {c.nexrad} {c.storm_id}
+            {flag ? (
+              <span className="rounded bg-red-500 px-1 py-px text-[9px] font-bold text-white">{flag}</span>
+            ) : null}
+          </div>
+          <div className="text-[11px] text-wx-mute mt-0.5">
+            Radar-algorithm attributes{c.valid ? ` · ${new Date(c.valid).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ''}
+          </div>
+        </div>
+        <CloseButton onClose={onClose} />
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono text-wx-mute">
+        <div><span className="text-wx-mute/70">POSH</span> {c.posh}%</div>
+        <div><span className="text-wx-mute/70">POH</span> {c.poh}%</div>
+        <div><span className="text-wx-mute/70">max hail</span> {c.max_size}&quot;</div>
+        <div><span className="text-wx-mute/70">VIL</span> {c.vil}</div>
+        <div><span className="text-wx-mute/70">max dBZ</span> {c.max_dbz}</div>
+        <div><span className="text-wx-mute/70">top</span> {Math.round(c.top)} kft</div>
+        <div className="col-span-2">
+          <span className="text-wx-mute/70">motion</span> from {Math.round(c.drct)}° at {Math.round(c.sknt)} kt
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export type SelectedIncident = {
+  id: number;
+  type: string;
+  description: string;
+  impact: string | null;
+  county: string | null;
+  closure: boolean;
+  severe: boolean;
+  began_at: string | null;
+};
+
+/** TDOT roadway incident card. */
+export function IncidentCard({ incident: r, onClose }: { incident: SelectedIncident; onClose: () => void }) {
+  return (
+    <div className="absolute bottom-16 md:bottom-14 left-2 right-2 md:left-auto md:right-4 md:w-[320px] p-3 bg-wx-card border border-wx-line rounded-xl z-30 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-wider text-wx-mute font-semibold flex items-center gap-1.5">
+            Roadway · {r.type}
+            {r.closure ? (
+              <span className="rounded bg-red-500 px-1 py-px text-[9px] font-bold text-white">CLOSED</span>
+            ) : r.severe ? (
+              <span className="rounded bg-orange-500 px-1 py-px text-[9px] font-bold text-black">SEVERE</span>
+            ) : null}
+          </div>
+          {r.county ? <div className="text-[11px] text-wx-mute mt-0.5">{r.county} County</div> : null}
+        </div>
+        <CloseButton onClose={onClose} />
+      </div>
+      <p className="text-[11.5px] leading-snug text-wx-fg/90 max-h-28 overflow-y-auto wx-scroll">{r.description}</p>
+      {r.impact ? <p className="text-[10px] text-wx-mute">{r.impact}</p> : null}
+      {r.began_at ? (
+        <p className="text-[10px] text-wx-mute">since {new Date(r.began_at).toLocaleString()}</p>
+      ) : null}
+    </div>
+  );
+}
