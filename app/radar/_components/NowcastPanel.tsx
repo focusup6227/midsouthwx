@@ -52,6 +52,10 @@ export default function NowcastPanel() {
   const candidates = data?.candidates ?? [];
   const count = candidates.length;
 
+  // Nothing pending → render nothing. The old "Nowcasts: clear" idle pill
+  // sat on top of the legend/layer chips in the bottom-left corner.
+  if (count === 0) return null;
+
   function send(c: NowcastCandidate) {
     setBusyId(c.id);
     startTransition(async () => {
