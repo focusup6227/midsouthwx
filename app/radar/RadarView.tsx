@@ -5295,10 +5295,10 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
               ) : null}
               {(
                 [
-                  { on: showGauges, set: setShowGauges, label: 'GAUGE', title: 'NWPS river gauges — stage + flood category + forecast crest' },
-                  { on: showStormAttrs, set: setShowStormAttrs, label: 'CELLS', title: 'NEXRAD L3 storm attributes — TVS/meso/hail per cell (IEM)' },
-                  { on: showIncidents, set: setShowIncidents, label: 'ROADS', title: 'TDOT roadway incidents & closures' },
-                  { on: showEro, set: setShowEro, label: 'ERO', title: `WPC Excessive Rainfall Outlook Day 1${eroPtr.data?.valid_date ? ` · ${eroPtr.data.valid_date}` : ''}` },
+                  { on: showGauges, set: setShowGauges, label: 'GAUGE', count: gaugesSwr.data ? gaugesGeo.features.length : null, title: 'NWPS river gauges — stage + flood category + forecast crest' },
+                  { on: showStormAttrs, set: setShowStormAttrs, label: 'CELLS', count: stormAttrsSwr.data ? stormAttrsGeo.features.length : null, title: 'NEXRAD L3 storm attributes — TVS/meso/hail per cell (IEM). Cells only exist during active convection.' },
+                  { on: showIncidents, set: setShowIncidents, label: 'ROADS', count: incidentsSwr.data ? incidentsGeo.features.length : null, title: 'TDOT roadway incidents & closures (statewide — quiet days can be zero)' },
+                  { on: showEro, set: setShowEro, label: 'ERO', count: eroGeo ? eroGeo.features.length : null, title: `WPC Excessive Rainfall Outlook Day 1${eroPtr.data?.valid_date ? ` · ${eroPtr.data.valid_date}` : ''} — risk polygons only; no polygon over the Mid-South means no elevated flood risk today` },
                 ] as const
               ).map((c) => (
                 <button
@@ -5313,6 +5313,13 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                   title={c.title}
                 >
                   {c.label}
+                  {/* Loaded-count feedback: '· 0' tells the operator the layer
+                      works but the state is quiet — instead of looking dead. */}
+                  {c.on ? (
+                    <span className={c.count === 0 ? 'ml-1 font-mono text-wx-mute' : 'ml-1 font-mono'}>
+                      · {c.count ?? '…'}
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>
