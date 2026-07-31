@@ -54,7 +54,6 @@ import useSWR, { useSWRConfig } from 'swr';
 import RadarInspector, { type InspectorTab } from './_components/RadarInspector';
 import QuickComposePanel from './_components/QuickComposePanel';
 import RecentSends from './_components/RecentSends';
-import ProductLegend from './_components/ProductLegend';
 import {
   PRODUCTS,
   GOES_SOURCES,
@@ -5261,8 +5260,7 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
-        {/* Always-on color legend for the active product (desktop). Mobile
-            skips it — the bottom edge is already owned by the timeline pill. */}
+        {/* Layer chips (MESH / GAUGE / CELLS / ROADS / ERO) — desktop only. */}
         {!uiHidden && !selection && (
           <div className="hidden md:flex absolute bottom-4 left-4 z-20 flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
@@ -5318,7 +5316,6 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
                 </button>
               ))}
             </div>
-            <ProductLegend product={effectiveProduct} />
           </div>
         )}
 
