@@ -5260,9 +5260,11 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
           </div>
         )}
 
-        {/* Layer chips (MESH / GAUGE / CELLS / ROADS / ERO) — desktop only. */}
+        {/* Layer chips (MESH / GAUGE / CELLS / ROADS / ERO) — desktop only.
+            bottom-12 clears the annotate toolbar pinned at bottom-3; z-10 lets
+            the expanded annotation panel stack above the chips while open. */}
         {!uiHidden && !selection && (
-          <div className="hidden md:flex absolute bottom-4 left-4 z-20 flex-col gap-1.5">
+          <div className="hidden md:flex absolute bottom-12 left-3 z-10 flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
