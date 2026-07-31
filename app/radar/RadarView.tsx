@@ -2045,6 +2045,9 @@ export default function RadarView({ initialSubsGeo, initialSpcDays, initialWarni
       showTrafficCams ? 'traffic-cam-pin' : null,
       showTrafficCams ? 'traffic-cam-cluster' : null,
       showCouplets ? 'couplet-pin' : null,
+      showStormAttrs ? 'storm-attr-pin' : null,
+      showGauges ? 'gauge-pin' : null,
+      showIncidents ? 'incident-pin' : null,
       showProbSevere ? 'probsevere-fill' : null,
       'warning-fill',
     ].filter((l): l is string => !!l && !!map.getLayer(l));
