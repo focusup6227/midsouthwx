@@ -80,8 +80,8 @@ export default function StationGuidancePanel() {
           <h2 className="font-semibold">Station guidance — MOS &amp; NBM</h2>
           <p className="text-xs text-wx-mute">
             {data?.runtime
-              ? `${data.station} · ${data.model} run ${new Date(data.runtime).toLocaleString()}`
-              : 'Latest run per station'}
+              ? `${data.station} · ${data.model} run ${new Date(data.runtime).toLocaleString()} · times shown in your local time`
+              : 'Latest run per station · times shown in your local time'}
           </p>
         </div>
         <form

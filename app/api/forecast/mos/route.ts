@@ -44,10 +44,14 @@ export async function GET(req: NextRequest) {
       return typeof v === 'string' && v.trim() ? v : null;
     };
 
+    // IEM's *_utc fields are UTC but carry no zone suffix — tag them so
+    // Date() parses them as UTC instead of browser-local (a silent 5-6 h
+    // shift otherwise).
+    const asUtc = (t: string) => (/[zZ]|[+-]\d{2}:?\d{2}$/.test(t) ? t : `${t.replace(' ', 'T')}Z`);
     const out = rows
       .filter((r) => r.ftime_utc || (r as { ftime?: string }).ftime)
       .map((r) => ({
-        ftime: (r.ftime_utc ?? (r as { ftime?: string }).ftime) as string,
+        ftime: asUtc((r.ftime_utc ?? (r as { ftime?: string }).ftime) as string),
         tmp: num(r, 'tmp'),
         dpt: num(r, 'dpt'),
         txn: num(r, 'txn') ?? num(r, 'n_x'),          // max/min temp (NBM txn, MOS n_x)
@@ -69,7 +73,7 @@ export async function GET(req: NextRequest) {
       {
         station,
         model,
-        runtime: (rows[0].runtime_utc ?? (rows[0] as { runtime?: string }).runtime) as string,
+        runtime: asUtc((rows[0].runtime_utc ?? (rows[0] as { runtime?: string }).runtime) as string),
         rows: out,
       },
       { headers: { 'Cache-Control': 'private, max-age=600' } },
